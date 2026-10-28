@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rd-core",
+    "crates/rd-render",
+    "crates/rd-effects",
+    "crates/rd-audio",
+    "crates/rd-decode",
+    "crates/rd-export",
+    "crates/rd-ml",
+    "platforms/windows",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Reddart Team"]
+license = "MIT"
+repository = "https://github.com/reddart/reddart"
+
+[workspace.dependencies]
+# Core
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# GPU
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+
+# Windowing
+winit = "0.30"
+
+# UI
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+
+# Audio
+cpal = "0.15"
+
+# Time
+instant = "0.1"
+
+# Internal crates
+rd-core = { path = "crates/rd-core" }
+rd-render = { path = "crates/rd-render" }
+rd-effects = { path = "crates/rd-effects" }
+rd-audio = { path = "crates/rd-audio" }
+rd-decode = { path = "crates/rd-decode" }
+rd-export = { path = "crates/rd-export" }
+rd-ml = { path = "crates/rd-ml" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1 # Slightly optimized dev builds for GPU work
+
+[profile.dev.package."*"]
+opt-level = 3 # Optimize dependencies even in dev

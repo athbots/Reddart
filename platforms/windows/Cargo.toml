@@ -1,0 +1,36 @@
+[package]
+name = "reddart-windows"
+description = "Reddart video editor — Windows application"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "reddart"
+path = "src/main.rs"
+
+[dependencies]
+rd-core = { workspace = true }
+rd-render = { workspace = true }
+rd-effects = { workspace = true }
+rd-audio = { workspace = true }
+rd-decode = { workspace = true }
+rd-export = { workspace = true }
+rd-ml = { workspace = true }
+
+wgpu = { workspace = true }
+winit = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+bytemuck = { workspace = true }
+
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+pollster = "0.4"
+rfd = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+# Windows-specific dependencies will be added here
+# windows = { version = "0.58", features = [...] }

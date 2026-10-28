@@ -1,0 +1,20 @@
+# Generated target directory
+target/
+dist/
+
+# Operating System files
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project files and media caches
+*.reddart
+*.log
+*.pdb

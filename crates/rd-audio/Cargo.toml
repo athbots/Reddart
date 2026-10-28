@@ -1,0 +1,11 @@
+[package]
+name = "rd-audio"
+description = "Reddart real-time audio mixer, PCM decode, master clock"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rd-core = { workspace = true }
+cpal = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }

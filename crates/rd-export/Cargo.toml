@@ -1,0 +1,14 @@
+[package]
+name = "rd-export"
+description = "Reddart export pipeline: parallel decode, render, encode stages"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rd-core = { workspace = true }
+rd-render = { workspace = true }
+rd-decode = { workspace = true }
+rd-audio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }

@@ -1,0 +1,14 @@
+[package]
+name = "rd-effects"
+description = "Reddart WGSL effect library, effect specs, shader management"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rd-core = { workspace = true }
+wgpu = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

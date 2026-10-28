@@ -1,0 +1,13 @@
+[package]
+name = "rd-decode"
+description = "Reddart decoder abstraction, decoder pool, proxy generation, prefetch"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rd-core = { workspace = true }
+wgpu = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
