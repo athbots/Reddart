@@ -1,0 +1,17 @@
+[package]
+name = "record-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rd-core = { path = "../../crates/rd-core" }
+rd-render = { path = "../../crates/rd-render" }
+rd-effects = { path = "../../crates/rd-effects" }
+rd-decode = { path = "../../crates/rd-decode" }
+rd-audio = { path = "../../crates/rd-audio" }
+rd-ml = { path = "../../crates/rd-ml" }
+rd-export = { path = "../../crates/rd-export" }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+

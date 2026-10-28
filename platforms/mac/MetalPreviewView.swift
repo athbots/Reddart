@@ -58,3 +58,4 @@ public struct MetalPreviewView: NSViewRepresentable {
         }
     }
 }
+

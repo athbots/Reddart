@@ -197,3 +197,4 @@ public final class ReddartBridgeIOS: ObservableObject {
         return String(format: "%02d:%02d:%02d", minutes, seconds, frames)
     }
 }
+

@@ -11,6 +11,7 @@ members = [
     "crates/rd-android",
     "crates/rd-apple",
     "platforms/windows",
+    "tools/record_demo",
 ]
 
 [workspace.package]

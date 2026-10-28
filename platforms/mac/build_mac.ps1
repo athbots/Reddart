@@ -151,3 +151,4 @@ Write-Host ("  -> macOS Package generated: {0:N2} MB at {1}" -f $zipSizeMb, $zip
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  REDDART macOS BUILD COMPLETED SUCCESSFULLY!             " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
+

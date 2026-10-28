@@ -2722,6 +2722,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "record-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rd-audio",
+ "rd-core",
+ "rd-decode",
+ "rd-effects",
+ "rd-export",
+ "rd-ml",
+ "rd-render",
+]
+
+[[package]]
 name = "reddart-windows"
 version = "0.1.0"
 dependencies = [

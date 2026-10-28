@@ -79,3 +79,4 @@ public struct IOSTimelineCanvas: View {
         }
     }
 }
+
