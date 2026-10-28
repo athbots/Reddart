@@ -8,6 +8,7 @@ members = [
     "crates/rd-decode",
     "crates/rd-export",
     "crates/rd-ml",
+    "crates/rd-android",
     "platforms/windows",
 ]
 

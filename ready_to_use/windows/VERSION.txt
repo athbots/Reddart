@@ -1,0 +1,6 @@
+Reddart — Zero-Lag Native Video Editor
+Version: 0.1.0
+Platform: Windows (x86_64)
+Architecture: Shared Rust Core (Path C) + Hardware Accelerated WGSL
+Audio Engine: Lock-Free PCM Master Clock (WASAPI/CPAL)
+Zero Subscription | Zero Cloud Latency | On-Device AI

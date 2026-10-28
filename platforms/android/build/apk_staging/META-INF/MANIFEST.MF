@@ -1,0 +1,9 @@
+Manifest-Version: 1.0
+Created-By: Reddart Build System 0.1.0 (Android Target)
+Built-By: Reddart Pipeline
+Main-Class: app.reddart.MainActivity
+Package-Name: app.reddart
+Target-Sdk: 35
+Min-Sdk: 26
+Architecture: Shared Native Core (Path C)
+Features: Zero-Lag 120Hz Gesture Timeline, Hardware Decode, On-Device AI

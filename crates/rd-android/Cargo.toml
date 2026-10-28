@@ -1,0 +1,24 @@
+[package]
+name = "rd-android"
+description = "Reddart Android native JNI bridge and platform shims"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "reddart"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rd-core = { workspace = true }
+rd-render = { workspace = true }
+rd-effects = { workspace = true }
+rd-audio = { workspace = true }
+rd-decode = { workspace = true }
+rd-export = { workspace = true }
+rd-ml = { workspace = true }
+
+log = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

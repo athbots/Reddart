@@ -1,0 +1,32 @@
+{
+    "id": "text_sdf",
+    "name": "Text SDF",
+    "version": 1,
+    "cost_class": "low",
+    "parameters": [
+        {
+            "id": "outline_width",
+            "name": "Outline Width",
+            "type": "float",
+            "default": 0.0,
+            "min": 0.0,
+            "max": 0.3,
+            "step": 0.01,
+            "keyframeable": true
+        },
+        {
+            "id": "smoothing",
+            "name": "Smoothing",
+            "type": "float",
+            "default": 0.04,
+            "min": 0.01,
+            "max": 0.1,
+            "step": 0.005,
+            "keyframeable": false
+        }
+    ],
+    "shader": "shader.wgsl",
+    "vertex_entry": "vs_main",
+    "fragment_entry": "fs_main"
+}
+
