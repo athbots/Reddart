@@ -18,3 +18,10 @@ $RECYCLE.BIN/
 *.reddart
 *.log
 *.pdb
+
+# Gradle & Android build caches
+.gradle/
+platforms/android/.gradle/
+platforms/android/build/
+platforms/mac/build/
+platforms/ios/build/

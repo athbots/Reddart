@@ -1,0 +1,82 @@
+{
+  "id": "mask_shape",
+  "name": "Shape Mask",
+  "version": 1,
+  "cost_class": "low",
+  "parameters": [
+    {
+      "id": "shape_type",
+      "name": "Shape (0:Rect, 1:Ellipse, 2:Gradient, 3:Vignette)",
+      "type": "int",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 3.0,
+      "step": 1.0,
+      "keyframeable": false
+    },
+    {
+      "id": "center_x",
+      "name": "Center X",
+      "type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "keyframeable": true
+    },
+    {
+      "id": "center_y",
+      "name": "Center Y",
+      "type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "keyframeable": true
+    },
+    {
+      "id": "size_x",
+      "name": "Size X / Radius",
+      "type": "float",
+      "default": 0.35,
+      "min": 0.01,
+      "max": 1.0,
+      "step": 0.01,
+      "keyframeable": true
+    },
+    {
+      "id": "size_y",
+      "name": "Size Y",
+      "type": "float",
+      "default": 0.35,
+      "min": 0.01,
+      "max": 1.0,
+      "step": 0.01,
+      "keyframeable": true
+    },
+    {
+      "id": "feather",
+      "name": "Edge Feather",
+      "type": "float",
+      "default": 0.05,
+      "min": 0.001,
+      "max": 0.5,
+      "step": 0.005,
+      "keyframeable": true
+    },
+    {
+      "id": "invert",
+      "name": "Invert Mask (0 or 1)",
+      "type": "int",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 1.0,
+      "keyframeable": false
+    }
+  ],
+  "shader": "shader.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_main"
+}
+

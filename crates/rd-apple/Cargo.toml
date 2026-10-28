@@ -1,0 +1,21 @@
+[package]
+name = "rd-apple"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+rd-core = { path = "../rd-core" }
+rd-render = { path = "../rd-render" }
+rd-effects = { path = "../rd-effects" }
+rd-audio = { path = "../rd-audio" }
+rd-decode = { path = "../rd-decode" }
+rd-export = { path = "../rd-export" }
+rd-ml = { path = "../rd-ml" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+parking_lot = "0.12"
+raw-window-handle = "0.6"

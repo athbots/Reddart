@@ -1,0 +1,6 @@
+#!/bin/bash
+# Reddart macOS Launch Wrapper
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export DYLD_LIBRARY_PATH="$DIR/../Frameworks:$DYLD_LIBRARY_PATH"
+echo "Launching Reddart ProMotion 120Hz Video Editor on macOS..."
+exec "$DIR/reddart_bin" "$@"

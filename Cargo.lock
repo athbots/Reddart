@@ -2619,6 +2619,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rd-apple"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "parking_lot",
+ "raw-window-handle",
+ "rd-audio",
+ "rd-core",
+ "rd-decode",
+ "rd-effects",
+ "rd-export",
+ "rd-ml",
+ "rd-render",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rd-audio"
 version = "0.1.0"
 dependencies = [

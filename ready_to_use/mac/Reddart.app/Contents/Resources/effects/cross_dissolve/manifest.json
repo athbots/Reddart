@@ -1,0 +1,22 @@
+{
+    "id": "cross_dissolve",
+    "name": "Cross Dissolve",
+    "version": 1,
+    "cost_class": "low",
+    "parameters": [
+        {
+            "id": "progress",
+            "name": "Progress",
+            "type": "float",
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01,
+            "keyframeable": true
+        }
+    ],
+    "shader": "shader.wgsl",
+    "vertex_entry": "vs_main",
+    "fragment_entry": "fs_main"
+}
+
