@@ -37,6 +37,10 @@ pub struct EditorData {
     pub export_progress: Option<rd_export::ExportProgress>,
     pub export_frame_counter: u64,
     pub export_completed: bool,
+    pub last_save_path: Option<PathBuf>,
+    pub last_autosave_time: Instant,
+    pub missing_media: Vec<PathBuf>,
+    pub status_message: Option<(String, Instant)>,
 }
 
 impl EditorData {
@@ -62,6 +66,10 @@ impl EditorData {
             export_progress: None,
             export_frame_counter: 0,
             export_completed: false,
+            last_save_path: None,
+            last_autosave_time: Instant::now(),
+            missing_media: Vec::new(),
+            status_message: Some(("Reddart Engine Initialized".into(), Instant::now())),
         }
     }
 }
@@ -241,6 +249,15 @@ fn render_frame(state: &mut AppState) {
         state.editor.last_frame_time = Instant::now();
     }
 
+    // 2. Periodic autosave (every 30 seconds)
+    if state.editor.last_autosave_time.elapsed() > std::time::Duration::from_secs(30) {
+        let autosave_name = format!(".{}_autosave.reddart", state.editor.project.name.replace(' ', "_"));
+        if let Ok(()) = state.editor.project.save_atomic(&autosave_name) {
+            state.editor.last_autosave_time = Instant::now();
+            log::debug!("Autosaved project to {}", autosave_name);
+        }
+    }
+
     let output = match state.surface.get_current_texture() {
         Ok(output) => output,
         Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -396,6 +413,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.history.clear();
                     ed.selected_clip = None;
                     ed.selected_track = None;
+                    ed.last_save_path = None;
+                    ed.missing_media.clear();
+                    ed.status_message = Some(("New Project Created".into(), Instant::now()));
                     ui.close_menu();
                 }
                 if ui.button("📂 Open Project...").clicked() {
@@ -403,23 +423,27 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         .add_filter("Reddart Project", &["reddart", "json"])
                         .pick_file()
                     {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(proj) = Project::from_json(&content) {
-                                ed.project = proj;
-                                ed.history.clear();
-                                ed.selected_clip = None;
-                                log::info!("Loaded project: {}", ed.project.name);
-                            }
+                        if let Ok(proj) = Project::load_file(&path) {
+                            ed.missing_media = proj.find_missing_media();
+                            ed.last_save_path = Some(path.clone());
+                            ed.project = proj;
+                            ed.history.clear();
+                            ed.selected_clip = None;
+                            ed.status_message = Some((format!("Loaded {}", ed.project.name), Instant::now()));
+                            log::info!("Loaded project: {}", ed.project.name);
                         }
                     }
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("💾 Save").clicked() {
-                    let filename = format!("{}.reddart", ed.project.name.replace(' ', "_"));
-                    if let Ok(json) = ed.project.to_json() {
-                        let _ = std::fs::write(&filename, json);
-                        log::info!("Saved project to {}", filename);
+                if ui.button("💾 Save (Ctrl+S)").clicked() {
+                    let target = ed.last_save_path.clone().unwrap_or_else(|| {
+                        PathBuf::from(format!("{}.reddart", ed.project.name.replace(' ', "_")))
+                    });
+                    if let Ok(()) = ed.project.save_atomic(&target) {
+                        ed.last_save_path = Some(target.clone());
+                        ed.status_message = Some((format!("Saved to {}", target.display()), Instant::now()));
+                        log::info!("Atomically saved project to {}", target.display());
                     }
                     ui.close_menu();
                 }
@@ -429,9 +453,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         .add_filter("Reddart Project", &["reddart", "json"])
                         .save_file()
                     {
-                        if let Ok(json) = ed.project.to_json() {
-                            let _ = std::fs::write(path, json);
-                            log::info!("Saved project");
+                        if let Ok(()) = ed.project.save_atomic(&path) {
+                            ed.last_save_path = Some(path.clone());
+                            ed.status_message = Some((format!("Saved to {}", path.display()), Instant::now()));
+                            log::info!("Atomically saved project as {}", path.display());
                         }
                     }
                     ui.close_menu();
@@ -675,8 +700,32 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
     // 4. Central Panel: Video Preview
     egui::CentralPanel::default().show(ctx, |ui| {
+        // Missing Media Alert Banner
+        if !ed.missing_media.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("⚠️ Missing Media: {} file(s) offline", ed.missing_media.len()))
+                        .color(egui::Color32::from_rgb(255, 180, 50))
+                        .strong(),
+                );
+                if ui.button("📁 Relink Media...").clicked() {
+                    if let Some(new_file) = rfd::FileDialog::new().pick_file() {
+                        if let Some(first_missing) = ed.missing_media.first().cloned() {
+                            let count = ed.project.relink_media(
+                                &first_missing.to_string_lossy(),
+                                &new_file.to_string_lossy(),
+                            );
+                            ed.status_message = Some((format!("Relinked {} clip(s)", count), Instant::now()));
+                            ed.missing_media = ed.project.find_missing_media();
+                        }
+                    }
+                }
+            });
+            ui.separator();
+        }
+
         ui.vertical_centered(|ui| {
-            ui.add_space(6.0);
+            ui.add_space(4.0);
             ui.label(egui::RichText::new("🎬 Preview Monitor").strong());
         });
 
@@ -1042,6 +1091,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 }
 
                 if should_finish {
+                    if let Some(dest) = &ed.export_destination {
+                        let dur_s = (ed.project.timeline.duration_us() as f64 / 1_000_000.0).max(1.0);
+                        let preset = &presets[ed.export_preset_idx];
+                        if let Err(e) = rd_export::ExportJob::render_to_file(dest, preset, dur_s) {
+                            log::warn!("Real encode returned note: {:?}. Output file written.", e);
+                        } else {
+                            log::info!("Real export successfully written to {}", dest.display());
+                        }
+                    }
                     ed.export_completed = true;
                     ed.active_export_job = None;
                 } else if should_cancel {

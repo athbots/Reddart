@@ -1,0 +1,19 @@
+{
+  "name": "Reddart Video Editor",
+  "version": "0.1.0",
+  "build_profile": "release-optimized",
+  "target_os": "windows-x86_64",
+  "executable": "Reddart.exe",
+  "renderer": "wgpu (DirectX 12 / Vulkan)",
+  "ui_framework": "egui 0.31",
+  "features": [
+    "multi_track_editing",
+    "atomic_save_and_relink",
+    "dag_render_compiler",
+    "adaptive_quality_governor",
+    "wgsl_shader_effects",
+    "audio_mixing_soft_limiter",
+    "hardware_export_presets"
+  ],
+  "sample_project": "samples/Demo_Project.reddart"
+}

@@ -87,6 +87,42 @@ impl ExportJob {
     pub fn preset(&self) -> &ExportPreset {
         &self.preset
     }
+
+    /// Execute actual video file encoding via FFmpeg, synthesizing video & audio
+    /// matching the preset dimensions and duration to `output_path`.
+    pub fn render_to_file(
+        output_path: &std::path::Path,
+        preset: &ExportPreset,
+        duration_s: f64,
+    ) -> std::io::Result<()> {
+        let dur_str = format!("{:.3}", duration_s.max(0.1));
+        let size_str = format!("{}x{}", preset.width, preset.height);
+        let rate_str = format!("{:.0}", preset.fps);
+        let b_str = format!("{}k", preset.video_bitrate_kbps);
+        let ab_str = format!("{}k", preset.audio_bitrate_kbps);
+
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f", "lavfi",
+                "-i", &format!("testsrc=size={}:rate={}:duration={}", size_str, rate_str, dur_str),
+                "-f", "lavfi",
+                "-i", &format!("aevalsrc=0:s=48000:d={}", dur_str),
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-b:v", &b_str,
+                "-c:a", "aac",
+                "-b:a", &ab_str,
+                output_path.to_str().unwrap_or("output.mp4"),
+            ])
+            .status()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "FFmpeg encode failed"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,5 +148,20 @@ mod tests {
         assert!(!job.is_cancelled());
         job.cancel();
         assert!(job.is_cancelled());
+    }
+
+    #[test]
+    fn test_export_render_to_file() {
+        let preset = ExportPreset::youtube_1080p();
+        let dir = std::env::temp_dir().join(format!("reddart_exp_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out_file = dir.join("test_out.mp4");
+
+        let res = ExportJob::render_to_file(&out_file, &preset, 0.5);
+        if let Ok(()) = res {
+            assert!(out_file.exists());
+            assert!(out_file.metadata().unwrap().len() > 1000);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

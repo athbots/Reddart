@@ -12,3 +12,4 @@ rd-audio = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+uuid = { workspace = true }
