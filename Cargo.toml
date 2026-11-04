@@ -12,6 +12,7 @@ members = [
     "crates/rd-apple",
     "platforms/windows",
     "tools/record_demo",
+    "tools/benchmark",
 ]
 
 [workspace.package]

@@ -213,6 +213,36 @@ impl Clip {
     pub fn trim_out(&mut self, new_out_us: crate::TimestampUs) {
         self.source_out_us = new_out_us;
     }
+
+    /// Returns the media source path if this clip references external media.
+    pub fn source_path(&self) -> Option<&str> {
+        match &self.kind {
+            ClipKind::Video(v) => Some(&v.source_path),
+            ClipKind::Audio(a) => Some(&a.source_path),
+            ClipKind::Image(i) => Some(&i.source_path),
+            ClipKind::Text(_) => None,
+        }
+    }
+
+    /// Sets the media source path if this clip references external media.
+    pub fn set_source_path(&mut self, new_path: impl Into<String>) -> bool {
+        let path = new_path.into();
+        match &mut self.kind {
+            ClipKind::Video(v) => {
+                v.source_path = path;
+                true
+            }
+            ClipKind::Audio(a) => {
+                a.source_path = path;
+                true
+            }
+            ClipKind::Image(i) => {
+                i.source_path = path;
+                true
+            }
+            ClipKind::Text(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
