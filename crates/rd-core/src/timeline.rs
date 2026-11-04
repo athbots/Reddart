@@ -115,6 +115,34 @@ impl Timeline {
             .filter(|t| t.has_content_at(time_us))
             .collect()
     }
+
+    /// Return all snap points (clip start and end boundaries) across all tracks, sorted.
+    pub fn snap_points(&self) -> Vec<TimestampUs> {
+        let mut points = vec![0];
+        for track in &self.tracks {
+            for clip in track.clips() {
+                points.push(clip.position_us);
+                points.push(clip.end_us());
+            }
+        }
+        points.sort_unstable();
+        points.dedup();
+        points
+    }
+
+    /// Find the nearest snap point to `target_us` within `threshold_us`.
+    pub fn snap_to(&self, target_us: TimestampUs, threshold_us: i64) -> TimestampUs {
+        let mut nearest = target_us;
+        let mut min_diff = i64::MAX;
+        for &pt in &self.snap_points() {
+            let diff = (pt - target_us).abs();
+            if diff <= threshold_us && diff < min_diff {
+                min_diff = diff;
+                nearest = pt;
+            }
+        }
+        nearest
+    }
 }
 
 impl Default for Timeline {
@@ -155,5 +183,20 @@ mod tests {
         assert_eq!(timeline.tracks()[0].id, id2);
         assert_eq!(timeline.tracks()[1].id, id3);
         assert_eq!(timeline.tracks()[2].id, id1);
+    }
+
+    #[test]
+    fn test_snap_points_and_snap_to() {
+        let mut timeline = Timeline::new();
+        let vid = timeline.add_track(TrackKind::Video, "V1");
+        timeline.track_mut(vid).unwrap().add_clip(crate::Clip::new_video("test.mp4", 1_000_000, 0, 4_000_000));
+
+        let snaps = timeline.snap_points();
+        assert_eq!(snaps, vec![0, 1_000_000, 5_000_000]);
+
+        // Near 1_000_000 (at 1_040_000 with 50_000 threshold -> snaps to 1_000_000)
+        assert_eq!(timeline.snap_to(1_040_000, 50_000), 1_000_000);
+        // Too far (at 1_200_000 with 50_000 threshold -> does not snap)
+        assert_eq!(timeline.snap_to(1_200_000, 50_000), 1_200_000);
     }
 }

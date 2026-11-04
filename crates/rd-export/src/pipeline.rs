@@ -4,9 +4,12 @@
 //! Decode, GPU render and hardware encode run in parallel stages joined
 //! by bounded queues, so each unit stays busy.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 
 use crate::preset::ExportPreset;
 
@@ -123,6 +126,77 @@ impl ExportJob {
             Err(std::io::Error::new(std::io::ErrorKind::Other, "FFmpeg encode failed"))
         }
     }
+
+    /// Inspect an encoded media file using ffprobe to verify video and audio stream integrity.
+    pub fn probe_file(path: &Path) -> Result<MediaProbeResult, std::io::Error> {
+        let output = std::process::Command::new("ffprobe")
+            .args([
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-show_format",
+                path.to_str().unwrap_or(""),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "ffprobe command execution failed",
+            ));
+        }
+
+        let json_str = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let mut has_video = false;
+        let mut has_audio = false;
+        let mut width = None;
+        let mut height = None;
+
+        if let Some(streams) = parsed.get("streams").and_then(|s| s.as_array()) {
+            for stream in streams {
+                if let Some(codec_type) = stream.get("codec_type").and_then(|c| c.as_str()) {
+                    if codec_type == "video" {
+                        has_video = true;
+                        if width.is_none() {
+                            width = stream.get("width").and_then(|w| w.as_u64()).map(|w| w as u32);
+                        }
+                        if height.is_none() {
+                            height = stream.get("height").and_then(|h| h.as_u64()).map(|h| h as u32);
+                        }
+                    } else if codec_type == "audio" {
+                        has_audio = true;
+                    }
+                }
+            }
+        }
+
+        let duration_seconds = parsed
+            .get("format")
+            .and_then(|f| f.get("duration"))
+            .and_then(|d| d.as_str())
+            .and_then(|d| d.parse::<f64>().ok());
+
+        Ok(MediaProbeResult {
+            has_video,
+            has_audio,
+            width,
+            height,
+            duration_seconds,
+        })
+    }
+}
+
+/// Structural metadata extracted from ffprobe on exported media.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaProbeResult {
+    pub has_video: bool,
+    pub has_audio: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_seconds: Option<f64>,
 }
 
 #[cfg(test)]
@@ -161,6 +235,25 @@ mod tests {
         if let Ok(()) = res {
             assert!(out_file.exists());
             assert!(out_file.metadata().unwrap().len() > 1000);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn test_export_and_probe_verification() {
+        let preset = ExportPreset::youtube_1080p();
+        let dir = std::env::temp_dir().join(format!("reddart_probe_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out_file = dir.join("probe_test.mp4");
+
+        let res = ExportJob::render_to_file(&out_file, &preset, 1.0);
+        if let Ok(()) = res {
+            let probe = ExportJob::probe_file(&out_file).expect("ffprobe must succeed");
+            assert!(probe.has_video);
+            assert!(probe.has_audio);
+            assert_eq!(probe.width, Some(1920));
+            assert_eq!(probe.height, Some(1080));
+            assert!(probe.duration_seconds.unwrap_or(0.0) >= 0.9);
             let _ = std::fs::remove_dir_all(&dir);
         }
     }

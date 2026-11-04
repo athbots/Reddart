@@ -176,6 +176,31 @@ impl Clip {
             effects: Vec::new(),
         }
     }
+
+    /// Create a new text overlay clip.
+    pub fn new_text(
+        text: impl Into<String>,
+        position_us: crate::TimestampUs,
+        duration_us: crate::DurationUs,
+    ) -> Self {
+        Self {
+            id: ClipId::new(),
+            kind: ClipKind::Text(TextClip {
+                text: text.into(),
+                font_family: "Inter".into(),
+                font_size: 48.0,
+                color: [1.0, 1.0, 1.0, 1.0],
+                position: [0.5, 0.8],
+            }),
+            position_us,
+            source_in_us: 0,
+            source_out_us: duration_us,
+            speed: 1.0,
+            opacity: 1.0,
+            transform: Transform2D::default(),
+            effects: Vec::new(),
+        }
+    }
     /// Duration of this clip on the timeline, accounting for speed.
     pub fn duration_us(&self) -> DurationUs {
         let source_duration = (self.source_out_us - self.source_in_us).max(0);
