@@ -1,4 +1,4 @@
-//! Application: main event loop, egui integration, and window management.
+ //! Application: main event loop, egui integration, and window management.
 //!
 //! Sets up the winit window, wgpu rendering, and egui UI.
 //! The editor UI features an interactive timeline, media import,
