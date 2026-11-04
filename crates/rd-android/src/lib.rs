@@ -7,12 +7,12 @@
 //! Exposes a high-performance C-compatible ABI via JNI with zero allocations
 //! on gesture loops and real-time audio playback.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
 use rd_core::{Clip, CommandHistory, DurationUs, Project, TimestampUs, TrackKind};
 use rd_decode::synthetic::{PatternStyle, SyntheticDecoder};
 use rd_effects::template::TemplateSpec;
 use rd_export::{ExportJob, ExportPreset};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Shared global engine context for Android runtime.
 pub struct AndroidEngine {
@@ -37,13 +37,19 @@ impl AndroidEngine {
             synthetic_decoder: SyntheticDecoder::new(
                 540,
                 960,
-                3600_000_000,
+                3_600_000_000,
                 30.0,
                 PatternStyle::BouncingBox,
             ),
             active_export_job: None,
             denoise_enabled: false,
         }
+    }
+}
+
+impl Default for AndroidEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -101,13 +107,12 @@ pub fn split_clip_at_playhead() -> bool {
     if let Ok(mut guard) = get_engine().lock() {
         let playhead = guard.project.timeline.playhead_us;
         let track_id = guard.project.timeline.tracks().first().map(|t| t.id);
-        if let Some(tid) = track_id {
-            if let Some(track) = guard.project.timeline.track_mut(tid) {
-                if let Some(clip) = track.clip_at(playhead) {
-                    let cid = clip.id;
-                    return track.split_clip_at(cid, playhead).is_some();
-                }
-            }
+        if let Some(tid) = track_id
+            && let Some(track) = guard.project.timeline.track_mut(tid)
+            && let Some(clip) = track.clip_at(playhead)
+        {
+            let cid = clip.id;
+            return track.split_clip_at(cid, playhead).is_some();
         }
     }
     false
@@ -116,7 +121,10 @@ pub fn split_clip_at_playhead() -> bool {
 pub fn add_media_clip(source_path: &str, position_us: TimestampUs, duration_us: DurationUs) -> u64 {
     if let Ok(mut guard) = get_engine().lock() {
         if guard.project.timeline.track_count() == 0 {
-            guard.project.timeline.add_track(TrackKind::Video, "Video Main");
+            guard
+                .project
+                .timeline
+                .add_track(TrackKind::Video, "Video Main");
         }
         let track_id = guard.project.timeline.tracks()[0].id;
         let clip = Clip::new_video(source_path, position_us, 0, duration_us);
@@ -131,14 +139,18 @@ pub fn add_media_clip(source_path: &str, position_us: TimestampUs, duration_us: 
 
 pub fn apply_template(template_id: &str) -> bool {
     let templates = TemplateSpec::starter_templates();
-    if let Some(t) = templates.iter().find(|tmpl| tmpl.id == template_id) {
-        if let Ok(mut guard) = get_engine().lock() {
-            let media = vec!["clip_1.mp4".into(), "clip_2.mp4".into(), "clip_3.mp4".into()];
-            if let Ok(new_proj) = t.instantiate(&media) {
-                guard.project = new_proj;
-                guard.history.clear();
-                return true;
-            }
+    if let Some(t) = templates.iter().find(|tmpl| tmpl.id == template_id)
+        && let Ok(mut guard) = get_engine().lock()
+    {
+        let media = vec![
+            "clip_1.mp4".into(),
+            "clip_2.mp4".into(),
+            "clip_3.mp4".into(),
+        ];
+        if let Ok(new_proj) = t.instantiate(&media) {
+            guard.project = new_proj;
+            guard.history.clear();
+            return true;
         }
     }
     false
@@ -148,21 +160,21 @@ pub fn apply_lut_preset(lut_name: &str) -> bool {
     if let Ok(mut guard) = get_engine().lock() {
         let playhead = guard.project.timeline.playhead_us;
         for track in guard.project.timeline.tracks_mut() {
-            if let Some(cid) = track.clip_at(playhead).map(|c| c.id) {
-                if let Some(clip) = track.clip_mut(cid) {
-                    clip.effects.retain(|e| e.effect_id != "lut_3d");
-                    if lut_name != "None" {
-                        let mut params = HashMap::new();
-                        params.insert("intensity".into(), 1.0);
-                        params.insert("lut_size".into(), 33.0);
-                        clip.effects.push(rd_core::ClipEffect {
-                            effect_id: "lut_3d".into(),
-                            parameters: params,
-                            enabled: true,
-                        });
-                    }
-                    return true;
+            if let Some(cid) = track.clip_at(playhead).map(|c| c.id)
+                && let Some(clip) = track.clip_mut(cid)
+            {
+                clip.effects.retain(|e| e.effect_id != "lut_3d");
+                if lut_name != "None" {
+                    let mut params = HashMap::new();
+                    params.insert("intensity".into(), 1.0);
+                    params.insert("lut_size".into(), 33.0);
+                    clip.effects.push(rd_core::ClipEffect {
+                        effect_id: "lut_3d".into(),
+                        parameters: params,
+                        enabled: true,
+                    });
                 }
+                return true;
             }
         }
     }
@@ -177,9 +189,21 @@ pub fn generate_ai_captions() -> usize {
                 start_us: 500_000,
                 end_us: 2_000_000,
                 words: vec![
-                    rd_ml::WordTiming { word: "Welcome".into(), start_us: 500_000, end_us: 1_000_000 },
-                    rd_ml::WordTiming { word: "to".into(), start_us: 1_050_000, end_us: 1_400_000 },
-                    rd_ml::WordTiming { word: "Reddart".into(), start_us: 1_450_000, end_us: 2_000_000 },
+                    rd_ml::WordTiming {
+                        word: "Welcome".into(),
+                        start_us: 500_000,
+                        end_us: 1_000_000,
+                    },
+                    rd_ml::WordTiming {
+                        word: "to".into(),
+                        start_us: 1_050_000,
+                        end_us: 1_400_000,
+                    },
+                    rd_ml::WordTiming {
+                        word: "Reddart".into(),
+                        start_us: 1_450_000,
+                        end_us: 2_000_000,
+                    },
                 ],
             },
             rd_ml::CaptionSegment {
@@ -187,8 +211,16 @@ pub fn generate_ai_captions() -> usize {
                 start_us: 2_200_000,
                 end_us: 4_500_000,
                 words: vec![
-                    rd_ml::WordTiming { word: "Zero-Lag".into(), start_us: 2_200_000, end_us: 3_000_000 },
-                    rd_ml::WordTiming { word: "Editor".into(), start_us: 3_100_000, end_us: 4_500_000 },
+                    rd_ml::WordTiming {
+                        word: "Zero-Lag".into(),
+                        start_us: 2_200_000,
+                        end_us: 3_000_000,
+                    },
+                    rd_ml::WordTiming {
+                        word: "Editor".into(),
+                        start_us: 3_100_000,
+                        end_us: 4_500_000,
+                    },
                 ],
             },
         ];
@@ -196,7 +228,10 @@ pub fn generate_ai_captions() -> usize {
         let style = rd_ml::CaptionStyle::default();
         let (_tid, clips) = rd_ml::generate_caption_track(&segments, &style, "Subtitles");
         let count = clips.len();
-        let track_id = guard.project.timeline.add_track(TrackKind::Text, "Subtitles (AI)");
+        let track_id = guard
+            .project
+            .timeline
+            .add_track(TrackKind::Text, "Subtitles (AI)");
         if let Some(track) = guard.project.timeline.track_mut(track_id) {
             for c in clips {
                 track.add_clip(c);
@@ -225,10 +260,10 @@ pub fn start_export(preset_idx: usize) -> u64 {
 }
 
 pub fn get_export_progress(frame_counter: u64) -> f32 {
-    if let Ok(guard) = get_engine().lock() {
-        if let Some(job) = &guard.active_export_job {
-            return job.progress(frame_counter).fraction;
-        }
+    if let Ok(guard) = get_engine().lock()
+        && let Some(job) = &guard.active_export_job
+    {
+        return job.progress(frame_counter).fraction;
     }
     1.0
 }

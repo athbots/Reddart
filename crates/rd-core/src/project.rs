@@ -74,12 +74,16 @@ impl Project {
     /// This prevents corruption if the process or machine crashes mid-write.
     pub fn save_atomic(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         let path = path.as_ref();
-        let json = self.to_json().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let json = self
+            .to_json()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
         let temp_filename = format!(
             ".{}_{}.tmp",
-            path.file_name().and_then(|n| n.to_str()).unwrap_or("project"),
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project"),
             Uuid::new_v4()
         );
         let temp_path = parent.join(temp_filename);
@@ -100,7 +104,8 @@ impl Project {
     /// Load a project from a file.
     pub fn load_file(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        Self::from_json(&content).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Self::from_json(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Scan all clips and return paths of media files that do not exist on disk.
@@ -125,12 +130,11 @@ impl Project {
         let mut count = 0;
         for track in self.timeline.tracks_mut() {
             for clip in track.clips_mut() {
-                if let Some(src) = clip.source_path() {
-                    if src == old_path {
-                        if clip.set_source_path(new_path) {
-                            count += 1;
-                        }
-                    }
+                if let Some(src) = clip.source_path()
+                    && src == old_path
+                    && clip.set_source_path(new_path)
+                {
+                    count += 1;
                 }
             }
         }
@@ -171,7 +175,11 @@ mod tests {
 
         let mut project = Project::new("Atomic Test");
         let tid = project.timeline.add_track(crate::TrackKind::Video, "V1");
-        project.timeline.track_mut(tid).unwrap().add_clip(crate::Clip::new_video("missing_file.mp4", 0, 0, 5_000_000));
+        project
+            .timeline
+            .track_mut(tid)
+            .unwrap()
+            .add_clip(crate::Clip::new_video("missing_file.mp4", 0, 0, 5_000_000));
 
         // Save atomic
         project.save_atomic(&proj_path).unwrap();
@@ -191,7 +199,12 @@ mod tests {
         let mut relinked = loaded;
         let count = relinked.relink_media("missing_file.mp4", "new_valid_file.mp4");
         assert_eq!(count, 1);
-        assert_eq!(relinked.timeline.tracks()[0].clips()[0].source_path().unwrap(), "new_valid_file.mp4");
+        assert_eq!(
+            relinked.timeline.tracks()[0].clips()[0]
+                .source_path()
+                .unwrap(),
+            "new_valid_file.mp4"
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);

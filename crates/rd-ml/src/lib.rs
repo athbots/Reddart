@@ -15,7 +15,7 @@ pub mod segmentation;
 pub mod stabilize;
 pub mod tracking;
 
-pub use captions::{generate_caption_track, CaptionSegment, CaptionStyle, WordTiming};
+pub use captions::{CaptionSegment, CaptionStyle, WordTiming, generate_caption_track};
 pub use denoise::{AudioDenoiser, DenoiseConfig};
 pub use reframe::{AutoReframer, TargetAspect};
 pub use segmentation::SegmentationMask;

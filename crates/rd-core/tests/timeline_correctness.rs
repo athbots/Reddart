@@ -8,8 +8,8 @@
 //! - Track reordering and cross-track consistency
 
 use rd_core::{
-    command::{Command, CommandHistory},
     Clip, Project, TrackKind,
+    command::{Command, CommandHistory},
 };
 
 #[test]
@@ -63,7 +63,10 @@ fn test_trim_in_and_out_invariants() {
     history.undo(&mut project).unwrap();
     let restored_json = project.to_json().unwrap();
 
-    assert_eq!(initial_json, restored_json, "Undo must restore exact initial state");
+    assert_eq!(
+        initial_json, restored_json,
+        "Undo must restore exact initial state"
+    );
 }
 
 #[test]
@@ -90,7 +93,9 @@ fn test_split_clip_boundary_conditions() {
     assert!(track.split_clip_at(cid, 5_000_000).is_none());
 
     // Valid split at 2.5s (1.5s into clip)
-    let new_cid = track.split_clip_at(cid, 2_500_000).expect("Split should succeed");
+    let new_cid = track
+        .split_clip_at(cid, 2_500_000)
+        .expect("Split should succeed");
     assert_eq!(track.clips().len(), 2);
 
     let first = track.clip(cid).unwrap();
@@ -164,7 +169,10 @@ fn test_ripple_delete_compound_operation() {
     assert_eq!(c.position_us, 5_000_000, "Clip C restored to 5s");
 
     let restored_json = project.to_json().unwrap();
-    assert_eq!(initial_json, restored_json, "Full undo returns to original state");
+    assert_eq!(
+        initial_json, restored_json,
+        "Full undo returns to original state"
+    );
 }
 
 #[test]

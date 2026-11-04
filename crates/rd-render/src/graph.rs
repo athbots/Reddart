@@ -10,8 +10,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use rd_core::{ClipId, TimestampUs, TrackId};
 use crate::NodeId;
+use rd_core::{ClipId, TimestampUs, TrackId};
 
 /// Node types in the render DAG.
 #[derive(Debug, Clone)]
@@ -23,10 +23,7 @@ pub enum NodeKind {
         source_time_us: TimestampUs,
     },
     /// Shader effect pass (e.g. brightness, LUT, blur).
-    Effect {
-        effect_id: String,
-        params_hash: u64,
-    },
+    Effect { effect_id: String, params_hash: u64 },
     /// 2D Transform / spatial positioning (scale, translation, rotation, crop).
     Transform {
         x: f32,
@@ -37,15 +34,9 @@ pub enum NodeKind {
         opacity: f32,
     },
     /// Blend two layers together (base + overlay) using a blend mode.
-    Blend {
-        blend_mode: u32,
-        opacity: f32,
-    },
+    Blend { blend_mode: u32, opacity: f32 },
     /// Final output target (screen preview or encoder).
-    Output {
-        width: u32,
-        height: u32,
-    },
+    Output { width: u32, height: u32 },
 }
 
 /// A node in the render graph.
@@ -138,6 +129,7 @@ impl RenderGraph {
     }
 
     /// Add a 2D transform node.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_transform(
         &mut self,
         input: NodeId,
@@ -180,10 +172,20 @@ impl RenderGraph {
     }
 
     /// Add a blend node that composites an overlay over a base layer.
-    pub fn add_blend(&mut self, base: NodeId, overlay: NodeId, blend_mode: u32, opacity: f32) -> NodeId {
+    pub fn add_blend(
+        &mut self,
+        base: NodeId,
+        overlay: NodeId,
+        blend_mode: u32,
+        opacity: f32,
+    ) -> NodeId {
         let id = self.alloc_id();
         let base_hash = self.nodes.get(&base).map(|n| n.content_hash).unwrap_or(0);
-        let overlay_hash = self.nodes.get(&overlay).map(|n| n.content_hash).unwrap_or(0);
+        let overlay_hash = self
+            .nodes
+            .get(&overlay)
+            .map(|n| n.content_hash)
+            .unwrap_or(0);
 
         let mut hasher = DefaultHasher::new();
         "blend".hash(&mut hasher);
@@ -317,11 +319,8 @@ impl RenderGraph {
                                 k.hash(&mut param_hasher);
                                 v.to_bits().hash(&mut param_hasher);
                             }
-                            current = graph.add_effect(
-                                current,
-                                &effect.effect_id,
-                                param_hasher.finish(),
-                            );
+                            current =
+                                graph.add_effect(current, &effect.effect_id, param_hasher.finish());
                         }
                     }
 
@@ -427,8 +426,12 @@ mod tests {
     #[test]
     fn test_compile_timeline() {
         let mut project = rd_core::Project::new("Test Project");
-        let v1 = project.timeline.add_track(rd_core::TrackKind::Video, "Video 1");
-        let v2 = project.timeline.add_track(rd_core::TrackKind::Video, "Video 2");
+        let v1 = project
+            .timeline
+            .add_track(rd_core::TrackKind::Video, "Video 1");
+        let v2 = project
+            .timeline
+            .add_track(rd_core::TrackKind::Video, "Video 2");
 
         let clip1 = rd_core::Clip::new_video("clip1.mp4", 0, 0, 5_000_000);
         let clip2 = rd_core::Clip::new_video("clip2.mp4", 1_000_000, 0, 3_000_000);

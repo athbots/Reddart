@@ -48,7 +48,9 @@ impl SegmentationMask {
                 let x_min = x.saturating_sub(radius);
                 let x_max = (x + radius).min(w - 1);
                 let count = x_max - x_min + 1;
-                let sum: u32 = (x_min..=x_max).map(|ix| self.alpha_bytes[y * w + ix] as u32).sum();
+                let sum: u32 = (x_min..=x_max)
+                    .map(|ix| self.alpha_bytes[y * w + ix] as u32)
+                    .sum();
                 blurred[y * w + x] = (sum / count as u32) as u8;
             }
         }
@@ -80,4 +82,3 @@ mod tests {
         assert!(edge_val > 0 && edge_val < 255);
     }
 }
-

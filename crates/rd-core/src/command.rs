@@ -78,10 +78,7 @@ pub enum Command {
         index: usize,
     },
     /// Remove a track (stores complete track for undo).
-    RemoveTrack {
-        track: crate::Track,
-        index: usize,
-    },
+    RemoveTrack { track: crate::Track, index: usize },
     /// A group of commands applied atomically.
     Compound {
         label: String,
@@ -383,11 +380,7 @@ impl CommandHistory {
 
     /// Execute a command and push it onto the undo stack.
     /// Clears the redo stack (forward history is lost).
-    pub fn execute(
-        &mut self,
-        command: Command,
-        project: &mut Project,
-    ) -> Result<(), CommandError> {
+    pub fn execute(&mut self, command: Command, project: &mut Project) -> Result<(), CommandError> {
         command.apply(project)?;
         self.undo_stack.push(command);
         self.redo_stack.clear();
@@ -472,9 +465,7 @@ mod tests {
 
     fn make_test_project() -> Project {
         let mut project = Project::new("Test");
-        project
-            .timeline
-            .add_track(TrackKind::Video, "Video 1");
+        project.timeline.add_track(TrackKind::Video, "Video 1");
         project
     }
 

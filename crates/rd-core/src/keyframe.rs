@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::TimestampUs;
 
 /// Easing function for interpolation between keyframes.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum Easing {
     /// Linear interpolation (constant rate).
+    #[default]
     Linear,
     /// Ease in (starts slow, accelerates).
     EaseIn,
@@ -22,12 +23,6 @@ pub enum Easing {
     CubicBezier(f32, f32, f32, f32),
     /// Hold the previous value until the next keyframe (step function).
     Hold,
-}
-
-impl Default for Easing {
-    fn default() -> Self {
-        Easing::Linear
-    }
 }
 
 impl Easing {
@@ -46,9 +41,7 @@ impl Easing {
                     1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
                 }
             }
-            Easing::CubicBezier(x1, y1, x2, y2) => {
-                cubic_bezier_evaluate(t, *x1, *y1, *x2, *y2)
-            }
+            Easing::CubicBezier(x1, y1, x2, y2) => cubic_bezier_evaluate(t, *x1, *y1, *x2, *y2),
             Easing::Hold => 0.0, // Always returns start value
         }
     }
@@ -174,9 +167,7 @@ fn cubic_bezier_evaluate(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     };
 
     let sample_curve_derivative_x = |t: f32| -> f32 {
-        (3.0 * (1.0 - 3.0 * x2 + 3.0 * x1)) * t * t
-            + (2.0 * (3.0 * x2 - 6.0 * x1)) * t
-            + 3.0 * x1
+        (3.0 * (1.0 - 3.0 * x2 + 3.0 * x1)) * t * t + (2.0 * (3.0 * x2 - 6.0 * x1)) * t + 3.0 * x1
     };
 
     // Newton-Raphson iteration

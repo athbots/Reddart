@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use wgpu;
 
 /// GPU context holding wgpu device and queue.
 pub struct GpuContext {
@@ -32,7 +31,11 @@ impl GpuContext {
             .ok_or_else(|| anyhow::anyhow!("Failed to find a suitable GPU adapter"))?;
 
         let adapter_info = adapter.get_info();
-        log::info!("GPU Adapter: {} ({:?})", adapter_info.name, adapter_info.backend);
+        log::info!(
+            "GPU Adapter: {} ({:?})",
+            adapter_info.name,
+            adapter_info.backend
+        );
         log::info!("  Driver: {}", adapter_info.driver);
 
         // Request device with features needed for video editing

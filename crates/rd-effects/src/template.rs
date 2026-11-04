@@ -182,14 +182,17 @@ impl BeatDetector {
             idx += step;
         }
 
-        let mean_energy: f32 = energies.iter().map(|(_, e)| *e).sum::<f32>() / energies.len() as f32;
+        let mean_energy: f32 =
+            energies.iter().map(|(_, e)| *e).sum::<f32>() / energies.len() as f32;
         let threshold = mean_energy * threshold_ratio;
 
         let mut last_beat_sample = 0;
         let min_sample_distance = (self.sample_rate as usize) / 4; // Max 4 beats/sec (240 BPM limit)
 
         for (sample_idx, energy) in energies {
-            if energy > threshold && sample_idx.saturating_sub(last_beat_sample) > min_sample_distance {
+            if energy > threshold
+                && sample_idx.saturating_sub(last_beat_sample) > min_sample_distance
+            {
                 let timestamp_us = (sample_idx as i64 * 1_000_000) / self.sample_rate as i64;
                 onsets.push(timestamp_us);
                 last_beat_sample = sample_idx;
@@ -250,7 +253,13 @@ mod tests {
         assert_eq!(templates.len(), 3);
 
         for t in &templates {
-            let media = vec!["video1.mp4".into(), "video2.mp4".into(), "video3.mp4".into(), "video4.mp4".into(), "video5.mp4".into()];
+            let media = vec![
+                "video1.mp4".into(),
+                "video2.mp4".into(),
+                "video3.mp4".into(),
+                "video4.mp4".into(),
+                "video5.mp4".into(),
+            ];
             let project = t.instantiate(&media).expect("instantiate starter template");
             assert!(project.timeline.total_clip_count() >= 2);
             assert!(project.timeline.duration_us() > 0);

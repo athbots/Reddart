@@ -6,9 +6,9 @@
 //! Proxies mean even inactive layers are cheap to decode.
 //! Decoder crashes are caught and the clip decoder is transparently re-created.
 
-use std::collections::HashMap;
-use rd_core::ClipId;
 use crate::VideoDecoder;
+use rd_core::ClipId;
+use std::collections::HashMap;
 
 /// Entry in the decoder pool with LRU access tracking.
 struct PoolEntry {
@@ -52,12 +52,7 @@ impl DecoderPool {
 
     /// Insert or replace a decoder in the pool.
     /// If the pool exceeds `max_instances`, the least recently used decoder is evicted.
-    pub fn insert(
-        &mut self,
-        clip_id: ClipId,
-        source_path: String,
-        decoder: Box<dyn VideoDecoder>,
-    ) {
+    pub fn insert(&mut self, clip_id: ClipId, source_path: String, decoder: Box<dyn VideoDecoder>) {
         self.current_tick += 1;
 
         // Evict LRU if at capacity

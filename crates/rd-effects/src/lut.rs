@@ -3,7 +3,7 @@
 //! Section W2.2 of the Technical Proposal:
 //! Parses industry-standard .cube LUT files for cinematic color grading.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 /// A parsed 3D Look-Up Table.
 #[derive(Debug, Clone)]
@@ -43,20 +43,12 @@ impl Lut3D {
             } else if line.starts_with("DOMAIN_MIN") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 4 {
-                    domain_min = [
-                        parts[1].parse()?,
-                        parts[2].parse()?,
-                        parts[3].parse()?,
-                    ];
+                    domain_min = [parts[1].parse()?, parts[2].parse()?, parts[3].parse()?];
                 }
             } else if line.starts_with("DOMAIN_MAX") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 4 {
-                    domain_max = [
-                        parts[1].parse()?,
-                        parts[2].parse()?,
-                        parts[3].parse()?,
-                    ];
+                    domain_max = [parts[1].parse()?, parts[2].parse()?, parts[3].parse()?];
                 }
             } else {
                 // Must be RGB float values
@@ -158,4 +150,3 @@ LUT_3D_SIZE 2
         assert_eq!(&lut.data_rgba[last_idx..], &[1.0, 1.0, 1.0, 1.0]);
     }
 }
-

@@ -3,19 +3,21 @@
 //! Provides high-performance C-ABI exports for Swift/SwiftUI and Metal render pipelines
 //! under Path C (Shared Rust Native Core).
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
+use std::sync::atomic::{AtomicI64, Ordering};
 
-use rd_core::{Clip, CommandHistory, FrameRate, Project, TrackKind};
-use rd_render::quality::{GovernorConfig, QualityGovernor};
 use rd_audio::clock::AudioClock;
-use rd_ml::captions::{generate_caption_track, CaptionSegment, CaptionStyle, WordTiming};
+use rd_core::{Clip, CommandHistory, FrameRate, Project, TrackKind};
+use rd_ml::captions::{CaptionSegment, CaptionStyle, WordTiming, generate_caption_track};
 use rd_ml::denoise::{AudioDenoiser, DenoiseConfig};
 use rd_ml::reframe::{AutoReframer, TargetAspect};
+use rd_render::quality::{GovernorConfig, QualityGovernor};
 
 /// Global state holder for the Apple application instance
 pub struct AppleEngine {
@@ -35,7 +37,9 @@ impl AppleEngine {
         project.resolution.height = 1080;
         project.frame_rate = FrameRate::FPS_60;
 
-        let video_tid = project.timeline.add_track(TrackKind::Video, "Video Track 1");
+        let video_tid = project
+            .timeline
+            .add_track(TrackKind::Video, "Video Track 1");
         let clip1 = Clip::new_video("assets/sample_1.mp4", 0, 0, 4_000_000);
         let clip2 = Clip::new_video("assets/sample_2.mp4", 4_000_000, 0, 4_000_000);
         if let Some(track) = project.timeline.track_mut(video_tid) {
@@ -43,13 +47,17 @@ impl AppleEngine {
             track.add_clip(clip2);
         }
 
-        let audio_tid = project.timeline.add_track(TrackKind::Audio, "Audio Track 1");
+        let audio_tid = project
+            .timeline
+            .add_track(TrackKind::Audio, "Audio Track 1");
         let aclip = Clip::new_video("assets/audio/ambient.wav", 0, 0, 8_000_000);
         if let Some(track) = project.timeline.track_mut(audio_tid) {
             track.add_clip(aclip);
         }
 
-        project.timeline.add_track(TrackKind::Text, "Subtitle Track");
+        project
+            .timeline
+            .add_track(TrackKind::Text, "Subtitle Track");
 
         Self {
             project: Mutex::new(project),
@@ -60,6 +68,12 @@ impl AppleEngine {
             active_lut: Mutex::new("Natural Rec.709".into()),
             export_progress: Mutex::new(0.0),
         }
+    }
+}
+
+impl Default for AppleEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -108,12 +122,12 @@ pub extern "C" fn reddart_engine_split_clip(engine: *mut AppleEngine) -> i32 {
         let playhead = engine.playhead_us.load(Ordering::SeqCst);
         let mut proj = engine.project.lock();
         for track in proj.timeline.tracks_mut() {
-            if track.kind == TrackKind::Video {
-                if let Some(clip) = track.clip_at(playhead) {
-                    let cid = clip.id;
-                    if track.split_clip_at(cid, playhead).is_some() {
-                        return 1;
-                    }
+            if track.kind == TrackKind::Video
+                && let Some(clip) = track.clip_at(playhead)
+            {
+                let cid = clip.id;
+                if track.split_clip_at(cid, playhead).is_some() {
+                    return 1;
                 }
             }
         }
@@ -175,20 +189,20 @@ pub extern "C" fn reddart_engine_apply_lut(
         let mut proj = engine.project.lock();
         let playhead = engine.playhead_us.load(Ordering::SeqCst);
         for track in proj.timeline.tracks_mut() {
-            if let Some(cid) = track.clip_at(playhead).map(|c| c.id) {
-                if let Some(clip) = track.clip_mut(cid) {
-                    clip.effects.retain(|e| e.effect_id != "lut_3d");
-                    if name != "None" {
-                        let mut params = HashMap::new();
-                        params.insert("intensity".into(), 1.0);
-                        clip.effects.push(rd_core::ClipEffect {
-                            effect_id: "lut_3d".into(),
-                            parameters: params,
-                            enabled: true,
-                        });
-                    }
-                    return 1;
+            if let Some(cid) = track.clip_at(playhead).map(|c| c.id)
+                && let Some(clip) = track.clip_mut(cid)
+            {
+                clip.effects.retain(|e| e.effect_id != "lut_3d");
+                if name != "None" {
+                    let mut params = HashMap::new();
+                    params.insert("intensity".into(), 1.0);
+                    clip.effects.push(rd_core::ClipEffect {
+                        effect_id: "lut_3d".into(),
+                        parameters: params,
+                        enabled: true,
+                    });
                 }
+                return 1;
             }
         }
     }
@@ -234,18 +248,28 @@ pub extern "C" fn reddart_string_free(ptr: *mut c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn reddart_engine_generate_captions(engine: *mut AppleEngine) -> *mut c_char {
     if let Some(engine) = unsafe { engine.as_ref() } {
-        let segments = vec![
-            CaptionSegment {
-                text: "Apple ProMotion 120Hz Editing".into(),
-                start_us: 200_000,
-                end_us: 2_500_000,
-                words: vec![
-                    WordTiming { word: "Apple".into(), start_us: 200_000, end_us: 600_000 },
-                    WordTiming { word: "ProMotion".into(), start_us: 700_000, end_us: 1_400_000 },
-                    WordTiming { word: "Editing".into(), start_us: 1_500_000, end_us: 2_500_000 },
-                ],
-            },
-        ];
+        let segments = vec![CaptionSegment {
+            text: "Apple ProMotion 120Hz Editing".into(),
+            start_us: 200_000,
+            end_us: 2_500_000,
+            words: vec![
+                WordTiming {
+                    word: "Apple".into(),
+                    start_us: 200_000,
+                    end_us: 600_000,
+                },
+                WordTiming {
+                    word: "ProMotion".into(),
+                    start_us: 700_000,
+                    end_us: 1_400_000,
+                },
+                WordTiming {
+                    word: "Editing".into(),
+                    start_us: 1_500_000,
+                    end_us: 2_500_000,
+                },
+            ],
+        }];
         let style = CaptionStyle::default();
         let (_tid, clips) = generate_caption_track(&segments, &style, "Subtitles (AI)");
         let count = clips.len();
@@ -288,9 +312,15 @@ pub extern "C" fn reddart_engine_auto_reframe(
         TargetAspect::Square1x1
     };
     let reframer = AutoReframer::new(target);
-    let trajectory = vec![
-        (0i64, rd_ml::BoundingBox { x: 500.0, y: 300.0, width: 250.0, height: 400.0 }),
-    ];
+    let trajectory = vec![(
+        0i64,
+        rd_ml::BoundingBox {
+            x: 500.0,
+            y: 300.0,
+            width: 250.0,
+            height: 400.0,
+        },
+    )];
     let keyframe_track = reframer.solve_reframe_path(1920, 1080, &trajectory);
     let result = serde_json::json!({
         "status": "success",
@@ -316,7 +346,10 @@ pub extern "C" fn reddart_engine_start_export(
         } else {
             "ProRes 422"
         };
-        log::info!("Starting Apple VideoToolbox hardware export preset: {}", preset_str);
+        log::info!(
+            "Starting Apple VideoToolbox hardware export preset: {}",
+            preset_str
+        );
         *engine.export_progress.lock() = 0.05;
         return 1;
     }
@@ -359,7 +392,7 @@ pub extern "C" fn reddart_engine_render_frame_to_rgba(
     let total_pixels = (width * height) as usize;
     unsafe {
         let slice = std::slice::from_raw_parts_mut(buffer_out, total_pixels * 4);
-        for pixel in slice.chunks_exact_mut(4) {
+        for pixel in slice.as_chunks_mut::<4>().0 {
             pixel[0] = r as u8;
             pixel[1] = g as u8;
             pixel[2] = b as u8;

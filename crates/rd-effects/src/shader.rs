@@ -10,3 +10,9 @@ impl ShaderManager {
         Self {}
     }
 }
+
+impl Default for ShaderManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

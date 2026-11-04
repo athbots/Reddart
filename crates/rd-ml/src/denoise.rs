@@ -57,7 +57,8 @@ impl AudioDenoiser {
         // Convert reduction dB to linear gain floor (e.g. -15dB -> ~0.177)
         let gain_floor = 10.0_f32.powf(-self.config.reduction_db / 20.0);
         let attack_coeff = (-1.0 / (self.config.attack_ms * 0.001 * self.sample_rate as f32)).exp();
-        let release_coeff = (-1.0 / (self.config.release_ms * 0.001 * self.sample_rate as f32)).exp();
+        let release_coeff =
+            (-1.0 / (self.config.release_ms * 0.001 * self.sample_rate as f32)).exp();
 
         // 1. Initial pass: estimate noise floor if quiet
         let mut sum_abs = 0.0_f32;
@@ -108,7 +109,11 @@ mod tests {
 
         // Samples must be attenuated by the gain floor
         let last_val = noise_samples[noise_samples.len() - 1];
-        assert!(last_val < 0.003, "Expected noise attenuation, got {}", last_val);
+        assert!(
+            last_val < 0.003,
+            "Expected noise attenuation, got {}",
+            last_val
+        );
 
         // Voice: high amplitude 0.6
         let mut voice_samples = vec![0.6_f32; 4800];
@@ -116,7 +121,10 @@ mod tests {
 
         // Speech must remain unattenuated
         let voice_val = voice_samples[voice_samples.len() - 1];
-        assert!((voice_val - 0.6).abs() < 0.05, "Expected preserved voice level, got {}", voice_val);
+        assert!(
+            (voice_val - 0.6).abs() < 0.05,
+            "Expected preserved voice level, got {}",
+            voice_val
+        );
     }
 }
-

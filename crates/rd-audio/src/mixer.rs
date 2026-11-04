@@ -4,9 +4,9 @@
 //! Audio is mixed in stereo 32-bit floating point PCM at 48 kHz.
 //! Zero allocations, locks, or system calls in the audio render callback.
 
-use std::sync::Arc;
 use crate::clock::AudioClock;
 use crate::{CHANNELS, SAMPLE_RATE};
+use std::sync::Arc;
 
 /// Audio track channel data for real-time mixing.
 pub struct AudioTrackInput {
@@ -62,8 +62,8 @@ impl AudioMixer {
             let available = track.pcm_data.len().saturating_sub(track.position_samples);
             let samples_to_mix = total_samples.min(available);
 
-            for i in 0..samples_to_mix {
-                output[i] += track.pcm_data[track.position_samples + i] * track_volume;
+            for (i, out_sample) in output.iter_mut().enumerate().take(samples_to_mix) {
+                *out_sample += track.pcm_data[track.position_samples + i] * track_volume;
             }
 
             track.position_samples += samples_to_mix;

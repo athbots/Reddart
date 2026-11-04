@@ -116,11 +116,11 @@ impl ResultCache {
             .min_by_key(|(_, entry)| entry.last_used_tick)
             .map(|(key, _)| *key);
 
-        if let Some(key) = oldest_key {
-            if let Some(evicted) = self.entries.remove(&key) {
-                self.used_bytes = self.used_bytes.saturating_sub(evicted.byte_size);
-                return true;
-            }
+        if let Some(key) = oldest_key
+            && let Some(evicted) = self.entries.remove(&key)
+        {
+            self.used_bytes = self.used_bytes.saturating_sub(evicted.byte_size);
+            return true;
         }
 
         false
@@ -158,4 +158,3 @@ impl ResultCache {
         self.entries.is_empty()
     }
 }
-

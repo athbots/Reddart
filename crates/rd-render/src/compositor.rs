@@ -5,9 +5,9 @@
 //! - Result cache: reuses cached intermediate textures by content hash.
 //! - Single WGSL shader definitions running portably across backends.
 
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 
 use crate::cache::ResultCache;
 use rd_effects::registry::EffectRegistry;
@@ -199,11 +199,12 @@ impl Compositor {
                 ],
             });
 
-        let blend_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Blend Pipeline Layout"),
-            bind_group_layouts: &[&blend_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let blend_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Blend Pipeline Layout"),
+                bind_group_layouts: &[&blend_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let blend_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Blend Pipeline"),
@@ -335,11 +336,13 @@ impl Compositor {
             contrast,
             _padding: [0.0; 2],
         };
-        let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BC Uniform Buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BC Uniform Buffer"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BC Bind Group"),
@@ -397,11 +400,13 @@ impl Compositor {
             blend_mode,
             _padding: [0.0; 2],
         };
-        let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Blend Uniform Buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Blend Uniform Buffer"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blend Bind Group"),

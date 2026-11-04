@@ -4,9 +4,9 @@
 //! The scheduler reads playhead velocity and direction and decodes 12 to 24
 //! frames ahead (or behind, if scrubbing in reverse) into a ring buffer.
 
-use std::collections::VecDeque;
-use rd_core::TimestampUs;
 use crate::DecodedFrame;
+use rd_core::TimestampUs;
+use std::collections::VecDeque;
 
 /// Direction of playhead movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,11 @@ impl PrefetchRingBuffer {
     }
 
     /// Look up a prefetched frame closest to the target timestamp (within tolerance).
-    pub fn get_frame_at(&self, target_pts_us: TimestampUs, tolerance_us: i64) -> Option<&DecodedFrame> {
+    pub fn get_frame_at(
+        &self,
+        target_pts_us: TimestampUs,
+        tolerance_us: i64,
+    ) -> Option<&DecodedFrame> {
         self.frames
             .iter()
             .min_by_key(|f| (f.pts_us - target_pts_us).abs())
@@ -68,7 +72,12 @@ impl PrefetchRingBuffer {
     }
 
     /// Update playhead tracking state to optimize prefetch direction.
-    pub fn update_playhead(&mut self, current_pts_us: TimestampUs, prev_pts_us: TimestampUs, delta_time_s: f64) {
+    pub fn update_playhead(
+        &mut self,
+        current_pts_us: TimestampUs,
+        prev_pts_us: TimestampUs,
+        delta_time_s: f64,
+    ) {
         if delta_time_s <= 0.0 {
             return;
         }

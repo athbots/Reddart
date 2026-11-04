@@ -4,8 +4,8 @@
 //! Saliency and subject tracking path solver that converts 16:9 landscape to 9:16 vertical
 //! or 1:1 square while maintaining dynamic framing and smooth camera panning.
 
-use rd_core::{Easing, Keyframe, KeyframeTrack, TimestampUs};
 use crate::tracking::BoundingBox;
+use rd_core::{Easing, Keyframe, KeyframeTrack, TimestampUs};
 use serde::{Deserialize, Serialize};
 
 /// Target aspect ratio format for auto-reframing.
@@ -69,7 +69,8 @@ impl AutoReframer {
         for &(ts, bbox) in detections {
             let (target_cx, _) = bbox.center();
             // Smoothly move camera towards target center (EMA)
-            smoothed_center = smoothed_center * (1.0 - self.smoothing_factor) + target_cx * self.smoothing_factor;
+            smoothed_center =
+                smoothed_center * (1.0 - self.smoothing_factor) + target_cx * self.smoothing_factor;
 
             // Compute normalized offset from center (0.5)
             let pan_offset = (smoothed_center - 0.5).clamp(-max_pan, max_pan);
@@ -96,9 +97,33 @@ mod tests {
         let reframer = AutoReframer::new(TargetAspect::Vertical9x16);
 
         let detections = vec![
-            (0, BoundingBox { x: 0.1, y: 0.2, width: 0.2, height: 0.4 }),
-            (1_000_000, BoundingBox { x: 0.4, y: 0.2, width: 0.2, height: 0.4 }),
-            (2_000_000, BoundingBox { x: 0.7, y: 0.2, width: 0.2, height: 0.4 }),
+            (
+                0,
+                BoundingBox {
+                    x: 0.1,
+                    y: 0.2,
+                    width: 0.2,
+                    height: 0.4,
+                },
+            ),
+            (
+                1_000_000,
+                BoundingBox {
+                    x: 0.4,
+                    y: 0.2,
+                    width: 0.2,
+                    height: 0.4,
+                },
+            ),
+            (
+                2_000_000,
+                BoundingBox {
+                    x: 0.7,
+                    y: 0.2,
+                    width: 0.2,
+                    height: 0.4,
+                },
+            ),
         ];
 
         let track = reframer.solve_reframe_path(1920, 1080, &detections);
@@ -108,7 +133,9 @@ mod tests {
         // Pan offset must shift to follow the subject.
         let k0 = track.keyframes()[0].value;
         let k2 = track.keyframes()[2].value;
-        assert!(k0 > k2, "Pan offset must shift leftwards to compensate for rightward movement");
+        assert!(
+            k0 > k2,
+            "Pan offset must shift leftwards to compensate for rightward movement"
+        );
     }
 }
-

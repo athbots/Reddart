@@ -32,7 +32,10 @@ impl VideoStabilizer {
     }
 
     /// Calculate smoothed motion path and return compensatory (offset_x, offset_y) keyframe tracks.
-    pub fn compute_compensation(&self, trajectory: &[FrameMotion]) -> (KeyframeTrack, KeyframeTrack) {
+    pub fn compute_compensation(
+        &self,
+        trajectory: &[FrameMotion],
+    ) -> (KeyframeTrack, KeyframeTrack) {
         let mut track_x = KeyframeTrack::new("stab_x");
         let mut track_y = KeyframeTrack::new("stab_y");
 
@@ -111,7 +114,9 @@ mod tests {
         // Compensation should oppose raw jitter
         let k0 = kx.keyframes()[0].value;
         let k1 = kx.keyframes()[1].value;
-        assert!(k0 * k1 < 0.0, "Compensation should alternate to cancel jitter");
+        assert!(
+            k0 * k1 < 0.0,
+            "Compensation should alternate to cancel jitter"
+        );
     }
 }
-

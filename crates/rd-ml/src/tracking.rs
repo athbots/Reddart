@@ -73,8 +73,24 @@ mod tests {
     #[test]
     fn test_tracking_to_keyframes() {
         let mut path = TrackedPath::new();
-        path.add_point(0, BoundingBox { x: 0.1, y: 0.1, width: 0.2, height: 0.2 });
-        path.add_point(1_000_000, BoundingBox { x: 0.5, y: 0.3, width: 0.2, height: 0.2 });
+        path.add_point(
+            0,
+            BoundingBox {
+                x: 0.1,
+                y: 0.1,
+                width: 0.2,
+                height: 0.2,
+            },
+        );
+        path.add_point(
+            1_000_000,
+            BoundingBox {
+                x: 0.5,
+                y: 0.3,
+                width: 0.2,
+                height: 0.2,
+            },
+        );
 
         let (kx, ky) = path.to_keyframe_tracks();
         assert_eq!(kx.keyframes().len(), 2);

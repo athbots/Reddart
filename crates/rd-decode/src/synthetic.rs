@@ -3,9 +3,9 @@
 //! Generates procedural frames (color bars, animated gradient, or moving bounce)
 //! for testing, proxy fallback, and zero-hardware previewing.
 
+use crate::{DecodedFrame, DecoderCapabilities, VideoDecoder};
 use anyhow::Result;
 use rd_core::{DurationUs, TimestampUs};
-use crate::{DecoderCapabilities, DecodedFrame, VideoDecoder};
 
 /// Pattern style rendered by the synthetic decoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +31,13 @@ pub struct SyntheticDecoder {
 
 impl SyntheticDecoder {
     /// Create a new synthetic decoder with custom dimensions, duration, and pattern style.
-    pub fn new(width: u32, height: u32, duration_us: DurationUs, fps: f64, style: PatternStyle) -> Self {
+    pub fn new(
+        width: u32,
+        height: u32,
+        duration_us: DurationUs,
+        fps: f64,
+        style: PatternStyle,
+    ) -> Self {
         Self {
             width: width.max(16),
             height: height.max(16),
@@ -75,7 +81,7 @@ impl SyntheticDecoder {
         let h = self.height as usize;
 
         // Background: dark slate gray
-        for chunk in buf.chunks_exact_mut(4) {
+        for chunk in buf.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&[24, 28, 36, 255]);
         }
 
@@ -196,4 +202,3 @@ mod tests {
         assert_eq!(frame2.frame_index, 60); // 2s * 30fps
     }
 }
-

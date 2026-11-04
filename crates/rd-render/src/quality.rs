@@ -235,10 +235,19 @@ mod tests {
 
     #[test]
     fn test_scale_dimensions() {
-        assert_eq!(PreviewScale::Full.scale_dimensions(1920, 1080), (1920, 1080));
+        assert_eq!(
+            PreviewScale::Full.scale_dimensions(1920, 1080),
+            (1920, 1080)
+        );
         assert_eq!(PreviewScale::Half.scale_dimensions(1920, 1080), (960, 540));
-        assert_eq!(PreviewScale::ThreeQuarter.scale_dimensions(1920, 1080), (1440, 810));
-        assert_eq!(PreviewScale::Quarter.scale_dimensions(1920, 1080), (480, 270));
+        assert_eq!(
+            PreviewScale::ThreeQuarter.scale_dimensions(1920, 1080),
+            (1440, 810)
+        );
+        assert_eq!(
+            PreviewScale::Quarter.scale_dimensions(1920, 1080),
+            (480, 270)
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Effect registry: loads and manages available WGSL effects and declarative manifests.
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::CostClass;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Parameter data type supported by effect shaders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,11 +43,13 @@ pub struct EffectManifest {
 }
 
 /// Built-in shader sources bundled directly with the core.
-pub const BRIGHTNESS_CONTRAST_WGSL: &str = include_str!("../../../effects/brightness_contrast/shader.wgsl");
+pub const BRIGHTNESS_CONTRAST_WGSL: &str =
+    include_str!("../../../effects/brightness_contrast/shader.wgsl");
 pub const COMPOSITE_BLEND_WGSL: &str = include_str!("../../../effects/composite_blend/shader.wgsl");
 pub const TEXT_SDF_WGSL: &str = include_str!("../../../effects/text_sdf/shader.wgsl");
 pub const CROSS_DISSOLVE_WGSL: &str = include_str!("../../../effects/cross_dissolve/shader.wgsl");
-pub const DIRECTIONAL_WIPE_WGSL: &str = include_str!("../../../effects/directional_wipe/shader.wgsl");
+pub const DIRECTIONAL_WIPE_WGSL: &str =
+    include_str!("../../../effects/directional_wipe/shader.wgsl");
 pub const CHROMA_KEY_WGSL: &str = include_str!("../../../effects/chroma_key/shader.wgsl");
 pub const LUT_3D_WGSL: &str = include_str!("../../../effects/lut_3d/shader.wgsl");
 

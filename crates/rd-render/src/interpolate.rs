@@ -55,4 +55,3 @@ mod tests {
         assert_eq!(out, vec![200u8; 16]);
     }
 }
-

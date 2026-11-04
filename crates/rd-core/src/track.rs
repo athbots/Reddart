@@ -107,9 +107,9 @@ impl Track {
 
     /// Get the clip at a given timestamp, if any.
     pub fn clip_at(&self, time_us: TimestampUs) -> Option<&Clip> {
-        self.clips.iter().find(|c| {
-            time_us >= c.position_us && time_us < c.position_us + c.duration_us()
-        })
+        self.clips
+            .iter()
+            .find(|c| time_us >= c.position_us && time_us < c.position_us + c.duration_us())
     }
 
     /// Find the nearest snap point to a given timestamp.
@@ -124,11 +124,7 @@ impl Track {
     }
 
     /// Split a clip at a given timestamp. Returns the new clip ID if split occurred.
-    pub fn split_clip_at(
-        &mut self,
-        clip_id: ClipId,
-        split_time_us: TimestampUs,
-    ) -> Option<ClipId> {
+    pub fn split_clip_at(&mut self, clip_id: ClipId, split_time_us: TimestampUs) -> Option<ClipId> {
         let clip_index = self.clips.iter().position(|c| c.id == clip_id)?;
         let clip = &self.clips[clip_index];
 

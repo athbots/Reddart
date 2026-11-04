@@ -12,16 +12,13 @@ use rd_core::{Clip, CommandHistory, Project, TrackKind};
 #[test]
 fn test_fuzz_1000_clips_and_timeline_scrub() {
     let mut project = Project::new("Stress Project");
-    let track_id = project.timeline.add_track(TrackKind::Video, "Video Stress Track");
+    let track_id = project
+        .timeline
+        .add_track(TrackKind::Video, "Video Stress Track");
 
     let track = project.timeline.track_mut(track_id).unwrap();
     for i in 0..1000 {
-        let clip = Clip::new_video(
-            format!("clip_{}.mp4", i),
-            i * 100_000,
-            0,
-            500_000,
-        );
+        let clip = Clip::new_video(format!("clip_{}.mp4", i), i * 100_000, 0, 500_000);
         track.add_clip(clip);
     }
 
@@ -36,7 +33,10 @@ fn test_fuzz_1000_clips_and_timeline_scrub() {
 
     // Out-of-bounds scrub tests
     assert_eq!(project.timeline.active_tracks_at(-100_000).len(), 0);
-    assert_eq!(project.timeline.active_tracks_at(1_000_000_000_000).len(), 0);
+    assert_eq!(
+        project.timeline.active_tracks_at(1_000_000_000_000).len(),
+        0
+    );
 }
 
 #[test]

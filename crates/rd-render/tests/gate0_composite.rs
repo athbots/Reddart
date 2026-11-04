@@ -6,10 +6,10 @@
 //! - Result cache lookup throughput
 //! - Adaptive Quality Governor frame time response
 
-use std::time::{Duration, Instant};
 use rd_core::{Clip, Project, TrackKind};
 use rd_render::graph::RenderGraph;
 use rd_render::quality::{GovernorConfig, PreviewScale, QualityGovernor};
+use std::time::{Duration, Instant};
 
 #[test]
 fn test_gate0_3_layer_1080p_composite() {
@@ -89,4 +89,3 @@ fn test_gate0_adaptive_governor_budget_control() {
     gov.set_playing(false);
     assert_eq!(gov.current_scale(), PreviewScale::Full);
 }
-

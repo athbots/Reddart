@@ -15,13 +15,15 @@
 //!   - wgpu submit + present latency
 //!   - Actual video decoder decode_next() latency on real media
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use rd_core::{Clip, Project, TrackKind};
 use rd_render::graph::RenderGraph;
+use std::collections::HashMap;
+use std::time::Instant;
 
 fn percentile(sorted: &[f64], pct: f64) -> f64 {
-    if sorted.is_empty() { return 0.0; }
+    if sorted.is_empty() {
+        return 0.0;
+    }
     let idx = ((pct / 100.0) * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
 }
@@ -30,15 +32,12 @@ fn run_benchmark(label: &str, track_count: usize, clips_per_track: usize, iterat
     // Build project
     let mut project = Project::new(format!("Benchmark_{}", label));
     for t in 0..track_count {
-        let tid = project.timeline.add_track(TrackKind::Video, format!("V{}", t + 1));
+        let tid = project
+            .timeline
+            .add_track(TrackKind::Video, format!("V{}", t + 1));
         for c in 0..clips_per_track {
             let start_us = (c as i64) * 5_000_000; // 5-sec clips
-            let clip = Clip::new_video(
-                format!("clip_{}_{}_.mp4", t, c),
-                start_us,
-                0,
-                5_000_000,
-            );
+            let clip = Clip::new_video(format!("clip_{}_{}_.mp4", t, c), start_us, 0, 5_000_000);
             project.timeline.track_mut(tid).unwrap().add_clip(clip);
         }
     }
@@ -94,13 +93,22 @@ fn run_benchmark(label: &str, track_count: usize, clips_per_track: usize, iterat
 
     println!("┌─────────────────────────────────────────────────────────┐");
     println!("│ Benchmark: {:45} │", label);
-    println!("│ Tracks: {:<3}  Clips/track: {:<3}  Iterations: {:<6}       │", track_count, clips_per_track, iterations);
+    println!(
+        "│ Tracks: {:<3}  Clips/track: {:<3}  Iterations: {:<6}       │",
+        track_count, clips_per_track, iterations
+    );
     println!("├────────────┬──────────┬──────────┬──────────┬───────────┤");
     println!("│ Metric     │   min    │   p50    │   p95    │    p99    │");
     println!("├────────────┼──────────┼──────────┼──────────┼───────────┤");
-    println!("│ Latency    │ {:6.2}µs │ {:6.2}µs │ {:6.2}µs │ {:7.2}µs │", min, p50, p95, p99);
+    println!(
+        "│ Latency    │ {:6.2}µs │ {:6.2}µs │ {:6.2}µs │ {:7.2}µs │",
+        min, p50, p95, p99
+    );
     println!("├────────────┴──────────┴──────────┴──────────┴───────────┤");
-    println!("│ mean={:.2}µs  max={:.2}µs                               │", mean, max);
+    println!(
+        "│ mean={:.2}µs  max={:.2}µs                               │",
+        mean, max
+    );
     println!("└─────────────────────────────────────────────────────────┘");
     println!();
 
@@ -145,4 +153,3 @@ fn main() {
     println!("The remaining budget is consumed by decode, GPU upload, and present.");
     println!("═══════════════════════════════════════════════════════════");
 }
-

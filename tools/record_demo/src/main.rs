@@ -9,6 +9,12 @@
 //! 6. On-Device AI Auto-Captions (Whisper) & Audio Denoise
 //! 7. Hardware Video Export & Multi-Platform Deliverables Showcase
 
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::if_same_then_else
+)]
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -143,7 +149,17 @@ impl Framebuffer {
         }
     }
 
-    pub fn fill_rect(&mut self, x: usize, y: usize, w: usize, h: usize, r: u8, g: u8, b: u8, a: u8) {
+    pub fn fill_rect(
+        &mut self,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) {
         let max_x = (x + w).min(WIDTH);
         let max_y = (y + h).min(HEIGHT);
         for cy in y..max_y {
@@ -165,21 +181,30 @@ impl Framebuffer {
         b: u8,
     ) {
         self.fill_rect(x, y, w, thickness, r, g, b, 255);
-        self.fill_rect(x, y + h.saturating_sub(thickness), w, thickness, r, g, b, 255);
+        self.fill_rect(
+            x,
+            y + h.saturating_sub(thickness),
+            w,
+            thickness,
+            r,
+            g,
+            b,
+            255,
+        );
         self.fill_rect(x, y, thickness, h, r, g, b, 255);
-        self.fill_rect(x + w.saturating_sub(thickness), y, thickness, h, r, g, b, 255);
+        self.fill_rect(
+            x + w.saturating_sub(thickness),
+            y,
+            thickness,
+            h,
+            r,
+            g,
+            b,
+            255,
+        );
     }
 
-    pub fn draw_text(
-        &mut self,
-        x: usize,
-        y: usize,
-        text: &str,
-        scale: usize,
-        r: u8,
-        g: u8,
-        b: u8,
-    ) {
+    pub fn draw_text(&mut self, x: usize, y: usize, text: &str, scale: usize, r: u8, g: u8, b: u8) {
         let mut cur_x = x;
         for c in text.chars() {
             let glyph = font_8x8::get_glyph(c);
@@ -258,7 +283,15 @@ fn render_intro_title(fb: &mut Framebuffer, t: f32) {
     }
 
     // Footer Tech Spec
-    fb.draw_text(520, 840, "WINDOWS   *   ANDROID   *   MACOS   *   IOS", 2, 170, 170, 190);
+    fb.draw_text(
+        520,
+        840,
+        "WINDOWS   *   ANDROID   *   MACOS   *   IOS",
+        2,
+        170,
+        170,
+        190,
+    );
     fb.draw_text(670, 880, "STANDALONE 9.3 MB NATIVE BINARY", 2, 76, 217, 100);
 }
 
@@ -271,9 +304,33 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(0, 0, WIDTH, 48, 28, 28, 34, 255);
     fb.fill_rect(0, 47, WIDTH, 1, 46, 46, 56, 255);
 
-    fb.draw_text(16, 16, "REDDART 1.0 (STUDIO PRO) - 120HZ ZERO-LAG ENGINE", 2, 0, 229, 255);
-    fb.draw_text(720, 18, "File   Edit   Timeline   Effects   Color   AI   Export", 2, 170, 170, 185);
-    fb.draw_text(1520, 18, "[F1] Shortcuts  |  Audio Clock Master: 48kHz", 2, 76, 217, 100);
+    fb.draw_text(
+        16,
+        16,
+        "REDDART 1.0 (STUDIO PRO) - 120HZ ZERO-LAG ENGINE",
+        2,
+        0,
+        229,
+        255,
+    );
+    fb.draw_text(
+        720,
+        18,
+        "File   Edit   Timeline   Effects   Color   AI   Export",
+        2,
+        170,
+        170,
+        185,
+    );
+    fb.draw_text(
+        1520,
+        18,
+        "[F1] Shortcuts  |  Audio Clock Master: 48kHz",
+        2,
+        76,
+        217,
+        100,
+    );
 
     // 3. Left Panel: Project Media, 3D LUTs & Templates (x: 0..340, y: 48..700)
     fb.fill_rect(0, 48, 340, 652, 24, 24, 30, 255);
@@ -282,14 +339,46 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     // Tabs
     fb.fill_rect(8, 56, 324, 34, 34, 34, 42, 255);
     fb.draw_text(16, 66, "Media Bin", 2, 255, 255, 255);
-    let lut_tab_col = if t >= 18.5 && t < 23.5 { (0, 255, 255) } else { (180, 180, 190) };
-    fb.draw_text(130, 66, "3D LUTs", 2, lut_tab_col.0, lut_tab_col.1, lut_tab_col.2);
-    let ai_tab_col = if t >= 23.5 && t < 28.0 { (0, 255, 255) } else { (180, 180, 190) };
-    fb.draw_text(230, 66, "AI Tools", 2, ai_tab_col.0, ai_tab_col.1, ai_tab_col.2);
+    let lut_tab_col = if (18.5..23.5).contains(&t) {
+        (0, 255, 255)
+    } else {
+        (180, 180, 190)
+    };
+    fb.draw_text(
+        130,
+        66,
+        "3D LUTs",
+        2,
+        lut_tab_col.0,
+        lut_tab_col.1,
+        lut_tab_col.2,
+    );
+    let ai_tab_col = if (23.5..28.0).contains(&t) {
+        (0, 255, 255)
+    } else {
+        (180, 180, 190)
+    };
+    fb.draw_text(
+        230,
+        66,
+        "AI Tools",
+        2,
+        ai_tab_col.0,
+        ai_tab_col.1,
+        ai_tab_col.2,
+    );
 
     // Media Asset Bin
     fb.draw_text(16, 108, "PROJECT MEDIA ASSETS", 2, 120, 120, 140);
-    fb.draw_text(24, 136, "[VID] 4K_Vlog_A_Roll.mp4 (60fps)", 2, 220, 220, 230);
+    fb.draw_text(
+        24,
+        136,
+        "[VID] 4K_Vlog_A_Roll.mp4 (60fps)",
+        2,
+        220,
+        220,
+        230,
+    );
     fb.draw_text(24, 166, "[VID] B_Roll_Drone_1080p.mp4", 2, 220, 220, 230);
     fb.draw_text(24, 196, "[AUD] Cinematic_Synth_48k.wav", 2, 76, 217, 100);
 
@@ -328,11 +417,27 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
 
     // AI Neural Engine section
     fb.draw_text(16, 470, "ON-DEVICE AI SUITE", 2, 120, 120, 140);
-    let caption_status = if t >= 23.5 { "[ACTIVE] Whisper Captions" } else { "[*] Whisper Auto Captions" };
-    let denoise_status = if t >= 23.5 { "[ACTIVE] Denoise (-15dB)" } else { "[*] Spectral Denoise DSP" };
-    let reframe_status = if t >= 23.5 { "[ACTIVE] 9:16 Auto Reframe" } else { "[*] Auto Reframe (9:16)" };
+    let caption_status = if t >= 23.5 {
+        "[ACTIVE] Whisper Captions"
+    } else {
+        "[*] Whisper Auto Captions"
+    };
+    let denoise_status = if t >= 23.5 {
+        "[ACTIVE] Denoise (-15dB)"
+    } else {
+        "[*] Spectral Denoise DSP"
+    };
+    let reframe_status = if t >= 23.5 {
+        "[ACTIVE] 9:16 Auto Reframe"
+    } else {
+        "[*] Auto Reframe (9:16)"
+    };
 
-    let c_col = if t >= 23.5 { (0, 255, 255) } else { (255, 180, 50) };
+    let c_col = if t >= 23.5 {
+        (0, 255, 255)
+    } else {
+        (255, 180, 50)
+    };
     fb.draw_text(24, 500, caption_status, 2, c_col.0, c_col.1, c_col.2);
     fb.draw_text(24, 532, denoise_status, 2, 76, 217, 100);
     fb.draw_text(24, 564, reframe_status, 2, 255, 180, 50);
@@ -365,7 +470,7 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.draw_rect_outline(vx - 2, vy - 2, vw + 4, vh + 4, 2, 50, 50, 65);
 
     // Playhead & Scrub Simulation Math
-    let is_scrubbing = t >= 9.0 && t < 14.0;
+    let is_scrubbing = (9.0..14.0).contains(&t);
     let playhead_secs = if t < 9.0 {
         (t - 4.5) * 1.0 // Normal playback
     } else if t < 14.0 {
@@ -386,7 +491,9 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
         for dx in (0..vw).step_by(2) {
             let nx = dx as f32 / vw as f32;
 
-            let wave1 = (nx * 5.0 + playhead_secs * 2.5).sin() * (ny * 5.0 + playhead_secs).cos() * 0.5 + 0.5;
+            let wave1 =
+                (nx * 5.0 + playhead_secs * 2.5).sin() * (ny * 5.0 + playhead_secs).cos() * 0.5
+                    + 0.5;
             let dist = ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)).sqrt();
             let wave2 = (dist * 10.0 - playhead_secs * 4.0).sin() * 0.5 + 0.5;
 
@@ -398,7 +505,11 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
             if active_lut_name == "Teal & Orange" {
                 r = (r as f32 * 1.4).min(255.0) as u8;
                 g = (g as f32 * 0.95) as u8;
-                b = if wave1 > 0.5 { (b as f32 * 0.7) as u8 } else { (b as f32 * 1.35).min(255.0) as u8 };
+                b = if wave1 > 0.5 {
+                    (b as f32 * 0.7) as u8
+                } else {
+                    (b as f32 * 1.35).min(255.0) as u8
+                };
             } else if active_lut_name == "Warm Sunlight" {
                 r = (r as f32 * 1.45).min(255.0) as u8;
                 g = (g as f32 * 1.2).min(255.0) as u8;
@@ -410,7 +521,7 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     }
 
     // Split-Screen Wipe Demonstration for Color Grading (Scene 4)
-    if t >= 18.5 && t < 23.5 {
+    if (18.5..23.5).contains(&t) {
         let wipe_x = vx + ((t - 18.5) / 5.0 * vw as f32) as usize;
         if wipe_x > vx && wipe_x < vx + vw {
             fb.fill_rect(wipe_x - 1, vy, 3, vh, 255, 255, 255, 255);
@@ -421,9 +532,21 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
 
     // Viewport HUD Overlays
     fb.fill_rect(vx + 16, vy + 16, 430, 30, 0, 0, 0, 190);
-    fb.draw_text(vx + 24, vy + 24, "LIVE HARDWARE VIEWPORT: 120 FPS", 2, 0, 255, 255);
+    fb.draw_text(
+        vx + 24,
+        vy + 24,
+        "LIVE HARDWARE VIEWPORT: 120 FPS",
+        2,
+        0,
+        255,
+        255,
+    );
 
-    let tc_str = format!("TC: 00:00:{:02}.{:02}", playhead_secs as u32, ((playhead_secs.fract()) * 60.0) as u32);
+    let tc_str = format!(
+        "TC: 00:00:{:02}.{:02}",
+        playhead_secs as u32,
+        ((playhead_secs.fract()) * 60.0) as u32
+    );
     fb.fill_rect(vx + vw - 220, vy + 16, 204, 30, 0, 0, 0, 190);
     fb.draw_text(vx + vw - 212, vy + 24, &tc_str, 2, 255, 255, 255);
 
@@ -431,15 +554,39 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     if is_scrubbing {
         fb.fill_rect(vx + 140, vy + vh - 60, 680, 44, 0, 40, 60, 230);
         fb.draw_rect_outline(vx + 140, vy + vh - 60, 680, 44, 1, 0, 229, 255);
-        fb.draw_text(vx + 160, vy + vh - 48, "ZERO-LAG SCRUBBING: 11.46 us DAG LATENCY", 2, 0, 255, 255);
-    } else if t >= 14.0 && t < 18.5 {
+        fb.draw_text(
+            vx + 160,
+            vy + vh - 48,
+            "ZERO-LAG SCRUBBING: 11.46 us DAG LATENCY",
+            2,
+            0,
+            255,
+            255,
+        );
+    } else if (14.0..18.5).contains(&t) {
         fb.fill_rect(vx + 180, vy + vh - 60, 600, 44, 50, 40, 10, 230);
         fb.draw_rect_outline(vx + 180, vy + vh - 60, 600, 44, 1, 255, 200, 0);
-        fb.draw_text(vx + 200, vy + vh - 48, "RAZOR PRECISION SPLIT AT 00:00:02.24", 2, 255, 220, 0);
-    } else if t >= 23.5 && t < 28.0 {
+        fb.draw_text(
+            vx + 200,
+            vy + vh - 48,
+            "RAZOR PRECISION SPLIT AT 00:00:02.24",
+            2,
+            255,
+            220,
+            0,
+        );
+    } else if (23.5..28.0).contains(&t) {
         fb.fill_rect(vx + 120, vy + vh - 60, 720, 44, 30, 20, 60, 230);
         fb.draw_rect_outline(vx + 120, vy + vh - 60, 720, 44, 1, 200, 100, 255);
-        fb.draw_text(vx + 140, vy + vh - 48, "WHISPER ON-DEVICE AI SUBTITLES GENERATED", 2, 220, 160, 255);
+        fb.draw_text(
+            vx + 140,
+            vy + vh - 48,
+            "WHISPER ON-DEVICE AI SUBTITLES GENERATED",
+            2,
+            220,
+            160,
+            255,
+        );
     }
 
     // 6. Transport & Audio Control Bar (x: 340..1600, y: 640..700)
@@ -447,7 +594,11 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(340, 640, 1260, 1, 46, 46, 56, 255);
 
     fb.draw_text(370, 660, "|<<   < -1s", 2, 200, 200, 210);
-    let play_label = if is_scrubbing { "[ SCRUB ]" } else { "[ PLAY ]" };
+    let play_label = if is_scrubbing {
+        "[ SCRUB ]"
+    } else {
+        "[ PLAY ]"
+    };
     fb.fill_rect(480, 650, 110, 36, 0, 229, 255, 255);
     fb.draw_text(492, 662, play_label, 2, 0, 0, 0);
     fb.draw_text(610, 660, "+1s >   >>|", 2, 200, 200, 210);
@@ -456,12 +607,21 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(760, 662, "VU L:", 1, 150, 150, 160);
     fb.draw_text(760, 674, "VU R:", 1, 150, 150, 160);
 
-    let vu_val = ((playhead_secs * 7.0).sin().abs() * 0.75 + 0.2);
+    let vu_val = (playhead_secs * 7.0).sin().abs() * 0.75 + 0.2;
     let vu_w = (vu_val * 180.0) as usize;
     fb.fill_rect(800, 662, 180, 8, 30, 30, 36, 255);
     fb.fill_rect(800, 674, 180, 8, 30, 30, 36, 255);
     fb.fill_rect(800, 662, vu_w, 8, 76, 217, 100, 255);
-    fb.fill_rect(800, 674, (vu_w as f32 * 0.94) as usize, 8, 76, 217, 100, 255);
+    fb.fill_rect(
+        800,
+        674,
+        (vu_w as f32 * 0.94) as usize,
+        8,
+        76,
+        217,
+        100,
+        255,
+    );
 
     // Active LUT indicator
     let lut_tag = format!("LUT: {}", active_lut_name);
@@ -472,9 +632,9 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     // Status Message
     let status_txt = if is_scrubbing {
         "Scrubbing: Sub-millisecond DAG invalidation active (11.46 us)"
-    } else if t >= 14.0 && t < 18.5 {
+    } else if (14.0..18.5).contains(&t) {
         "Split Clip (Ctrl+B) executed: Clip 1A and Clip 1B created with handles"
-    } else if t >= 18.5 && t < 23.5 {
+    } else if (18.5..23.5).contains(&t) {
         "Color Engine: 3D LUT Trilinear GPU Interpolation Shader active"
     } else {
         "AI Engine: Local Whisper Quantized Speech Model & Spectral Denoise active"
@@ -489,8 +649,20 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(0, 704, WIDTH, 36, 26, 26, 32, 255);
     fb.draw_text(16, 714, "[Undo]", 2, 180, 180, 190);
     fb.draw_text(100, 714, "[Redo]", 2, 180, 180, 190);
-    let split_c = if t >= 14.0 && t < 18.5 { (255, 220, 0) } else { (200, 200, 210) };
-    fb.draw_text(180, 714, "[Split (Ctrl+B)]", 2, split_c.0, split_c.1, split_c.2);
+    let split_c = if (14.0..18.5).contains(&t) {
+        (255, 220, 0)
+    } else {
+        (200, 200, 210)
+    };
+    fb.draw_text(
+        180,
+        714,
+        "[Split (Ctrl+B)]",
+        2,
+        split_c.0,
+        split_c.1,
+        split_c.2,
+    );
     fb.draw_text(360, 714, "[Delete]", 2, 180, 180, 190);
     fb.draw_text(460, 714, "[* Snap: ON]", 2, 76, 217, 100);
     fb.draw_text(600, 714, "[Ripple: ON]", 2, 0, 229, 255);
@@ -524,13 +696,29 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
         // Clip 1B (Selected)
         fb.fill_rect(200 + w_1a + 2, 770, w_1b - 2, 56, 60, 130, 240, 255);
         fb.draw_rect_outline(200 + w_1a + 2, 770, w_1b - 2, 56, 2, 255, 220, 0);
-        fb.draw_text(200 + w_1a + 10, 786, "clip_01B [SELECTED]", 2, 255, 255, 255);
+        fb.draw_text(
+            200 + w_1a + 10,
+            786,
+            "clip_01B [SELECTED]",
+            2,
+            255,
+            255,
+            255,
+        );
 
         // Clip 2
         let w_2 = (4.0 * 190.0) as usize;
         fb.fill_rect(200 + 4 * 190, 770, w_2, 56, 30, 90, 180, 255);
         fb.draw_rect_outline(200 + 4 * 190, 770, w_2, 56, 1, 60, 140, 230);
-        fb.draw_text(200 + 4 * 190 + 10, 786, "clip_02.mp4 (4.0s)", 2, 255, 255, 255);
+        fb.draw_text(
+            200 + 4 * 190 + 10,
+            786,
+            "clip_02.mp4 (4.0s)",
+            2,
+            255,
+            255,
+            255,
+        );
     } else {
         let w_1 = (4.0 * 190.0) as usize;
         fb.fill_rect(200, 770, w_1, 56, 40, 110, 210, 255);
@@ -540,7 +728,15 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
         let w_2 = (4.0 * 190.0) as usize;
         fb.fill_rect(200 + 4 * 190, 770, w_2, 56, 30, 90, 180, 255);
         fb.draw_rect_outline(200 + 4 * 190, 770, w_2, 56, 1, 60, 140, 230);
-        fb.draw_text(200 + 4 * 190 + 10, 786, "B_Roll_Drone.mp4 (4.0s)", 2, 255, 255, 255);
+        fb.draw_text(
+            200 + 4 * 190 + 10,
+            786,
+            "B_Roll_Drone.mp4 (4.0s)",
+            2,
+            255,
+            255,
+            255,
+        );
     }
 
     // Track 2: V2 Overlays
@@ -555,7 +751,15 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     let audio_w = (8.0 * 190.0) as usize;
     fb.fill_rect(200, 892, audio_w, 46, 30, 120, 60, 255);
     fb.draw_rect_outline(200, 892, audio_w, 46, 1, 70, 200, 100);
-    fb.draw_text(210, 908, "Cinematic_Synth_48k.wav [Lock-Free Atomic Master Clock Active]", 2, 220, 255, 220);
+    fb.draw_text(
+        210,
+        908,
+        "Cinematic_Synth_48k.wav [Lock-Free Atomic Master Clock Active]",
+        2,
+        220,
+        255,
+        220,
+    );
 
     // Track 4: T1 AI Subtitles Track
     fb.fill_rect(0, 946, 190, 50, 30, 32, 42, 255);
@@ -587,16 +791,48 @@ fn render_export_and_deliverables(fb: &mut Framebuffer, t: f32) {
     fb.draw_rect_outline(40, 40, WIDTH - 80, HEIGHT - 80, 2, 0, 229, 255);
 
     // Header
-    fb.draw_text(480, 80, "HARDWARE EXPORT & MULTI-PLATFORM RELEASE", 3, 0, 229, 255);
-    fb.draw_text(600, 130, "PRODUCTION-READY PACKAGES IN READY_TO_USE/", 2, 255, 255, 255);
+    fb.draw_text(
+        480,
+        80,
+        "HARDWARE EXPORT & MULTI-PLATFORM RELEASE",
+        3,
+        0,
+        229,
+        255,
+    );
+    fb.draw_text(
+        600,
+        130,
+        "PRODUCTION-READY PACKAGES IN READY_TO_USE/",
+        2,
+        255,
+        255,
+        255,
+    );
 
     // Export Progress Card (Top Half)
     let prog = ((t - 28.0) / 2.0).clamp(0.0, 1.0);
     fb.fill_rect(300, 180, WIDTH - 600, 180, 26, 28, 38, 255);
     fb.draw_rect_outline(300, 180, WIDTH - 600, 180, 1, 0, 180, 240);
 
-    fb.draw_text(340, 210, "EXPORT TARGET: YOUTUBE 4K (3840x2160 60FPS) - H.264 / PRORES", 2, 255, 255, 255);
-    fb.draw_text(340, 240, "PIPELINE: GPU RENDER GRAPH -> HARDWARE ENCODE -> ZERO DROPS", 2, 170, 170, 185);
+    fb.draw_text(
+        340,
+        210,
+        "EXPORT TARGET: YOUTUBE 4K (3840x2160 60FPS) - H.264 / PRORES",
+        2,
+        255,
+        255,
+        255,
+    );
+    fb.draw_text(
+        340,
+        240,
+        "PIPELINE: GPU RENDER GRAPH -> HARDWARE ENCODE -> ZERO DROPS",
+        2,
+        170,
+        170,
+        185,
+    );
 
     // Progress Bar
     fb.fill_rect(340, 280, WIDTH - 680, 30, 40, 40, 50, 255);
@@ -608,10 +844,30 @@ fn render_export_and_deliverables(fb: &mut Framebuffer, t: f32) {
 
     // Four Platforms Showcase Grid (Bottom Half)
     let platforms = [
-        ("WINDOWS 1.0", "ready_to_use/windows/Reddart.exe", "9.34 MB", "ThinLTO Native Binary (60/120Hz Direct3D)"),
-        ("ANDROID 1.0", "ready_to_use/android/Reddart.apk", "1.18 MB", "Kotlin Compose + Vulkan JNI Bridge"),
-        ("MACOS 1.0", "ready_to_use/mac/Reddart.app", "12.9 MB", "SwiftUI Studio + Metal 120Hz ProMotion"),
-        ("IOS / IPAD", "ready_to_use/ios/Reddart.ipa", "13.0 MB", "Touch 120Hz Canvas + Apple Neural Engine"),
+        (
+            "WINDOWS 1.0",
+            "ready_to_use/windows/Reddart.exe",
+            "9.34 MB",
+            "ThinLTO Native Binary (60/120Hz Direct3D)",
+        ),
+        (
+            "ANDROID 1.0",
+            "ready_to_use/android/Reddart.apk",
+            "1.18 MB",
+            "Kotlin Compose + Vulkan JNI Bridge",
+        ),
+        (
+            "MACOS 1.0",
+            "ready_to_use/mac/Reddart.app",
+            "12.9 MB",
+            "SwiftUI Studio + Metal 120Hz ProMotion",
+        ),
+        (
+            "IOS / IPAD",
+            "ready_to_use/ios/Reddart.ipa",
+            "13.0 MB",
+            "Touch 120Hz Canvas + Apple Neural Engine",
+        ),
     ];
 
     for (i, p) in platforms.iter().enumerate() {
@@ -638,7 +894,15 @@ fn render_export_and_deliverables(fb: &mut Framebuffer, t: f32) {
 
     // Final Banner
     fb.fill_rect(0, HEIGHT - 70, WIDTH, 70, 0, 30, 45, 255);
-    fb.draw_text(420, HEIGHT - 46, "100% FREE  *  NO WATERMARKS  *  ZERO SUBSCRIPTIONS  *  ON-DEVICE AI", 2, 0, 255, 255);
+    fb.draw_text(
+        420,
+        HEIGHT - 46,
+        "100% FREE  *  NO WATERMARKS  *  ZERO SUBSCRIPTIONS  *  ON-DEVICE AI",
+        2,
+        0,
+        255,
+        255,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -659,15 +923,24 @@ fn main() -> anyhow::Result<()> {
 
     let mut child = Command::new(ffmpeg_path)
         .args([
-            "-f", "rawvideo",
-            "-pix_fmt", "rgba",
-            "-s", &format!("{}x{}", WIDTH, HEIGHT),
-            "-r", &FPS.to_string(),
-            "-i", "-",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "17",
-            "-pix_fmt", "yuv420p",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            &format!("{}x{}", WIDTH, HEIGHT),
+            "-r",
+            &FPS.to_string(),
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "17",
+            "-pix_fmt",
+            "yuv420p",
             "-y",
             raw_mp4,
         ])
@@ -697,7 +970,10 @@ fn main() -> anyhow::Result<()> {
 
         if frame_idx % 180 == 0 {
             let pct = (frame_idx as f32 / TOTAL_FRAMES as f32) * 100.0;
-            println!("  -> Frame {}/{} ({:.0}%) at {:.2}s", frame_idx, TOTAL_FRAMES, pct, t);
+            println!(
+                "  -> Frame {}/{} ({:.0}%) at {:.2}s",
+                frame_idx, TOTAL_FRAMES, pct, t
+            );
         }
     }
 
@@ -718,19 +994,28 @@ fn main() -> anyhow::Result<()> {
 
     let audio_merge_status = Command::new(ffmpeg_path)
         .args([
-            "-i", raw_mp4,
-            "-f", "lavfi",
-            "-i", &audio_synth_cmd,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "256k",
+            "-i",
+            raw_mp4,
+            "-f",
+            "lavfi",
+            "-i",
+            &audio_synth_cmd,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "256k",
             "-y",
             final_mp4,
         ])
         .status()?;
 
     if !audio_merge_status.success() {
-        anyhow::bail!("FFmpeg audio multiplexing failed with status: {:?}", audio_merge_status);
+        anyhow::bail!(
+            "FFmpeg audio multiplexing failed with status: {:?}",
+            audio_merge_status
+        );
     }
 
     // Clean up temporary raw video file
@@ -748,9 +1033,15 @@ fn main() -> anyhow::Result<()> {
     println!("  -> Windows Mirror: {}", windows_copy);
     println!("  -> Size: {:.2} MB", size_mb);
     println!("  -> Resolution: {}x{} @ 60 FPS Progressive", WIDTH, HEIGHT);
-    println!("  -> Duration: {:.1} seconds ({} frames)", DURATION_SECS, TOTAL_FRAMES);
-    println!("  -> Audio: 48,000 Hz Stereo AAC (256 kbps)", );
-    println!("  -> Total Render Time: {:.2} seconds", elapsed.as_secs_f64());
+    println!(
+        "  -> Duration: {:.1} seconds ({} frames)",
+        DURATION_SECS, TOTAL_FRAMES
+    );
+    println!("  -> Audio: 48,000 Hz Stereo AAC (256 kbps)",);
+    println!(
+        "  -> Total Render Time: {:.2} seconds",
+        elapsed.as_secs_f64()
+    );
     println!("==========================================================");
 
     Ok(())

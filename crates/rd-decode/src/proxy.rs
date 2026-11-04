@@ -7,8 +7,8 @@
 //! is independently decodable, so random access is instantaneous and reverse playback
 //! is cheap. The editor works on proxies; export renders with originals.
 
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// Proxy generation configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

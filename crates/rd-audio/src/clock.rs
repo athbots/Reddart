@@ -5,9 +5,9 @@
 //! No allocation, locks or logging in the audio callback.
 //! Video follows the audio clock: late frames are dropped or held, so audio never stutters.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
 use rd_core::TimestampUs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 /// Lock-free master clock tracking current presentation time based on audio output.
 #[derive(Debug)]
@@ -136,4 +136,3 @@ mod tests {
         );
     }
 }
-

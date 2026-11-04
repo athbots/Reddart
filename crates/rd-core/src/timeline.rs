@@ -189,7 +189,10 @@ mod tests {
     fn test_snap_points_and_snap_to() {
         let mut timeline = Timeline::new();
         let vid = timeline.add_track(TrackKind::Video, "V1");
-        timeline.track_mut(vid).unwrap().add_clip(crate::Clip::new_video("test.mp4", 1_000_000, 0, 4_000_000));
+        timeline
+            .track_mut(vid)
+            .unwrap()
+            .add_clip(crate::Clip::new_video("test.mp4", 1_000_000, 0, 4_000_000));
 
         let snaps = timeline.snap_points();
         assert_eq!(snaps, vec![0, 1_000_000, 5_000_000]);

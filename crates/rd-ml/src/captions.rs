@@ -92,9 +92,21 @@ mod tests {
                 start_us: 500_000,
                 end_us: 2_000_000,
                 words: vec![
-                    WordTiming { word: "Welcome".into(), start_us: 500_000, end_us: 900_000 },
-                    WordTiming { word: "to".into(), start_us: 950_000, end_us: 1_100_000 },
-                    WordTiming { word: "Reddart".into(), start_us: 1_150_000, end_us: 2_000_000 },
+                    WordTiming {
+                        word: "Welcome".into(),
+                        start_us: 500_000,
+                        end_us: 900_000,
+                    },
+                    WordTiming {
+                        word: "to".into(),
+                        start_us: 950_000,
+                        end_us: 1_100_000,
+                    },
+                    WordTiming {
+                        word: "Reddart".into(),
+                        start_us: 1_150_000,
+                        end_us: 2_000_000,
+                    },
                 ],
             },
             CaptionSegment {

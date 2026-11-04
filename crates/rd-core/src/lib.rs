@@ -17,7 +17,9 @@ pub mod timeline;
 pub mod track;
 
 // Re-export key types at crate root
-pub use clip::{AudioClip, Clip, ClipEffect, ClipId, ClipKind, TextClip, Transform2D, Vec2, VideoClip};
+pub use clip::{
+    AudioClip, Clip, ClipEffect, ClipId, ClipKind, TextClip, Transform2D, Vec2, VideoClip,
+};
 pub use command::{Command, CommandHistory};
 pub use keyframe::{Easing, Keyframe, KeyframeTrack};
 pub use project::Project;
