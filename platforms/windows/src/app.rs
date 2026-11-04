@@ -19,8 +19,33 @@ use winit::{
 use crate::gpu;
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
 
+/// Studio editing workspace mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceMode {
+    Edit,
+    Color,
+    Audio,
+    Titles,
+    Export,
+}
+
+/// Convert timestamp in microseconds to standard SMPTE timecode (HH:MM:SS:FF).
+pub fn format_smpte(timestamp_us: i64, fps: f64) -> String {
+    let fps = fps.max(1.0);
+    let total_frames = ((timestamp_us.max(0) as f64 / 1_000_000.0) * fps).round() as i64;
+    let frames_per_sec = fps.round() as i64;
+    let frames = total_frames % frames_per_sec;
+    let total_seconds = total_frames / frames_per_sec;
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let hours = total_minutes / 60;
+    format!("{:02}:{:02}:{:02}:{:02}", hours, minutes, seconds, frames)
+}
+
 /// Editor state holding user project data, selection, and playback state.
 pub struct EditorData {
+    pub workspace_mode: WorkspaceMode,
     pub project: Project,
     pub history: rd_core::CommandHistory,
     pub is_playing: bool,
@@ -51,6 +76,7 @@ impl EditorData {
         project.timeline.add_track(TrackKind::Audio, "Audio 1");
 
         Self {
+            workspace_mode: WorkspaceMode::Edit,
             project,
             history: rd_core::CommandHistory::new(100),
             is_playing: false,
@@ -144,13 +170,21 @@ impl ApplicationHandler for ReddartApp {
         // Initialize egui
         let egui_ctx = egui::Context::default();
 
-        // Configure egui style for dark theme
+        // Configure egui style for professional dark NLE theme
         let mut style = (*egui_ctx.style()).clone();
         style.visuals = egui::Visuals::dark();
-        style.visuals.window_corner_radius = egui::CornerRadius::same(8);
-        style.visuals.panel_fill = egui::Color32::from_rgb(22, 22, 26);
-        style.visuals.extreme_bg_color = egui::Color32::from_rgb(14, 14, 17);
-        style.visuals.faint_bg_color = egui::Color32::from_rgb(32, 32, 38);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(2);
+        style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(2);
+        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(2);
+        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(2);
+        style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(2);
+        style.visuals.panel_fill = egui::Color32::from_rgb(18, 18, 22);
+        style.visuals.extreme_bg_color = egui::Color32::from_rgb(10, 10, 12);
+        style.visuals.faint_bg_color = egui::Color32::from_rgb(26, 26, 32);
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(37, 99, 235);
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(59, 130, 246));
+        style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+        style.spacing.button_padding = egui::vec2(8.0, 3.0);
         egui_ctx.set_style(style);
 
         let egui_state = egui_winit::State::new(
@@ -406,7 +440,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("📄 New Project").clicked() {
+                if ui.button("New Project").clicked() {
                     ed.project = Project::new("Untitled Project");
                     ed.project.timeline.add_track(TrackKind::Video, "Video 1");
                     ed.project.timeline.add_track(TrackKind::Audio, "Audio 1");
@@ -418,7 +452,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.status_message = Some(("New Project Created".into(), Instant::now()));
                     ui.close_menu();
                 }
-                if ui.button("📂 Open Project...").clicked() {
+                if ui.button("Open Project...").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Reddart Project", &["reddart", "json"])
                         .pick_file()
@@ -436,7 +470,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("💾 Save (Ctrl+S)").clicked() {
+                if ui.button("Save Project (Ctrl+S)").clicked() {
                     let target = ed.last_save_path.clone().unwrap_or_else(|| {
                         PathBuf::from(format!("{}.reddart", ed.project.name.replace(' ', "_")))
                     });
@@ -447,7 +481,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     }
                     ui.close_menu();
                 }
-                if ui.button("💾 Save As...").clicked() {
+                if ui.button("Save Project As...").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .set_file_name(&format!("{}.reddart", ed.project.name))
                         .add_filter("Reddart Project", &["reddart", "json"])
@@ -462,23 +496,23 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("🚀 Export...").clicked() {
+                if ui.button("Export Media...").clicked() {
                     ed.show_export_modal = true;
                     ui.close_menu();
                 }
             });
 
             ui.menu_button("Edit", |ui| {
-                if ui.button("↩ Undo (Ctrl+Z)").clicked() {
+                if ui.button("Undo (Ctrl+Z)").clicked() {
                     let _ = ed.history.undo(&mut ed.project);
                     ui.close_menu();
                 }
-                if ui.button("↪ Redo (Ctrl+Y)").clicked() {
+                if ui.button("Redo (Ctrl+Y)").clicked() {
                     let _ = ed.history.redo(&mut ed.project);
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("✂ Split at Playhead (S)").clicked() {
+                if ui.button("Split Clip at Playhead (S)").clicked() {
                     let playhead = ed.project.timeline.playhead_us;
                     let track_id = ed.selected_track.or_else(|| ed.project.timeline.tracks().first().map(|t| t.id));
                     if let Some(tid) = track_id {
@@ -491,7 +525,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     }
                     ui.close_menu();
                 }
-                if ui.button("🗑 Delete Selected (Del)").clicked() {
+                if ui.button("Delete Selected Clip (Del)").clicked() {
                     if let Some(cid) = ed.selected_clip.take() {
                         for track in ed.project.timeline.tracks_mut() {
                             track.remove_clip(cid);
@@ -502,15 +536,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             });
 
             ui.menu_button("View", |ui| {
-                if ui.button("🔍 Zoom In").clicked() {
+                if ui.button("Zoom In (Timeline)").clicked() {
                     ed.zoom_px_per_sec = (ed.zoom_px_per_sec * 1.25).min(500.0);
                     ui.close_menu();
                 }
-                if ui.button("🔍 Zoom Out").clicked() {
+                if ui.button("Zoom Out (Timeline)").clicked() {
                     ed.zoom_px_per_sec = (ed.zoom_px_per_sec / 1.25).max(10.0);
                     ui.close_menu();
                 }
-                if ui.button("↔ Fit Timeline").clicked() {
+                if ui.button("Fit Sequence to Window").clicked() {
                     let dur_s = (ed.project.timeline.duration_us() as f32 / 1_000_000.0).max(1.0);
                     ed.zoom_px_per_sec = (800.0 / dur_s).clamp(10.0, 300.0);
                     ui.close_menu();
@@ -518,25 +552,49 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             });
 
             ui.menu_button("Track", |ui| {
-                if ui.button("+ Add Video Track").clicked() {
+                if ui.button("Add Video Track").clicked() {
                     let count = ed.project.timeline.track_count() + 1;
                     ed.project.timeline.add_track(TrackKind::Video, format!("Video {}", count));
                     ui.close_menu();
                 }
-                if ui.button("+ Add Audio Track").clicked() {
+                if ui.button("Add Audio Track").clicked() {
                     let count = ed.project.timeline.track_count() + 1;
                     ed.project.timeline.add_track(TrackKind::Audio, format!("Audio {}", count));
                     ui.close_menu();
                 }
-                if ui.button("+ Add Text Track").clicked() {
+                if ui.button("Add Subtitle Track").clicked() {
                     let count = ed.project.timeline.track_count() + 1;
                     ed.project.timeline.add_track(TrackKind::Text, format!("Text {}", count));
                     ui.close_menu();
                 }
             });
 
+            ui.separator();
+            ui.selectable_value(&mut ed.workspace_mode, WorkspaceMode::Edit, "Edit");
+            ui.selectable_value(&mut ed.workspace_mode, WorkspaceMode::Color, "Color");
+            ui.selectable_value(&mut ed.workspace_mode, WorkspaceMode::Audio, "Audio");
+            ui.selectable_value(&mut ed.workspace_mode, WorkspaceMode::Titles, "Titles");
+            if ui.selectable_label(ed.workspace_mode == WorkspaceMode::Export || ed.show_export_modal, "Deliver").clicked() {
+                ed.workspace_mode = WorkspaceMode::Export;
+                ed.show_export_modal = true;
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(format!("Reddart v{}", env!("CARGO_PKG_VERSION")));
+                ui.label(
+                    egui::RichText::new(format!("Reddart v{}", env!("CARGO_PKG_VERSION")))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(120, 120, 130)),
+                );
+                ui.separator();
+                if let Some((msg, time)) = &ed.status_message {
+                    if time.elapsed().as_secs() < 5 {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(150, 180, 220)),
+                        );
+                    }
+                }
             });
         });
     });
@@ -544,15 +602,16 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
     // 2. Left Side Panel: Media Browser
     egui::SidePanel::left("media_panel")
         .resizable(true)
-        .min_width(200.0)
-        .default_width(250.0)
+        .min_width(220.0)
+        .default_width(260.0)
         .show(ctx, |ui| {
-            ui.heading("📁 Media");
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("PROJECT MEDIA").strong().size(12.0));
             ui.separator();
 
             if ui
-                .button("📂 Import Media...")
-                .on_hover_text("Import video, audio, or image files")
+                .button("Import Footage...")
+                .on_hover_text("Import video, audio, or image files into the project bin")
                 .clicked()
             {
                 if let Some(files) = rfd::FileDialog::new()
@@ -562,32 +621,35 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     for file in files {
                         let path_str = file.to_string_lossy().to_string();
 
-                        // Add track if none exists
                         if ed.project.timeline.track_count() == 0 {
                             ed.project.timeline.add_track(TrackKind::Video, "Video 1");
                         }
                         let track_id = ed.project.timeline.tracks()[0].id;
                         let start_pos = ed.project.timeline.duration_us();
-                        let default_dur = 5_000_000; // 5 seconds default
+                        let default_dur = 5_000_000;
 
                         let clip = Clip::new_video(&path_str, start_pos, 0, default_dur);
                         if let Some(track) = ed.project.timeline.track_mut(track_id) {
                             track.add_clip(clip);
                         }
                         ed.media_files.push(file);
-                        log::info!("Imported media file: {}", path_str);
+                        ed.status_message = Some((format!("Imported {}", path_str), Instant::now()));
                     }
                 }
             }
 
-            ui.add_space(8.0);
-            ui.label(format!("Imported Files ({})", ed.media_files.len()));
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(format!("Clips in Bin ({})", ed.media_files.len()))
+                    .size(11.0)
+                    .color(egui::Color32::from_rgb(140, 140, 150)),
+            );
 
             egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
                 for file in &ed.media_files {
                     let filename = file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-                    if ui.button(format!("🎞 {}", filename)).clicked() {
-                        // Click to place at current playhead
+                    let item_label = format!("[Media] {}", filename);
+                    if ui.selectable_label(false, item_label).clicked() {
                         let track_id = ed.selected_track.unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
                         let clip = Clip::new_video(file.to_string_lossy(), ed.project.timeline.playhead_us, 0, 5_000_000);
                         if let Some(track) = ed.project.timeline.track_mut(track_id) {
@@ -597,16 +659,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 }
             });
 
-            ui.add_space(16.0);
+            ui.add_space(12.0);
             ui.separator();
-            ui.heading("⚙ Project");
+            ui.label(egui::RichText::new("PROJECT SETTINGS").strong().size(12.0));
             ui.label(format!("Name: {}", ed.project.name));
             ui.label(format!(
-                "Resolution: {}×{}",
-                ed.project.resolution.width, ed.project.resolution.height
+                "Format: {}x{} @ {:.2} fps",
+                ed.project.resolution.width,
+                ed.project.resolution.height,
+                ed.project.frame_rate.as_f64()
             ));
-            ui.label(format!("Framerate: {:.2} fps", ed.project.frame_rate.as_f64()));
-            ui.label(format!("Clips: {}", ed.project.timeline.total_clip_count()));
+            ui.label(format!("Sequence Clips: {}", ed.project.timeline.total_clip_count()));
         });
 
     // 3. Right Side Panel: Properties & Effects Inspector
@@ -615,24 +678,33 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         .min_width(240.0)
         .default_width(300.0)
         .show(ctx, |ui| {
-            ui.heading("🎛 Properties");
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("INSPECTOR").strong().size(12.0));
             ui.separator();
 
             // Find selected clip
             let mut clip_found = false;
             if let Some(selected_cid) = ed.selected_clip {
                 for track in ed.project.timeline.tracks_mut() {
+                    let track_name = track.name.clone();
                     if let Some(clip) = track.clips_mut().iter_mut().find(|c| c.id == selected_cid) {
                         clip_found = true;
-                        ui.label(format!("Clip ID: {}", clip.id.0));
-                        ui.label(format!("Position: {:.2}s", clip.position_us as f64 / 1_000_000.0));
-                        ui.label(format!("Duration: {:.2}s", clip.duration_us() as f64 / 1_000_000.0));
+                        ui.label(
+                            egui::RichText::new(format!("Selected Clip (Track: {})", track_name))
+                                .strong()
+                                .color(egui::Color32::from_rgb(150, 180, 230)),
+                        );
+                        ui.label(format!(
+                            "In: {}  |  Duration: {}",
+                            format_smpte(clip.position_us, ed.project.frame_rate.as_f64()),
+                            format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64())
+                        ));
 
                         ui.separator();
-                        ui.label("Transform");
+                        ui.label(egui::RichText::new("TRANSFORM").strong().size(11.0));
 
                         ui.horizontal(|ui| {
-                            ui.label("Pos X:");
+                            ui.label("Position X:");
                             ui.add(egui::DragValue::new(&mut clip.transform.position.x).speed(1.0));
                             ui.label("Y:");
                             ui.add(egui::DragValue::new(&mut clip.transform.position.y).speed(1.0));
@@ -660,13 +732,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             ui.add(egui::Slider::new(&mut clip.speed, 0.25..=4.0).suffix("x"));
                         });
 
-                        ui.add_space(16.0);
+                        ui.add_space(12.0);
                         ui.separator();
-                        ui.heading("✨ Effects");
+                        ui.label(egui::RichText::new("COLOR & EFFECTS").strong().size(11.0));
 
-                        if ui.button("+ Add Brightness / Contrast").clicked() {
+                        if ui.button("+ Add Brightness / Contrast Pass").clicked() {
                             let mut params = std::collections::HashMap::new();
-                            params.insert("brightness".into(), 0.1);
+                            params.insert("brightness".into(), 0.05);
                             params.insert("contrast".into(), 0.1);
                             clip.effects.push(rd_core::ClipEffect {
                                 effect_id: "brightness_contrast".into(),
@@ -694,21 +766,24 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             }
 
             if !clip_found {
-                ui.label("Click any clip on the timeline to edit its transform, speed, and shader effects.");
+                ui.label(
+                    egui::RichText::new("Select a clip on the timeline to inspect parameters.")
+                        .color(egui::Color32::from_rgb(110, 110, 120)),
+                );
             }
         });
 
-    // 4. Central Panel: Video Preview
+    // 4. Central Panel: Video Preview (Program Monitor)
     egui::CentralPanel::default().show(ctx, |ui| {
         // Missing Media Alert Banner
         if !ed.missing_media.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("⚠️ Missing Media: {} file(s) offline", ed.missing_media.len()))
-                        .color(egui::Color32::from_rgb(255, 180, 50))
+                    egui::RichText::new(format!("[!] Offline Media: {} file(s) detached", ed.missing_media.len()))
+                        .color(egui::Color32::from_rgb(245, 158, 11))
                         .strong(),
                 );
-                if ui.button("📁 Relink Media...").clicked() {
+                if ui.button("Relink Media...").clicked() {
                     if let Some(new_file) = rfd::FileDialog::new().pick_file() {
                         if let Some(first_missing) = ed.missing_media.first().cloned() {
                             let count = ed.project.relink_media(
@@ -725,8 +800,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         }
 
         ui.vertical_centered(|ui| {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new("🎬 Preview Monitor").strong());
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("PROGRAM MONITOR")
+                    .size(11.0)
+                    .color(egui::Color32::from_rgb(140, 140, 150)),
+            );
         });
 
         let available = ui.available_size();
@@ -741,8 +820,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
         let painter = ui.painter_at(rect);
         // Video monitor frame
-        painter.rect_filled(rect, 6.0, egui::Color32::from_rgb(10, 10, 12));
-        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(45, 45, 55)), egui::StrokeKind::Inside);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(10, 10, 12));
+        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(36, 36, 42)), egui::StrokeKind::Inside);
+
+        // Draw broadcast safe area guidelines (90% action safe, 80% title safe)
+        let action_safe = rect.shrink2(egui::vec2(rect.width() * 0.05, rect.height() * 0.05));
+        painter.rect_stroke(action_safe, 0.0, egui::Stroke::new(0.5_f32, egui::Color32::from_rgba_unmultiplied(60, 60, 70, 100)), egui::StrokeKind::Inside);
 
         // Query active tracks at current playhead
         let active_tracks = ed.project.timeline.active_tracks_at(ed.project.timeline.playhead_us);
@@ -753,46 +836,55 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("Compositing {} Layer(s) @ {:.2}s", active_layer_count, ed.project.timeline.playhead_us as f64 / 1_000_000.0),
-                egui::FontId::proportional(16.0),
-                egui::Color32::from_rgb(220, 220, 230),
+                format!("Composited Frame ({} Active Layers)", active_layer_count),
+                egui::FontId::proportional(15.0),
+                egui::Color32::from_rgb(200, 205, 215),
             );
         } else {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "No clips at current playhead position",
-                egui::FontId::proportional(14.0),
+                "No clip at playhead",
+                egui::FontId::proportional(13.0),
                 egui::Color32::from_rgb(90, 90, 100),
             );
         }
 
         // Overlay status badges
         painter.text(
-            egui::pos2(rect.left() + 10.0, rect.top() + 10.0),
+            egui::pos2(rect.left() + 10.0, rect.top() + 8.0),
             egui::Align2::LEFT_TOP,
-            format!("{}×{} | {:.0} FPS", ed.project.resolution.width, ed.project.resolution.height, ed.project.frame_rate.as_f64()),
-            egui::FontId::monospace(11.0),
-            egui::Color32::from_rgb(140, 140, 150),
+            format!("{}x{} | {:.2} fps", ed.project.resolution.width, ed.project.resolution.height, ed.project.frame_rate.as_f64()),
+            egui::FontId::monospace(10.0),
+            egui::Color32::from_rgb(130, 130, 140),
         );
 
         if ed.is_playing {
             painter.text(
-                egui::pos2(rect.right() - 10.0, rect.top() + 10.0),
+                egui::pos2(rect.right() - 10.0, rect.top() + 8.0),
                 egui::Align2::RIGHT_TOP,
-                "● PLAYING (60 FPS)",
-                egui::FontId::monospace(11.0),
-                egui::Color32::from_rgb(80, 220, 100),
+                "PLAYING",
+                egui::FontId::monospace(10.0),
+                egui::Color32::from_rgb(52, 211, 153),
             );
         } else {
             painter.text(
-                egui::pos2(rect.right() - 10.0, rect.top() + 10.0),
+                egui::pos2(rect.right() - 10.0, rect.top() + 8.0),
                 egui::Align2::RIGHT_TOP,
-                "⏸ PAUSED (100% QUALITY)",
-                egui::FontId::monospace(11.0),
-                egui::Color32::from_rgb(220, 180, 80),
+                "PAUSED",
+                egui::FontId::monospace(10.0),
+                egui::Color32::from_rgb(156, 163, 175),
             );
         }
+
+        // Display current SMPTE timecode in bottom left of monitor
+        painter.text(
+            egui::pos2(rect.left() + 10.0, rect.bottom() - 10.0),
+            egui::Align2::LEFT_BOTTOM,
+            format_smpte(ed.project.timeline.playhead_us, ed.project.frame_rate.as_f64()),
+            egui::FontId::monospace(12.0),
+            egui::Color32::from_rgb(220, 225, 235),
+        );
     });
 
     // 5. Bottom Panel: Interactive Timeline
@@ -803,44 +895,47 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         .show(ctx, |ui| {
             // Transport Bar
             ui.horizontal(|ui| {
-                if ui.button("⏮").on_hover_text("Jump to start").clicked() {
+                if ui.button("|<").on_hover_text("First Frame (Home)").clicked() {
                     ed.project.timeline.playhead_us = 0;
                 }
-                if ui.button("⏪").on_hover_text("Step back 1 sec").clicked() {
+                if ui.button("< 1s").on_hover_text("Step Back 1s (Left Arrow)").clicked() {
                     ed.project.timeline.playhead_us = ed.project.timeline.playhead_us.saturating_sub(1_000_000);
                 }
-                let play_label = if ed.is_playing { "⏸ Pause" } else { "▶ Play" };
-                if ui.button(egui::RichText::new(play_label).strong()).clicked() {
+                let play_label = if ed.is_playing { "Pause" } else { "Play" };
+                if ui.button(egui::RichText::new(play_label).strong()).on_hover_text("Play / Pause (Space)").clicked() {
                     ed.is_playing = !ed.is_playing;
                 }
-                if ui.button("⏩").on_hover_text("Step forward 1 sec").clicked() {
+                if ui.button("1s >").on_hover_text("Step Forward 1s (Right Arrow)").clicked() {
                     ed.project.timeline.playhead_us += 1_000_000;
                 }
-                if ui.button("⏭").on_hover_text("Jump to end").clicked() {
+                if ui.button(">|").on_hover_text("Last Frame (End)").clicked() {
                     ed.project.timeline.playhead_us = ed.project.timeline.duration_us();
                 }
 
                 ui.separator();
-                let mins = ed.project.timeline.playhead_us / 60_000_000;
-                let secs = (ed.project.timeline.playhead_us / 1_000_000) % 60;
-                let millis = (ed.project.timeline.playhead_us / 1_000) % 1_000;
+                let timecode = format_smpte(ed.project.timeline.playhead_us, ed.project.frame_rate.as_f64());
                 ui.label(
-                    egui::RichText::new(format!("{:02}:{:02}.{:03}", mins, secs, millis))
-                        .size(16.0)
+                    egui::RichText::new(timecode)
+                        .size(15.0)
+                        .monospace()
                         .strong()
                         .color(egui::Color32::from_rgb(240, 240, 255)),
                 );
 
                 ui.separator();
-                let total_s = ed.project.timeline.duration_us() as f64 / 1_000_000.0;
-                ui.label(format!("Duration: {:.2}s | Tracks: {}", total_s, ed.project.timeline.track_count()));
+                let total_time = format_smpte(ed.project.timeline.duration_us(), ed.project.frame_rate.as_f64());
+                ui.label(
+                    egui::RichText::new(format!("Seq End: {} | Tracks: {}", total_time, ed.project.timeline.track_count()))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(140, 140, 150)),
+                );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("➕ Audio Track").clicked() {
+                    if ui.button("+ Audio Track").clicked() {
                         let count = ed.project.timeline.track_count() + 1;
                         ed.project.timeline.add_track(TrackKind::Audio, format!("Audio {}", count));
                     }
-                    if ui.button("➕ Video Track").clicked() {
+                    if ui.button("+ Video Track").clicked() {
                         let count = ed.project.timeline.track_count() + 1;
                         ed.project.timeline.add_track(TrackKind::Video, format!("Video {}", count));
                     }
@@ -946,30 +1041,34 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     );
 
                     let is_selected = ed.selected_clip == Some(clip.id);
-                    let clip_color = if is_selected {
-                        egui::Color32::from_rgb(50, 110, 190)
+                    let (clip_color, top_accent) = if is_selected {
+                        (egui::Color32::from_rgb(37, 99, 235), egui::Color32::from_rgb(96, 165, 250))
                     } else {
                         match track.kind {
-                            TrackKind::Video => egui::Color32::from_rgb(35, 75, 130),
-                            TrackKind::Audio => egui::Color32::from_rgb(40, 100, 60),
-                            TrackKind::Text => egui::Color32::from_rgb(110, 80, 45),
-                            TrackKind::Overlay => egui::Color32::from_rgb(95, 55, 110),
+                            TrackKind::Video => (egui::Color32::from_rgb(32, 44, 62), egui::Color32::from_rgb(59, 130, 246)),
+                            TrackKind::Audio => (egui::Color32::from_rgb(26, 48, 36), egui::Color32::from_rgb(16, 185, 129)),
+                            TrackKind::Text => (egui::Color32::from_rgb(52, 40, 26), egui::Color32::from_rgb(245, 158, 11)),
+                            TrackKind::Overlay => (egui::Color32::from_rgb(46, 30, 50), egui::Color32::from_rgb(168, 85, 247)),
                         }
                     };
 
-                    painter.rect_filled(clip_rect, 4.0, clip_color);
+                    painter.rect_filled(clip_rect, 2.0, clip_color);
+                    // Draw clean 2px top color strip indicating track media class
+                    let accent_rect = egui::Rect::from_min_size(clip_rect.left_top(), egui::vec2(clip_rect.width(), 2.0));
+                    painter.rect_filled(accent_rect, 0.0, top_accent);
+
                     if is_selected {
-                        painter.rect_stroke(clip_rect, 4.0, egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 215, 0)), egui::StrokeKind::Inside);
+                        painter.rect_stroke(clip_rect, 2.0, egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(147, 197, 253)), egui::StrokeKind::Inside);
                     }
 
-                    // Clip name / duration label
-                    let label = format!("{:.1}s", clip.duration_us() as f64 / 1_000_000.0);
+                    // Clip duration label formatted in SMPTE or seconds
+                    let label = format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64());
                     painter.text(
                         egui::pos2(clip_start_x + 6.0, y + track_lane_height / 2.0),
                         egui::Align2::LEFT_CENTER,
                         label,
-                        egui::FontId::monospace(11.0),
-                        egui::Color32::WHITE,
+                        egui::FontId::monospace(10.0),
+                        egui::Color32::from_rgb(220, 225, 235),
                     );
 
                     // Check click on clip
@@ -996,25 +1095,25 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             if playhead_x >= timeline_x_start && playhead_x <= rect.right() {
                 painter.line_segment(
                     [egui::pos2(playhead_x, rect.top()), egui::pos2(playhead_x, rect.bottom())],
-                    egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 65, 65)),
+                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(239, 68, 68)),
                 );
                 // Playhead head handle
                 let head_rect = egui::Rect::from_min_size(
-                    egui::pos2(playhead_x - 6.0, rect.top()),
-                    egui::vec2(12.0, 14.0),
+                    egui::pos2(playhead_x - 5.0, rect.top()),
+                    egui::vec2(10.0, 12.0),
                 );
-                painter.rect_filled(head_rect, 2.0, egui::Color32::from_rgb(255, 65, 65));
+                painter.rect_filled(head_rect, 1.0, egui::Color32::from_rgb(239, 68, 68));
             }
         });
 
     // 6. Export Modal Window
     if ed.show_export_modal {
-        egui::Window::new("🚀 Export Project")
+        egui::Window::new("Export Media")
             .collapsible(false)
             .resizable(false)
-            .default_width(420.0)
+            .default_width(440.0)
             .show(ctx, |ui| {
-                ui.heading("Render & Export Configuration");
+                ui.label(egui::RichText::new("RENDER & ENCODE SETTINGS").strong().size(12.0));
                 ui.separator();
 
                 let presets = [
@@ -1035,17 +1134,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     });
 
                 let selected_preset = &presets[ed.export_preset_idx];
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.group(|ui| {
-                    ui.label(format!("Resolution: {}×{}", selected_preset.width, selected_preset.height));
-                    ui.label(format!("Framerate: {:.0} fps", selected_preset.fps));
+                    ui.label(format!("Resolution: {}x{}", selected_preset.width, selected_preset.height));
+                    ui.label(format!("Timebase: {:.2} fps Progressive", selected_preset.fps));
                     ui.label(format!("Video Bitrate: {} kbps ({})", selected_preset.video_bitrate_kbps, selected_preset.video_codec));
                     ui.label(format!("Audio Bitrate: {} kbps ({})", selected_preset.audio_bitrate_kbps, selected_preset.audio_codec));
                 });
 
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("📁 Destination File...").clicked() {
+                    if ui.button("Browse Destination...").clicked() {
                         let default_name = format!("{}_{}.mp4", ed.project.name.replace(' ', "_"), selected_preset.width);
                         if let Some(dest) = rfd::FileDialog::new()
                             .set_file_name(&default_name)
@@ -1058,7 +1157,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     if let Some(dest) = &ed.export_destination {
                         ui.label(dest.file_name().and_then(|n| n.to_str()).unwrap_or(""));
                     } else {
-                        ui.label("No file selected");
+                        ui.label(egui::RichText::new("No file selected").color(egui::Color32::from_rgb(130, 130, 140)));
                     }
                 });
 
@@ -1070,7 +1169,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                 if let Some(job) = &ed.active_export_job {
                     let progress = job.progress(ed.export_frame_counter);
-                    ui.label(format!("Exporting Frame {} / {}", progress.current_frame, progress.total_frames));
+                    ui.label(format!("Encoding Frame {} of {}", progress.current_frame, progress.total_frames));
                     ui.add(egui::ProgressBar::new(progress.fraction).show_percentage());
                     ui.horizontal(|ui| {
                         ui.label(format!("Speed: {:.1}x real-time", progress.speed_multiplier));
@@ -1084,7 +1183,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         should_finish = true;
                     }
 
-                    if ui.button("⏹ Cancel Export").clicked() {
+                    if ui.button("Cancel Render").clicked() {
                         job.cancel();
                         should_cancel = true;
                     }
@@ -1105,7 +1204,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 } else if should_cancel {
                     ed.active_export_job = None;
                 } else if ed.export_completed {
-                    ui.label(egui::RichText::new("✅ Export Completed Successfully!").color(egui::Color32::from_rgb(80, 220, 100)));
+                    ui.label(egui::RichText::new("Export completed successfully.").color(egui::Color32::from_rgb(52, 211, 153)));
                     if ui.button("Close").clicked() {
                         ed.show_export_modal = false;
                         ed.export_completed = false;
@@ -1113,7 +1212,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 } else {
                     ui.horizontal(|ui| {
                         let can_export = ed.export_destination.is_some() && ed.project.timeline.duration_us() > 0;
-                        if ui.add_enabled(can_export, egui::Button::new("🚀 Start Export")).clicked() {
+                        if ui.add_enabled(can_export, egui::Button::new("Start Render")).clicked() {
                             let dur_s = ed.project.timeline.duration_us() as f64 / 1_000_000.0;
                             let total_frames = (dur_s * selected_preset.fps).max(1.0) as u64;
                             ed.active_export_job = Some(rd_export::ExportJob::new(selected_preset.clone(), total_frames));

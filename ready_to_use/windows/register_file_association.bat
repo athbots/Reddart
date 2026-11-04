@@ -18,3 +18,4 @@ ftype Reddart.Project="%APP_PATH%" "%%1"
 echo [Reddart] Association registered successfully!
 echo You can now double-click any .reddart file to open it in Reddart.
 pause
+
