@@ -13,7 +13,9 @@
     "adaptive_quality_governor",
     "wgsl_shader_effects",
     "audio_mixing_soft_limiter",
-    "hardware_export_presets"
+    "hardware_export_presets",
+    "industrial_nle_studio_controls",
+    "hardware_playback_deck"
   ],
   "sample_project": "samples/Demo_Project.reddart"
 }

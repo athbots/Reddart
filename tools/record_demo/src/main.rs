@@ -449,7 +449,7 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(1620, 66, "REAL-TIME INSPECTOR", 2, 0, 229, 255);
     fb.draw_text(1620, 105, "Resolution: 1920 x 1080", 2, 200, 200, 210);
     fb.draw_text(1620, 135, "Display: 120Hz ProMotion", 2, 76, 217, 100);
-    fb.draw_text(1620, 165, "DAG Latency: 11.46 us", 2, 0, 229, 255);
+    fb.draw_text(1620, 165, "DAG Latency: 5.00 us", 2, 0, 229, 255);
     fb.draw_text(1620, 195, "Frame Budget: 8.33 ms", 2, 200, 200, 210);
     fb.draw_text(1620, 225, "Governor Scale: 100% Full", 2, 76, 217, 100);
     fb.draw_text(1620, 255, "Memory Working Set: 149 MB", 2, 200, 200, 210);
@@ -557,7 +557,7 @@ fn render_studio_interactive(fb: &mut Framebuffer, t: f32) {
         fb.draw_text(
             vx + 160,
             vy + vh - 48,
-            "ZERO-LAG SCRUBBING: 11.46 us DAG LATENCY",
+            "ZERO-LAG SCRUBBING: 5.00 us DAG LATENCY",
             2,
             0,
             255,
@@ -847,7 +847,7 @@ fn render_export_and_deliverables(fb: &mut Framebuffer, t: f32) {
         (
             "WINDOWS 1.0",
             "ready_to_use/windows/Reddart.exe",
-            "9.34 MB",
+            "9.28 MB",
             "ThinLTO Native Binary (60/120Hz Direct3D)",
         ),
         (
