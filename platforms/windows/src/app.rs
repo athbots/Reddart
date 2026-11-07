@@ -32,6 +32,14 @@ pub enum WorkspaceMode {
     Export,
 }
 
+/// Tab displayed in the left utility panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeftPanelTab {
+    #[default]
+    MediaBin,
+    Templates,
+}
+
 /// Active timeline editing tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EditTool {
@@ -112,6 +120,10 @@ pub struct EditorData {
     pub audio_metering: MeteringState,
     pub active_tool: EditTool,
     pub journal: Option<rd_core::ProjectJournal>,
+    pub show_template_modal: bool,
+    pub selected_template_idx: usize,
+    pub left_panel_tab: LeftPanelTab,
+    pub template_project_name: String,
 }
 
 impl EditorData {
@@ -230,6 +242,67 @@ impl EditorData {
             audio_engine,
             audio_metering,
             journal,
+            show_template_modal: false,
+            selected_template_idx: 0,
+            left_panel_tab: LeftPanelTab::MediaBin,
+            template_project_name: "New Template Project".into(),
+        }
+    }
+
+    /// Instantiate a curated starter template into the active editor session.
+    pub fn instantiate_template(&mut self, template_idx: usize, project_name: Option<&str>) {
+        let templates = rd_effects::template::TemplateSpec::starter_templates();
+        if let Some(t) = templates.get(template_idx) {
+            let media_paths: Vec<String> = if !self.media_files.is_empty() {
+                self.media_files
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect()
+            } else {
+                (1..=t.slots.len())
+                    .map(|i| format!("media_slot_{:02}.mp4", i))
+                    .collect()
+            };
+
+            match t.instantiate(&media_paths) {
+                Ok(mut new_project) => {
+                    if let Some(name) = project_name {
+                        let trimmed = name.trim();
+                        if !trimmed.is_empty() {
+                            new_project.name = trimmed.to_string();
+                        }
+                    }
+                    let t_name = t.name.clone();
+                    let res_w = new_project.resolution.width;
+                    let res_h = new_project.resolution.height;
+                    let total_clips = new_project.timeline.total_clip_count();
+
+                    let save_path =
+                        PathBuf::from(format!("{}.reddart", new_project.name.replace(' ', "_")));
+                    self.journal = rd_core::ProjectJournal::open_or_create(&save_path).ok();
+                    self.last_save_path = Some(save_path);
+
+                    self.project = new_project;
+                    self.history.clear();
+                    self.selected_clip = None;
+                    self.selected_track = None;
+                    self.missing_media.clear();
+                    self.needs_monitor_update = true;
+
+                    self.status_message = Some((
+                        format!(
+                            "Instantiated Template: {} ({}x{}, {} clips)",
+                            t_name, res_w, res_h, total_clips
+                        ),
+                        Instant::now(),
+                    ));
+                    log::info!("Instantiated template: {} ({}x{})", t_name, res_w, res_h);
+                }
+                Err(e) => {
+                    self.status_message = Some((format!("Template error: {}", e), Instant::now()));
+                    log::error!("Template instantiation failed: {}", e);
+                }
+            }
         }
     }
 
@@ -1249,6 +1322,11 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 ));
             }
         }
+        if (i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::N))
+            || (i.modifiers.ctrl && i.key_pressed(egui::Key::T))
+        {
+            ed.show_template_modal = true;
+        }
         if i.key_pressed(egui::Key::ArrowLeft) {
             let step = if i.modifiers.shift { 33_333 } else { 1_000_000 };
             ed.project.timeline.playhead_us = ed.project.timeline.playhead_us.saturating_sub(step);
@@ -1287,6 +1365,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.journal = None;
                     ed.missing_media.clear();
                     ed.status_message = Some(("New Project Created".into(), Instant::now()));
+                    ui.close_menu();
+                }
+                if ui.button("New from Template... (Ctrl+T)").clicked() {
+                    ed.show_template_modal = true;
                     ui.close_menu();
                 }
                 if ui.button("Open Project...").clicked() {
@@ -1543,15 +1625,29 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         .show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("PROJECT MEDIA BIN")
-                        .strong()
-                        .size(11.5)
-                        .color(egui::Color32::from_rgb(220, 225, 235)),
+                let media_tab_btn = ui.selectable_label(
+                    ed.left_panel_tab == LeftPanelTab::MediaBin,
+                    egui::RichText::new("📁 Media Bin").strong().size(11.0),
                 );
+                if media_tab_btn.clicked() {
+                    ed.left_panel_tab = LeftPanelTab::MediaBin;
+                }
+
+                let tmpl_tab_btn = ui.selectable_label(
+                    ed.left_panel_tab == LeftPanelTab::Templates,
+                    egui::RichText::new("📐 Templates").strong().size(11.0),
+                );
+                if tmpl_tab_btn.clicked() {
+                    ed.left_panel_tab = LeftPanelTab::Templates;
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let count_str = match ed.left_panel_tab {
+                        LeftPanelTab::MediaBin => format!("[{}]", ed.media_files.len()),
+                        LeftPanelTab::Templates => "[5]".to_string(),
+                    };
                     ui.label(
-                        egui::RichText::new(format!("[{}]", ed.media_files.len()))
+                        egui::RichText::new(count_str)
                             .monospace()
                             .size(11.0)
                             .color(egui::Color32::from_rgb(96, 165, 250)),
@@ -1560,91 +1656,186 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             });
             ui.separator();
 
-            if studio_btn(
-                ui,
-                "+ IMPORT MEDIA FILES...",
-                Some(egui::Color32::from_rgb(37, 99, 235)),
-                false,
-            )
-            .on_hover_text("Import video, audio, or graphic assets into project bin")
-            .clicked()
-                && let Some(files) = rfd::FileDialog::new()
-                    .add_filter(
-                        "Media Files",
-                        &[
-                            "mp4", "mov", "mkv", "avi", "webm", "png", "jpg", "jpeg", "wav", "mp3",
-                        ],
+            match ed.left_panel_tab {
+                LeftPanelTab::MediaBin => {
+                    if studio_btn(
+                        ui,
+                        "+ IMPORT MEDIA FILES...",
+                        Some(egui::Color32::from_rgb(37, 99, 235)),
+                        false,
                     )
-                    .pick_files()
-            {
-                for file in files {
-                    let path_str = file.to_string_lossy().to_string();
+                    .on_hover_text("Import video, audio, or graphic assets into project bin")
+                    .clicked()
+                        && let Some(files) = rfd::FileDialog::new()
+                            .add_filter(
+                                "Media Files",
+                                &[
+                                    "mp4", "mov", "mkv", "avi", "webm", "png", "jpg", "jpeg",
+                                    "wav", "mp3",
+                                ],
+                            )
+                            .pick_files()
+                    {
+                        for file in files {
+                            let path_str = file.to_string_lossy().to_string();
 
-                    if ed.project.timeline.track_count() == 0 {
-                        ed.project.timeline.add_track(TrackKind::Video, "Video 1");
-                    }
-                    let track_id = ed.project.timeline.tracks()[0].id;
-                    let start_pos = ed.project.timeline.duration_us();
-                    let default_dur = 5_000_000;
+                            if ed.project.timeline.track_count() == 0 {
+                                ed.project.timeline.add_track(TrackKind::Video, "Video 1");
+                            }
+                            let track_id = ed.project.timeline.tracks()[0].id;
+                            let start_pos = ed.project.timeline.duration_us();
+                            let default_dur = 5_000_000;
 
-                    let clip = Clip::new_video(&path_str, start_pos, 0, default_dur);
-                    if let Some(track) = ed.project.timeline.track_mut(track_id) {
-                        track.add_clip(clip);
-                    }
-                    ed.media_files.push(file);
-                    ed.status_message = Some((format!("Imported {}", path_str), Instant::now()));
-                }
-            }
-
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("Sequence Bin Pool")
-                    .size(10.5)
-                    .color(egui::Color32::from_rgb(140, 145, 160)),
-            );
-
-            egui::ScrollArea::vertical()
-                .max_height(240.0)
-                .show(ui, |ui| {
-                    if ed.media_files.is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new("Bin is empty.\nClick Import Media Files above.")
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(100, 105, 120)),
-                        );
-                    }
-                    for file in &ed.media_files {
-                        let filename = file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-                        let ext = file
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        let badge = match ext.as_str() {
-                            "wav" | "mp3" | "aac" | "flac" => "[AUD]",
-                            "png" | "jpg" | "jpeg" | "webp" => "[IMG]",
-                            _ => "[VID]",
-                        };
-                        let item_label = format!("{} {}", badge, filename);
-                        if ui.selectable_label(false, item_label).clicked() {
-                            let track_id = ed
-                                .selected_track
-                                .unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
-                            let clip = Clip::new_video(
-                                file.to_string_lossy(),
-                                ed.project.timeline.playhead_us,
-                                0,
-                                5_000_000,
-                            );
+                            let clip = Clip::new_video(&path_str, start_pos, 0, default_dur);
                             if let Some(track) = ed.project.timeline.track_mut(track_id) {
                                 track.add_clip(clip);
-                                ed.status_message =
-                                    Some((format!("Added clip to {}", track.name), Instant::now()));
                             }
+                            ed.media_files.push(file);
+                            ed.status_message =
+                                Some((format!("Imported {}", path_str), Instant::now()));
                         }
                     }
-                });
+
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("Sequence Bin Pool")
+                            .size(10.5)
+                            .color(egui::Color32::from_rgb(140, 145, 160)),
+                    );
+
+                    egui::ScrollArea::vertical()
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            if ed.media_files.is_empty() {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Bin is empty.\nClick Import Media Files above.",
+                                    )
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(100, 105, 120)),
+                                );
+                            }
+                            for file in &ed.media_files {
+                                let filename =
+                                    file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                                let ext = file
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                let badge = match ext.as_str() {
+                                    "wav" | "mp3" | "aac" | "flac" => "[AUD]",
+                                    "png" | "jpg" | "jpeg" | "webp" => "[IMG]",
+                                    _ => "[VID]",
+                                };
+                                let item_label = format!("{} {}", badge, filename);
+                                if ui.selectable_label(false, item_label).clicked() {
+                                    let track_id = ed
+                                        .selected_track
+                                        .unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
+                                    let clip = Clip::new_video(
+                                        file.to_string_lossy(),
+                                        ed.project.timeline.playhead_us,
+                                        0,
+                                        5_000_000,
+                                    );
+                                    if let Some(track) = ed.project.timeline.track_mut(track_id) {
+                                        track.add_clip(clip);
+                                        ed.status_message = Some((
+                                            format!("Added clip to {}", track.name),
+                                            Instant::now(),
+                                        ));
+                                    }
+                                }
+                            }
+                        });
+                }
+                LeftPanelTab::Templates => {
+                    if ui
+                        .add(
+                            crate::ui::widgets::StudioButton::new("+ OPEN TEMPLATE GALLERY...")
+                                .accent(egui::Color32::from_rgb(37, 99, 235))
+                                .active(true)
+                                .icon(crate::ui::icons::draw_template),
+                        )
+                        .on_hover_text("Open visual template gallery with slot inspector (Ctrl+T)")
+                        .clicked()
+                    {
+                        ed.show_template_modal = true;
+                    }
+
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("CURATED STARTER TEMPLATES")
+                            .strong()
+                            .size(10.5)
+                            .color(egui::Color32::from_rgb(140, 145, 160)),
+                    );
+
+                    let templates = rd_effects::template::TemplateSpec::starter_templates();
+                    egui::ScrollArea::vertical()
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            for (idx, tmpl) in templates.iter().enumerate() {
+                                ui.group(|ui| {
+                                    let badge = if tmpl.aspect_width < tmpl.aspect_height {
+                                        "[9:16]"
+                                    } else if tmpl.aspect_width == tmpl.aspect_height {
+                                        "[1:1]"
+                                    } else if tmpl.aspect_width >= 3840 {
+                                        "[4K]"
+                                    } else {
+                                        "[16:9]"
+                                    };
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(badge)
+                                                .monospace()
+                                                .size(10.0)
+                                                .color(egui::Color32::from_rgb(0, 229, 255)),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&tmpl.name)
+                                                .strong()
+                                                .size(11.0)
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{}x{} | {:.0}s | {} slots",
+                                            tmpl.aspect_width,
+                                            tmpl.aspect_height,
+                                            tmpl.duration_us as f64 / 1_000_000.0,
+                                            tmpl.slots.len()
+                                        ))
+                                        .size(9.5)
+                                        .color(egui::Color32::from_rgb(148, 163, 184)),
+                                    );
+
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .small_button("Apply")
+                                            .on_hover_text("Create project from this template")
+                                            .clicked()
+                                        {
+                                            ed.instantiate_template(idx, None);
+                                        }
+                                        if ui.small_button("Details...").clicked() {
+                                            ed.selected_template_idx = idx;
+                                            ed.template_project_name = format!("New {}", tmpl.name);
+                                            ed.show_template_modal = true;
+                                        }
+                                    });
+                                });
+                                ui.add_space(3.0);
+                            }
+                        });
+                }
+            }
 
             ui.add_space(10.0);
             ui.separator();
@@ -3793,6 +3984,222 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     });
                 }
             });
+    }
+
+    // 7. Starter Templates Modal Window
+    if ed.show_template_modal {
+        let mut close_modal = false;
+        let mut instantiate_idx: Option<usize> = None;
+        let templates = rd_effects::template::TemplateSpec::starter_templates();
+
+        egui::Window::new("Starter Project Templates")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(740.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                    crate::ui::icons::draw_template(ui.painter(), icon_rect, egui::Color32::from_rgb(0, 229, 255));
+                    ui.label(
+                        egui::RichText::new("STARTER PROJECT TEMPLATES & SEQUENCES")
+                            .strong()
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(220, 225, 235)),
+                    );
+                });
+                ui.label(
+                    egui::RichText::new("Choose a production-ready template to preconfigure timeline tracks, duration, aspect ratios, and beat sync points.")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(140, 145, 160)),
+                );
+                ui.separator();
+
+                ui.columns(2, |cols| {
+                    // Left Column: Template Cards List
+                    cols[0].label(
+                        egui::RichText::new("AVAILABLE TEMPLATES")
+                            .strong()
+                            .size(10.5)
+                            .color(egui::Color32::from_rgb(180, 185, 200)),
+                    );
+                    egui::ScrollArea::vertical()
+                        .max_height(340.0)
+                        .show(&mut cols[0], |ui| {
+                            for (idx, tmpl) in templates.iter().enumerate() {
+                                let is_selected = ed.selected_template_idx == idx;
+                                let card_bg = if is_selected {
+                                    egui::Color32::from_rgb(30, 41, 59)
+                                } else {
+                                    egui::Color32::from_rgb(24, 26, 32)
+                                };
+                                let card_stroke = if is_selected {
+                                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0, 229, 255))
+                                } else {
+                                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(45, 48, 58))
+                                };
+
+                                egui::Frame::new()
+                                    .fill(card_bg)
+                                    .stroke(card_stroke)
+                                    .corner_radius(4.0)
+                                    .inner_margin(8.0)
+                                    .show(ui, |ui| {
+                                        let badge_text = if tmpl.aspect_width < tmpl.aspect_height {
+                                            "[9:16 VERTICAL]"
+                                        } else if tmpl.aspect_width == tmpl.aspect_height {
+                                            "[1:1 SQUARE]"
+                                        } else if tmpl.aspect_width >= 3840 {
+                                            "[4K UHD WIDE]"
+                                        } else {
+                                            "[16:9 WIDESCREEN]"
+                                        };
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(badge_text)
+                                                    .monospace()
+                                                    .size(9.5)
+                                                    .color(egui::Color32::from_rgb(0, 229, 255)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{:.1}s | {} slots",
+                                                    tmpl.duration_us as f64 / 1_000_000.0,
+                                                    tmpl.slots.len()
+                                                ))
+                                                .size(9.5)
+                                                .color(egui::Color32::from_rgb(148, 163, 184)),
+                                            );
+                                        });
+
+                                        if ui
+                                            .selectable_label(
+                                                is_selected,
+                                                egui::RichText::new(&tmpl.name)
+                                                    .strong()
+                                                    .size(11.5)
+                                                    .color(egui::Color32::WHITE),
+                                            )
+                                            .clicked()
+                                        {
+                                            ed.selected_template_idx = idx;
+                                            ed.template_project_name = format!("New {}", tmpl.name);
+                                        }
+
+                                        ui.label(
+                                            egui::RichText::new(&tmpl.description)
+                                                .size(10.0)
+                                                .color(egui::Color32::from_rgb(140, 145, 160)),
+                                        );
+                                    });
+                                ui.add_space(4.0);
+                            }
+                        });
+
+                    // Right Column: Template Inspector & Setup
+                    let selected_tmpl = &templates[ed.selected_template_idx.min(templates.len() - 1)];
+                    cols[1].label(
+                        egui::RichText::new("CONFIGURATION & DETAILS")
+                            .strong()
+                            .size(10.5)
+                            .color(egui::Color32::from_rgb(180, 185, 200)),
+                    );
+
+                    cols[1].horizontal(|ui| {
+                        ui.label("Project Name:");
+                        ui.text_edit_singleline(&mut ed.template_project_name);
+                    });
+                    cols[1].add_space(4.0);
+
+                    cols[1].group(|ui| {
+                        ui.label(
+                            egui::RichText::new(&selected_tmpl.name)
+                                .strong()
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(0, 229, 255)),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(format!(
+                            "Resolution: {}x{} Progressive",
+                            selected_tmpl.aspect_width, selected_tmpl.aspect_height
+                        ));
+                        ui.label(format!(
+                            "Duration: {:.1} seconds ({} slots)",
+                            selected_tmpl.duration_us as f64 / 1_000_000.0,
+                            selected_tmpl.slots.len()
+                        ));
+
+                        if let Some(music) = &selected_tmpl.music_cue {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Audio Sync: {} rhythm beat cues",
+                                    music.beats_us.len()
+                                ))
+                                .color(egui::Color32::from_rgb(52, 211, 153)),
+                            );
+                        } else {
+                            ui.label("Audio Sync: Standard Timeline Track");
+                        }
+                    });
+
+                    cols[1].add_space(6.0);
+                    cols[1].group(|ui| {
+                        ui.label(
+                            egui::RichText::new("MEDIA INJECTION")
+                                .strong()
+                                .size(10.0)
+                                .color(egui::Color32::from_rgb(180, 185, 200)),
+                        );
+                        if ed.media_files.is_empty() {
+                            ui.label(
+                                egui::RichText::new("Bin is empty. Slots will be initialized with placeholder clips that you can replace anytime.")
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(140, 145, 160)),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} media file(s) in bin. Will inject into slots in order.",
+                                    ed.media_files.len()
+                                ))
+                                .size(10.0)
+                                .color(egui::Color32::from_rgb(52, 211, 153)),
+                            );
+                        }
+                    });
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            crate::ui::widgets::StudioButton::new("Create Project from Template")
+                                .accent(egui::Color32::from_rgb(37, 99, 235))
+                                .active(true)
+                                .icon(crate::ui::icons::draw_template),
+                        )
+                        .clicked()
+                    {
+                        instantiate_idx = Some(ed.selected_template_idx);
+                        close_modal = true;
+                    }
+
+                    if studio_btn(ui, "Cancel", None, false).clicked() {
+                        close_modal = true;
+                    }
+                });
+            });
+
+        if let Some(idx) = instantiate_idx {
+            let name = ed.template_project_name.clone();
+            ed.instantiate_template(idx, Some(&name));
+        }
+        if close_modal {
+            ed.show_template_modal = false;
+        }
     }
 }
 

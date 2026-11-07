@@ -144,10 +144,8 @@ impl Framebuffer {
                 let alpha = a as f32 / 255.0;
                 let inv = 1.0 - alpha;
                 self.pixels[idx] = (r as f32 * alpha + self.pixels[idx] as f32 * inv) as u8;
-                self.pixels[idx + 1] =
-                    (g as f32 * alpha + self.pixels[idx + 1] as f32 * inv) as u8;
-                self.pixels[idx + 2] =
-                    (b as f32 * alpha + self.pixels[idx + 2] as f32 * inv) as u8;
+                self.pixels[idx + 1] = (g as f32 * alpha + self.pixels[idx + 1] as f32 * inv) as u8;
+                self.pixels[idx + 2] = (b as f32 * alpha + self.pixels[idx + 2] as f32 * inv) as u8;
                 self.pixels[idx + 3] = 255;
             }
         }
@@ -260,16 +258,7 @@ impl Framebuffer {
         }
     }
 
-    pub fn draw_text(
-        &mut self,
-        x: usize,
-        y: usize,
-        text: &str,
-        scale: usize,
-        r: u8,
-        g: u8,
-        b: u8,
-    ) {
+    pub fn draw_text(&mut self, x: usize, y: usize, text: &str, scale: usize, r: u8, g: u8, b: u8) {
         let mut cur_x = x;
         for c in text.chars() {
             let glyph = font_8x8::get_glyph(c);
@@ -319,8 +308,22 @@ impl Framebuffer {
             let cy = y as isize;
             for i in -9..=9 {
                 if i != 0 {
-                    self.set_pixel((cx + i).clamp(0, WIDTH as isize - 1) as usize, cy as usize, 255, 220, 0, 255);
-                    self.set_pixel(cx as usize, (cy + i).clamp(0, HEIGHT as isize - 1) as usize, 255, 220, 0, 255);
+                    self.set_pixel(
+                        (cx + i).clamp(0, WIDTH as isize - 1) as usize,
+                        cy as usize,
+                        255,
+                        220,
+                        0,
+                        255,
+                    );
+                    self.set_pixel(
+                        cx as usize,
+                        (cy + i).clamp(0, HEIGHT as isize - 1) as usize,
+                        255,
+                        220,
+                        0,
+                        255,
+                    );
                 }
             }
             self.draw_circle_outline(cx, cy, 5, 1, 255, 220, 0, 255);
@@ -394,26 +397,126 @@ struct CursorTarget {
 
 fn get_cursor_state(t: f32) -> (usize, usize, bool, f32) {
     let waypoints: [CursorTarget; 20] = [
-        CursorTarget { t: 0.0,  x: 960,  y: 540, click: false },
-        CursorTarget { t: 1.2,  x: 75,   y: 42,  click: false }, // Hover File
-        CursorTarget { t: 1.6,  x: 75,   y: 42,  click: true  }, // Click File (menu opens)
-        CursorTarget { t: 2.2,  x: 95,   y: 110, click: false }, // Hover Save Project
-        CursorTarget { t: 2.5,  x: 95,   y: 110, click: true  }, // Click Save Project (WAL save)
-        CursorTarget { t: 3.8,  x: 160,  y: 140, click: false }, // Hover Media Bin
-        CursorTarget { t: 4.2,  x: 160,  y: 140, click: true  }, // Double-click load clip
-        CursorTarget { t: 5.6,  x: 656,  y: 750, click: false }, // Hover Playhead on ruler
-        CursorTarget { t: 6.0,  x: 656,  y: 750, click: true  }, // Click Playhead
-        CursorTarget { t: 7.5,  x: 1100, y: 750, click: true  }, // Drag Playhead right (scrub)
-        CursorTarget { t: 8.8,  x: 520,  y: 750, click: true  }, // Drag Playhead left (scrub)
-        CursorTarget { t: 9.8,  x: 656,  y: 750, click: false }, // Release playhead at 2.4s
-        CursorTarget { t: 11.0, x: 175,  y: 720, click: true  }, // Click Razor tool [C]
-        CursorTarget { t: 12.2, x: 656,  y: 796, click: true  }, // Slice clip at 2.4s!
-        CursorTarget { t: 13.5, x: 315,  y: 720, click: true  }, // Click Ripple Trim [B]
-        CursorTarget { t: 14.8, x: 535,  y: 668, click: true  }, // Click Play [Space]
-        CursorTarget { t: 18.5, x: 535,  y: 668, click: true  }, // Click Pause [Space]
-        CursorTarget { t: 20.2, x: 160,  y: 72,  click: true  }, // Click 3D LUTs Tab
-        CursorTarget { t: 21.5, x: 150,  y: 310, click: true  }, // Click Teal & Orange LUT
-        CursorTarget { t: 27.8, x: 1760, y: 352, click: true  }, // Click Export Timeline (Ctrl+E)
+        CursorTarget {
+            t: 0.0,
+            x: 960,
+            y: 540,
+            click: false,
+        },
+        CursorTarget {
+            t: 1.2,
+            x: 75,
+            y: 42,
+            click: false,
+        }, // Hover File
+        CursorTarget {
+            t: 1.6,
+            x: 75,
+            y: 42,
+            click: true,
+        }, // Click File (menu opens)
+        CursorTarget {
+            t: 2.2,
+            x: 95,
+            y: 110,
+            click: false,
+        }, // Hover Save Project
+        CursorTarget {
+            t: 2.5,
+            x: 95,
+            y: 110,
+            click: true,
+        }, // Click Save Project (WAL save)
+        CursorTarget {
+            t: 3.8,
+            x: 160,
+            y: 140,
+            click: false,
+        }, // Hover Media Bin
+        CursorTarget {
+            t: 4.2,
+            x: 160,
+            y: 140,
+            click: true,
+        }, // Double-click load clip
+        CursorTarget {
+            t: 5.6,
+            x: 656,
+            y: 750,
+            click: false,
+        }, // Hover Playhead on ruler
+        CursorTarget {
+            t: 6.0,
+            x: 656,
+            y: 750,
+            click: true,
+        }, // Click Playhead
+        CursorTarget {
+            t: 7.5,
+            x: 1100,
+            y: 750,
+            click: true,
+        }, // Drag Playhead right (scrub)
+        CursorTarget {
+            t: 8.8,
+            x: 520,
+            y: 750,
+            click: true,
+        }, // Drag Playhead left (scrub)
+        CursorTarget {
+            t: 9.8,
+            x: 656,
+            y: 750,
+            click: false,
+        }, // Release playhead at 2.4s
+        CursorTarget {
+            t: 11.0,
+            x: 175,
+            y: 720,
+            click: true,
+        }, // Click Razor tool [C]
+        CursorTarget {
+            t: 12.2,
+            x: 656,
+            y: 796,
+            click: true,
+        }, // Slice clip at 2.4s!
+        CursorTarget {
+            t: 13.5,
+            x: 315,
+            y: 720,
+            click: true,
+        }, // Click Ripple Trim [B]
+        CursorTarget {
+            t: 14.8,
+            x: 535,
+            y: 668,
+            click: true,
+        }, // Click Play [Space]
+        CursorTarget {
+            t: 18.5,
+            x: 535,
+            y: 668,
+            click: true,
+        }, // Click Pause [Space]
+        CursorTarget {
+            t: 20.2,
+            x: 160,
+            y: 72,
+            click: true,
+        }, // Click 3D LUTs Tab
+        CursorTarget {
+            t: 21.5,
+            x: 150,
+            y: 310,
+            click: true,
+        }, // Click Teal & Orange LUT
+        CursorTarget {
+            t: 27.8,
+            x: 1760,
+            y: 352,
+            click: true,
+        }, // Click Export Timeline (Ctrl+E)
     ];
 
     let mut prev = &waypoints[0];
@@ -429,7 +532,11 @@ fn get_cursor_state(t: f32) -> (usize, usize, bool, f32) {
 
     if prev.t == next.t || t >= waypoints[waypoints.len() - 1].t {
         let is_clicking = (t - prev.t).abs() < 0.25 && prev.click;
-        let pulse = if prev.click { ((t - prev.t) / 0.5).clamp(0.0, 1.0) } else { 0.0 };
+        let pulse = if prev.click {
+            ((t - prev.t) / 0.5).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         return (prev.x, prev.y, is_clicking, pulse);
     }
 
@@ -440,7 +547,8 @@ fn get_cursor_state(t: f32) -> (usize, usize, bool, f32) {
     let cur_x = (prev.x as f32 + (next.x as f32 - prev.x as f32) * smooth) as usize;
     let cur_y = (prev.y as f32 + (next.y as f32 - prev.y as f32) * smooth) as usize;
 
-    let is_clicking = ((t - next.t).abs() < 0.25 && next.click) || ((t - prev.t).abs() < 0.25 && prev.click);
+    let is_clicking =
+        ((t - next.t).abs() < 0.25 && next.click) || ((t - prev.t).abs() < 0.25 && prev.click);
     let pulse_time = if next.click && (t - next.t).abs() < 0.5 {
         (t - (next.t - 0.2)).max(0.0) / 0.5
     } else if prev.click && (t - prev.t).abs() < 0.5 {
@@ -496,7 +604,11 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(0, 71, WIDTH, 1, 44, 46, 56, 255);
 
     let menu_active = (1.4..2.8).contains(&t);
-    let file_bg = if menu_active { (45, 48, 60) } else { (26, 27, 33) };
+    let file_bg = if menu_active {
+        (45, 48, 60)
+    } else {
+        (26, 27, 33)
+    };
     fb.fill_rect(16, 40, 52, 28, file_bg.0, file_bg.1, file_bg.2, 255);
     fb.draw_text(26, 48, "File", 1, 240, 240, 245);
     fb.draw_text(80, 48, "Edit", 1, 180, 180, 190);
@@ -509,7 +621,13 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
 
     // Workspace Mode Switcher (Centered)
     let modes = ["Media", "Edit", "Color", "Audio", "Export"];
-    let cur_mode = if t < 20.0 { "Edit" } else if t < 26.5 { "Color" } else { "Export" };
+    let cur_mode = if t < 20.0 {
+        "Edit"
+    } else if t < 26.5 {
+        "Color"
+    } else {
+        "Export"
+    };
     for (i, m) in modes.iter().enumerate() {
         let mx = 700 + i * 85;
         let is_sel = *m == cur_mode;
@@ -538,7 +656,13 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(339, 72, 1, 628, 44, 46, 56, 255);
 
     // Sub-Tabs
-    let active_tab = if t < 20.0 { "Media" } else if t < 24.5 { "3D LUTs" } else { "AI Tools" };
+    let active_tab = if t < 20.0 {
+        "Media"
+    } else if t < 24.5 {
+        "3D LUTs"
+    } else {
+        "AI Tools"
+    };
     fb.fill_rect(8, 80, 324, 32, 32, 34, 42, 255);
     let tab_names = ["Media Bin", "3D LUTs", "AI Suite"];
     for (i, tn) in tab_names.iter().enumerate() {
@@ -558,10 +682,30 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(16, 126, "PROJECT ASSETS (PRORES / RAW)", 1, 130, 135, 150);
 
     let media_files = [
-        ("4K_Vlog_A_Roll.mp4", "3840x2160 @ 60p", "ProRes 422HQ", (0, 229, 255)),
-        ("B_Roll_Drone_1080p.mp4", "1920x1080 @ 60p", "Rec.709 H.264", (180, 180, 195)),
-        ("Cinematic_Synth_48k.wav", "48,000 Hz 32-bit", "Stereo Master", (76, 217, 100)),
-        ("Action_Cam_Hyperlapse.mov", "3840x2160 @ 30p", "Log Profile", (180, 180, 195)),
+        (
+            "4K_Vlog_A_Roll.mp4",
+            "3840x2160 @ 60p",
+            "ProRes 422HQ",
+            (0, 229, 255),
+        ),
+        (
+            "B_Roll_Drone_1080p.mp4",
+            "1920x1080 @ 60p",
+            "Rec.709 H.264",
+            (180, 180, 195),
+        ),
+        (
+            "Cinematic_Synth_48k.wav",
+            "48,000 Hz 32-bit",
+            "Stereo Master",
+            (76, 217, 100),
+        ),
+        (
+            "Action_Cam_Hyperlapse.mov",
+            "3840x2160 @ 30p",
+            "Log Profile",
+            (180, 180, 195),
+        ),
     ];
 
     for (i, (name, res, codec, col)) in media_files.iter().enumerate() {
@@ -578,7 +722,11 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
 
     // 3D LUT Presets Section
     fb.draw_text(16, 360, "3D COLOR LUTS (.CUBE)", 1, 130, 135, 150);
-    let active_lut = if t < 21.5 { "Natural Rec.709" } else { "Teal & Orange" };
+    let active_lut = if t < 21.5 {
+        "Natural Rec.709"
+    } else {
+        "Teal & Orange"
+    };
     let luts = [
         "Natural Rec.709",
         "Teal & Orange",
@@ -601,8 +749,16 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
 
     // AI Neural Suite Section
     fb.draw_text(16, 570, "ON-DEVICE AI SUITE", 1, 130, 135, 150);
-    let ai_caption = if t >= 24.5 { "[OK] Whisper Subtitles Active" } else { "[*] Whisper Auto-Captions" };
-    let ai_denoise = if t >= 24.5 { "[OK] Spectral Denoise (-18dB)" } else { "[*] AI Spectral Denoise" };
+    let ai_caption = if t >= 24.5 {
+        "[OK] Whisper Subtitles Active"
+    } else {
+        "[*] Whisper Auto-Captions"
+    };
+    let ai_denoise = if t >= 24.5 {
+        "[OK] Spectral Denoise (-18dB)"
+    } else {
+        "[*] AI Spectral Denoise"
+    };
     fb.draw_text(20, 595, ai_caption, 1, 255, 180, 50);
     fb.draw_text(20, 625, ai_denoise, 1, 76, 217, 100);
     fb.draw_text(20, 655, "[*] Smart Auto-Reframe (9:16)", 1, 170, 175, 185);
@@ -709,7 +865,15 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     }
 
     fb.fill_rect(vx + 14, vy + 14, 380, 28, 10, 12, 16, 210);
-    fb.draw_text(vx + 24, vy + 22, "LIVE DIRECT3D 12 VIEWPORT | 120 FPS", 1, 0, 229, 255);
+    fb.draw_text(
+        vx + 24,
+        vy + 22,
+        "LIVE DIRECT3D 12 VIEWPORT | 120 FPS",
+        1,
+        0,
+        229,
+        255,
+    );
 
     let tc_str = format!(
         "00:00:{:02}:{:02}",
@@ -726,7 +890,15 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(1620, 88, "STUDIO INSPECTOR", 2, 0, 229, 255);
     fb.draw_text(1620, 120, "Clip: 4K_Vlog_A_Roll.mp4", 1, 220, 225, 235);
     fb.draw_text(1620, 142, "Resolution: 3840x2160 (16:9)", 1, 160, 165, 175);
-    fb.draw_text(1620, 164, "Colorspace: Rec.709 Wide Gamut", 1, 160, 165, 175);
+    fb.draw_text(
+        1620,
+        164,
+        "Colorspace: Rec.709 Wide Gamut",
+        1,
+        160,
+        165,
+        175,
+    );
 
     fb.draw_text(1620, 196, "SCALE & POSITION", 1, 130, 135, 150);
     fb.fill_rect(1620, 214, 280, 6, 40, 42, 52, 255);
@@ -743,7 +915,11 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(1620, 324, 190, 6, 0, 229, 255, 255);
 
     let export_hovered = (27.0..28.5).contains(&t);
-    let eb_col = if export_hovered { (0, 229, 255) } else { (0, 160, 200) };
+    let eb_col = if export_hovered {
+        (0, 229, 255)
+    } else {
+        (0, 160, 200)
+    };
     fb.fill_rect(1620, 345, 280, 46, eb_col.0, eb_col.1, eb_col.2, 255);
     fb.draw_text(1640, 360, "EXPORT TIMELINE (CTRL+E)", 1, 10, 12, 16);
 
@@ -824,10 +1000,18 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.fill_rect(0, 704, WIDTH, 38, 26, 27, 33, 255);
 
     let tool_select = !is_razor_active && !(13.5..15.5).contains(&t);
-    let v_col = if tool_select { (0, 229, 255) } else { (180, 185, 195) };
+    let v_col = if tool_select {
+        (0, 229, 255)
+    } else {
+        (180, 185, 195)
+    };
     fb.draw_text(16, 716, "[V] Select", 1, v_col.0, v_col.1, v_col.2);
 
-    let c_col = if is_razor_active { (255, 220, 0) } else { (180, 185, 195) };
+    let c_col = if is_razor_active {
+        (255, 220, 0)
+    } else {
+        (180, 185, 195)
+    };
     if is_razor_active {
         fb.fill_rect(130, 710, 110, 26, 60, 50, 10, 255);
         fb.draw_rect_outline(130, 710, 110, 26, 1, 255, 220, 0);
@@ -835,7 +1019,11 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(140, 716, "[C] Razor", 1, c_col.0, c_col.1, c_col.2);
 
     let b_act = (13.5..15.5).contains(&t);
-    let b_col = if b_act { (0, 229, 255) } else { (180, 185, 195) };
+    let b_col = if b_act {
+        (0, 229, 255)
+    } else {
+        (180, 185, 195)
+    };
     if b_act {
         fb.fill_rect(260, 710, 130, 26, 0, 50, 80, 255);
         fb.draw_rect_outline(260, 710, 130, 26, 1, 0, 229, 255);
@@ -859,8 +1047,26 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.draw_text(in_x + 6, 750, "[ IN ]", 1, 0, 229, 255);
     fb.draw_text(out_x - 55, 750, "[ OUT ]", 1, 0, 229, 255);
 
-    fb.fill_rect(200 + (2.4 * 190.0) as usize - 4, 744, 8, 8, 255, 180, 50, 255);
-    fb.fill_rect(200 + (4.0 * 190.0) as usize - 4, 744, 8, 8, 0, 229, 255, 255);
+    fb.fill_rect(
+        200 + (2.4 * 190.0) as usize - 4,
+        744,
+        8,
+        8,
+        255,
+        180,
+        50,
+        255,
+    );
+    fb.fill_rect(
+        200 + (4.0 * 190.0) as usize - 4,
+        744,
+        8,
+        8,
+        0,
+        229,
+        255,
+        255,
+    );
 
     for sec in 0..=8 {
         let rx = 200 + sec * 190;
@@ -886,12 +1092,28 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
 
         fb.fill_rect(200 + w_1a + 2, 772, w_1b - 2, 56, 50, 115, 210, 255);
         fb.draw_rect_outline(200 + w_1a + 2, 772, w_1b - 2, 56, 2, 255, 220, 0);
-        fb.draw_text(200 + w_1a + 12, 792, "4K_Vlog_01B [SELECTED]", 1, 255, 255, 255);
+        fb.draw_text(
+            200 + w_1a + 12,
+            792,
+            "4K_Vlog_01B [SELECTED]",
+            1,
+            255,
+            255,
+            255,
+        );
 
         let w_2 = (4.0 * 190.0) as usize;
         fb.fill_rect(200 + 4 * 190, 772, w_2, 56, 30, 80, 160, 255);
         fb.draw_rect_outline(200 + 4 * 190, 772, w_2, 56, 1, 60, 130, 220);
-        fb.draw_text(200 + 4 * 190 + 12, 792, "B_Roll_Drone.mp4 (4.0s)", 1, 255, 255, 255);
+        fb.draw_text(
+            200 + 4 * 190 + 12,
+            792,
+            "B_Roll_Drone.mp4 (4.0s)",
+            1,
+            255,
+            255,
+            255,
+        );
     } else {
         let w_1 = (4.0 * 190.0) as usize;
         fb.fill_rect(200, 772, w_1, 56, 36, 95, 180, 255);
@@ -901,7 +1123,15 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
         let w_2 = (4.0 * 190.0) as usize;
         fb.fill_rect(200 + 4 * 190, 772, w_2, 56, 30, 80, 160, 255);
         fb.draw_rect_outline(200 + 4 * 190, 772, w_2, 56, 1, 60, 130, 220);
-        fb.draw_text(200 + 4 * 190 + 12, 792, "B_Roll_Drone.mp4 (4.0s)", 1, 255, 255, 255);
+        fb.draw_text(
+            200 + 4 * 190 + 12,
+            792,
+            "B_Roll_Drone.mp4 (4.0s)",
+            1,
+            255,
+            255,
+            255,
+        );
     }
 
     // Track 2: V2 Overlays Track (y: 834..884)
@@ -919,12 +1149,30 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
     fb.draw_rect_outline(200, 890, audio_w, 48, 1, 60, 180, 90);
 
     for wx in (0..audio_w).step_by(3) {
-        let wf = ((wx as f32 * 0.08).sin().abs() * 0.7 + (wx as f32 * 0.02).cos().abs() * 0.3) * 18.0;
+        let wf =
+            ((wx as f32 * 0.08).sin().abs() * 0.7 + (wx as f32 * 0.02).cos().abs() * 0.3) * 18.0;
         let cy: usize = 890 + 24;
         let bar_h = wf as usize;
-        fb.fill_rect(200 + wx, cy.saturating_sub(bar_h), 2, bar_h * 2 + 1, 90, 240, 120, 255);
+        fb.fill_rect(
+            200 + wx,
+            cy.saturating_sub(bar_h),
+            2,
+            bar_h * 2 + 1,
+            90,
+            240,
+            120,
+            255,
+        );
     }
-    fb.draw_text(215, 896, "Cinematic_Synth_48k.wav (WASAPI Exclusive Output)", 1, 230, 255, 230);
+    fb.draw_text(
+        215,
+        896,
+        "Cinematic_Synth_48k.wav (WASAPI Exclusive Output)",
+        1,
+        230,
+        255,
+        230,
+    );
 
     // Track 4: T1 AI Whisper Subtitles Track (y: 944..994)
     fb.fill_rect(0, 944, 195, 50, 28, 30, 38, 255);
@@ -985,16 +1233,72 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
         fb.draw_rect_outline(dx, dy, dw, dh, 2, 0, 229, 255);
 
         fb.fill_rect(dx, dy, dw, 48, 32, 35, 46, 255);
-        fb.draw_text(dx + 24, dy + 16, "HARDWARE VIDEO EXPORT — DIRECT3D 12 PIPELINE", 2, 0, 229, 255);
+        fb.draw_text(
+            dx + 24,
+            dy + 16,
+            "HARDWARE VIDEO EXPORT — DIRECT3D 12 PIPELINE",
+            2,
+            0,
+            229,
+            255,
+        );
 
-        fb.draw_text(dx + 30, dy + 70, "Export Preset: YouTube 1080p60 (High Quality)", 1, 240, 240, 250);
-        fb.draw_text(dx + 30, dy + 95, "Video Encoder: NVIDIA NVENC H.264 (Hardware Acceleration Active)", 1, 76, 217, 100);
-        fb.draw_text(dx + 30, dy + 120, "Output Resolution: 1920 x 1080 @ 60.00 fps Progressive", 1, 180, 185, 195);
-        fb.draw_text(dx + 30, dy + 145, "Audio Codec: AAC-LC Stereo | 48,000 Hz | 320 kbps", 1, 180, 185, 195);
-        fb.draw_text(dx + 30, dy + 170, "Target File: ready_to_use/windows/Reddart_Export_1080p.mp4", 1, 0, 229, 255);
+        fb.draw_text(
+            dx + 30,
+            dy + 70,
+            "Export Preset: YouTube 1080p60 (High Quality)",
+            1,
+            240,
+            240,
+            250,
+        );
+        fb.draw_text(
+            dx + 30,
+            dy + 95,
+            "Video Encoder: NVIDIA NVENC H.264 (Hardware Acceleration Active)",
+            1,
+            76,
+            217,
+            100,
+        );
+        fb.draw_text(
+            dx + 30,
+            dy + 120,
+            "Output Resolution: 1920 x 1080 @ 60.00 fps Progressive",
+            1,
+            180,
+            185,
+            195,
+        );
+        fb.draw_text(
+            dx + 30,
+            dy + 145,
+            "Audio Codec: AAC-LC Stereo | 48,000 Hz | 320 kbps",
+            1,
+            180,
+            185,
+            195,
+        );
+        fb.draw_text(
+            dx + 30,
+            dy + 170,
+            "Target File: ready_to_use/windows/Reddart_Export_1080p.mp4",
+            1,
+            0,
+            229,
+            255,
+        );
 
         let export_prog = ((t - 28.5) / 2.8).clamp(0.0, 1.0);
-        fb.draw_text(dx + 30, dy + 220, "ENCODING PIPELINE PROGRESS", 1, 130, 135, 150);
+        fb.draw_text(
+            dx + 30,
+            dy + 220,
+            "ENCODING PIPELINE PROGRESS",
+            1,
+            130,
+            135,
+            150,
+        );
 
         fb.fill_rect(dx + 30, dy + 244, dw - 60, 28, 40, 44, 56, 255);
         let bar_fill = ((dw - 60) as f32 * export_prog) as usize;
@@ -1024,7 +1328,11 @@ fn render_studio_frame(fb: &mut Framebuffer, t: f32) {
         }
 
         fb.fill_rect(dx + dw - 240, dy + dh - 60, 210, 40, 0, 229, 255, 255);
-        let btn_txt = if export_prog >= 1.0 { "OPEN FOLDER" } else { "ENCODING..." };
+        let btn_txt = if export_prog >= 1.0 {
+            "OPEN FOLDER"
+        } else {
+            "ENCODING..."
+        };
         fb.draw_text(dx + dw - 190, dy + dh - 46, btn_txt, 1, 10, 12, 16);
     }
 

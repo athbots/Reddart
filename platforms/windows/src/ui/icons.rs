@@ -799,3 +799,36 @@ pub fn draw_close(painter: &Painter, rect: Rect, color: Color32) {
         stroke,
     );
 }
+
+/// Draws a clean procedural Template / Layout icon (card outline with layout slots).
+pub fn draw_template(painter: &Painter, rect: Rect, color: Color32) {
+    let pad_x = rect.width() * 0.18;
+    let pad_y = rect.height() * 0.18;
+    let card = Rect::from_min_max(
+        pos2(rect.left() + pad_x, rect.top() + pad_y),
+        pos2(rect.right() - pad_x, rect.bottom() - pad_y),
+    );
+    painter.rect_stroke(
+        card,
+        1.5_f32,
+        Stroke::new(1.3_f32, color),
+        egui::StrokeKind::Inside,
+    );
+
+    // Horizontal split dividing header slot and body
+    let mid_y = card.top() + card.height() * 0.40;
+    painter.line_segment(
+        [
+            pos2(card.left() + 2.0, mid_y),
+            pos2(card.right() - 2.0, mid_y),
+        ],
+        Stroke::new(1.0_f32, color),
+    );
+
+    // Vertical split dividing bottom into 2 slots
+    let mid_x = card.left() + card.width() * 0.50;
+    painter.line_segment(
+        [pos2(mid_x, mid_y + 2.0), pos2(mid_x, card.bottom() - 2.0)],
+        Stroke::new(1.0_f32, color),
+    );
+}

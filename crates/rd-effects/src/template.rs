@@ -145,6 +145,46 @@ impl TemplateSpec {
                 ],
                 music_cue: None,
             },
+            Self {
+                id: "youtube_4k_documentary".into(),
+                name: "YouTube 4K Documentary".into(),
+                description: "Ultra HD 3840x2160 narrative edit with A-Roll dialogue, B-Roll cutaways, and film-grade dissolves.".into(),
+                aspect_width: 3840,
+                aspect_height: 2160,
+                duration_us: 16_000_000,
+                slots: vec![
+                    TemplateSlot { slot_id: "intro".into(), track_index: 0, start_us: 0, duration_us: 4_000_000, effect_id: Some("brightness_contrast".into()) },
+                    TemplateSlot { slot_id: "a_roll".into(), track_index: 0, start_us: 4_000_000, duration_us: 4_000_000, effect_id: Some("cross_dissolve".into()) },
+                    TemplateSlot { slot_id: "b_roll".into(), track_index: 0, start_us: 8_000_000, duration_us: 4_000_000, effect_id: Some("cross_dissolve".into()) },
+                    TemplateSlot { slot_id: "outro".into(), track_index: 0, start_us: 12_000_000, duration_us: 4_000_000, effect_id: Some("cross_dissolve".into()) },
+                ],
+                music_cue: Some(MusicCue {
+                    audio_file: "documentary_ambient_score.mp3".into(),
+                    beats_us: vec![0, 4_000_000, 8_000_000, 12_000_000],
+                }),
+            },
+            Self {
+                id: "fast_action_music_video".into(),
+                name: "High-Tempo Action Video".into(),
+                description: "High-energy 16:9 sequence with rapid 1-second cuts, directional wipes, and synchronized music beat markers.".into(),
+                aspect_width: 1920,
+                aspect_height: 1080,
+                duration_us: 8_000_000,
+                slots: vec![
+                    TemplateSlot { slot_id: "beat_1".into(), track_index: 0, start_us: 0, duration_us: 1_000_000, effect_id: None },
+                    TemplateSlot { slot_id: "beat_2".into(), track_index: 0, start_us: 1_000_000, duration_us: 1_000_000, effect_id: Some("directional_wipe".into()) },
+                    TemplateSlot { slot_id: "beat_3".into(), track_index: 0, start_us: 2_000_000, duration_us: 1_000_000, effect_id: None },
+                    TemplateSlot { slot_id: "beat_4".into(), track_index: 0, start_us: 3_000_000, duration_us: 1_000_000, effect_id: Some("directional_wipe".into()) },
+                    TemplateSlot { slot_id: "beat_5".into(), track_index: 0, start_us: 4_000_000, duration_us: 1_000_000, effect_id: None },
+                    TemplateSlot { slot_id: "beat_6".into(), track_index: 0, start_us: 5_000_000, duration_us: 1_000_000, effect_id: Some("directional_wipe".into()) },
+                    TemplateSlot { slot_id: "beat_7".into(), track_index: 0, start_us: 6_000_000, duration_us: 1_000_000, effect_id: None },
+                    TemplateSlot { slot_id: "beat_8".into(), track_index: 0, start_us: 7_000_000, duration_us: 1_000_000, effect_id: Some("directional_wipe".into()) },
+                ],
+                music_cue: Some(MusicCue {
+                    audio_file: "fast_action_synth.mp3".into(),
+                    beats_us: vec![0, 1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000, 7_000_000],
+                }),
+            },
         ]
     }
 }
@@ -250,7 +290,7 @@ mod tests {
     #[test]
     fn test_starter_templates() {
         let templates = TemplateSpec::starter_templates();
-        assert_eq!(templates.len(), 3);
+        assert_eq!(templates.len(), 5);
 
         for t in &templates {
             let media = vec![
