@@ -140,13 +140,43 @@ impl Track {
         second_half.id = ClipId(uuid::Uuid::new_v4());
         second_half.position_us = split_time_us;
 
-        // Calculate the offset into the source for the second half
-        let offset_into_clip = split_time_us - clip_start;
-        second_half.source_in_us += offset_into_clip;
+        // Calculate the offset into the source for the second half, accounting for speed
+        let timeline_offset = split_time_us - clip_start;
+        let source_offset = (timeline_offset as f64 * clip.speed).round() as i64;
+        second_half.source_in_us = clip.source_in_us + source_offset;
 
         // Trim the first half
-        self.clips[clip_index].source_out_us =
-            self.clips[clip_index].source_in_us + offset_into_clip;
+        self.clips[clip_index].source_out_us = clip.source_in_us + source_offset;
+
+        // Partition keyframes between first and second half
+        for track in self.clips[clip_index].keyframes.values_mut() {
+            let kfs: Vec<crate::Keyframe> = track
+                .keyframes()
+                .iter()
+                .filter(|k| k.time_us < timeline_offset)
+                .cloned()
+                .collect();
+            *track = crate::KeyframeTrack::new(&track.parameter);
+            for k in kfs {
+                track.add_keyframe(k);
+            }
+        }
+        for track in second_half.keyframes.values_mut() {
+            let kfs: Vec<crate::Keyframe> = track
+                .keyframes()
+                .iter()
+                .filter(|k| k.time_us >= timeline_offset)
+                .map(|k| crate::Keyframe {
+                    time_us: k.time_us - timeline_offset,
+                    value: k.value,
+                    easing: k.easing,
+                })
+                .collect();
+            *track = crate::KeyframeTrack::new(&track.parameter);
+            for k in kfs {
+                track.add_keyframe(k);
+            }
+        }
 
         // Insert the second half
         let new_id = second_half.id;
@@ -360,6 +390,9 @@ mod tests {
             opacity: 1.0,
             transform: crate::clip::Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 

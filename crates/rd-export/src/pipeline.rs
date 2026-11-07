@@ -329,8 +329,8 @@ pub fn resample_and_grade_frame(
 pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<PathBuf> {
     let temp_audio_path =
         std::env::temp_dir().join(format!("reddart_exp_audio_{}.pcm", uuid::Uuid::new_v4()));
-    let total_samples = (duration_s.max(0.1) * 48000.0 * 2.0).round() as usize;
-    let mut master_pcm = vec![0.0f32; total_samples];
+    let total_frames = (duration_s.max(0.1) * 48000.0).round() as usize;
+    let mut master_pcm = vec![0.0f32; total_frames * 2];
 
     let mut pcm_cache: HashMap<PathBuf, Vec<f32>> = HashMap::new();
 
@@ -355,22 +355,37 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
                     .or_insert_with(|| rd_audio::decode_audio_to_pcm(&path).unwrap_or_default());
 
                 if !pcm.is_empty() {
-                    let clip_start_sample =
-                        ((clip.position_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize
-                            * 2;
-                    let source_start_sample = ((clip.source_in_us.max(0) as f64 / 1_000_000.0)
-                        * 48000.0)
-                        .round() as usize
-                        * 2;
-                    let clip_duration_samples =
-                        ((clip.duration_us() as f64 / 1_000_000.0) * 48000.0).round() as usize * 2;
+                    let clip_start_frame =
+                        ((clip.position_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize;
+                    let source_start_frame =
+                        ((clip.source_in_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize;
+                    let clip_duration_frames =
+                        ((clip.duration_us() as f64 / 1_000_000.0) * 48000.0).round() as usize;
+                    let speed = clip.speed.abs().max(0.0001);
 
-                    for i in 0..clip_duration_samples {
-                        let src_idx = source_start_sample + i;
-                        let dst_idx = clip_start_sample + i;
-                        if src_idx < pcm.len() && dst_idx < master_pcm.len() {
-                            master_pcm[dst_idx] += pcm[src_idx] * clip.opacity;
+                    for frame_i in 0..clip_duration_frames {
+                        let dst_frame = clip_start_frame + frame_i;
+                        if dst_frame >= total_frames {
+                            break;
                         }
+
+                        let src_frame =
+                            source_start_frame + ((frame_i as f64 * speed).round() as usize);
+                        let src_idx = src_frame * 2;
+                        if src_idx + 1 >= pcm.len() {
+                            break;
+                        }
+
+                        let time_us = clip.position_us
+                            + ((frame_i as f64 / 48000.0) * 1_000_000.0) as i64;
+                        let vol = clip.effective_volume(time_us);
+                        let pan = clip.pan.clamp(-1.0, 1.0);
+                        let pan_l = ((1.0 - pan) * 0.5).clamp(0.0, 1.0);
+                        let pan_r = ((1.0 + pan) * 0.5).clamp(0.0, 1.0);
+
+                        let dst_idx = dst_frame * 2;
+                        master_pcm[dst_idx] += pcm[src_idx] * vol * pan_l * 2.0;
+                        master_pcm[dst_idx + 1] += pcm[src_idx + 1] * vol * pan_r * 2.0;
                     }
                 }
             }
@@ -379,7 +394,9 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
 
     // Soft-limit audio to prevent clipping
     for s in &mut master_pcm {
-        *s = s.clamp(-1.0, 1.0);
+        if *s > 1.0 || *s < -1.0 {
+            *s = s.tanh();
+        }
     }
 
     // Convert f32 slice to raw bytes
@@ -580,6 +597,73 @@ pub fn render_project_to_file(
                         req.preset.height,
                         req.grade,
                     );
+
+                    // Apply effective keyframed opacity
+                    let eff_opacity = clip.effective_opacity(time_us);
+                    if eff_opacity < 0.999 {
+                        for pixel in frame_buffer.as_chunks_mut::<4>().0 {
+                            pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
+                            pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
+                            pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
+                            pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
+                        }
+                    }
+
+                    // Apply shape masking if active on clip (with keyframed mask parameters)
+                    if let Some(mask_eff) = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "mask_shape" && e.enabled)
+                    {
+                        let shape_type = mask_eff
+                            .parameters
+                            .get("shape_type")
+                            .copied()
+                            .unwrap_or(0.0) as u32;
+                        let center_x = clip
+                            .evaluate_keyframe("center_x", time_us)
+                            .or_else(|| mask_eff.parameters.get("center_x").copied())
+                            .unwrap_or(0.5);
+                        let center_y = clip
+                            .evaluate_keyframe("center_y", time_us)
+                            .or_else(|| mask_eff.parameters.get("center_y").copied())
+                            .unwrap_or(0.5);
+                        let size_x = clip
+                            .evaluate_keyframe("size_x", time_us)
+                            .or_else(|| mask_eff.parameters.get("size_x").copied())
+                            .unwrap_or(0.35);
+                        let size_y = clip
+                            .evaluate_keyframe("size_y", time_us)
+                            .or_else(|| mask_eff.parameters.get("size_y").copied())
+                            .unwrap_or(0.35);
+                        let feather = clip
+                            .evaluate_keyframe("feather", time_us)
+                            .or_else(|| mask_eff.parameters.get("feather").copied())
+                            .unwrap_or(0.05);
+                        let invert = mask_eff
+                            .parameters
+                            .get("invert")
+                            .copied()
+                            .unwrap_or(0.0)
+                            >= 0.5;
+
+                        let mask_params = rd_effects::ShapeMaskParams {
+                            shape_type,
+                            center_x,
+                            center_y,
+                            size_x,
+                            size_y,
+                            feather,
+                            invert,
+                        };
+                        rd_effects::apply_shape_mask(
+                            &mut frame_buffer,
+                            req.preset.width,
+                            req.preset.height,
+                            &mask_params,
+                        );
+                    }
+
                     rendered = true;
                 }
             }
@@ -817,6 +901,72 @@ mod tests {
             probe.duration_seconds.unwrap_or(0.0) >= 0.8,
             "Duration too short"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_render_project_with_keyframes_mask_and_speed() {
+        let demo_path = PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4");
+        if !demo_path.exists() {
+            eprintln!("Demo video not found, skipping integration test");
+            return;
+        }
+
+        let mut project = Project::new("Keyframes & Masking Export Test");
+        let tid = project.timeline.add_track(TrackKind::Video, "Video 1");
+        let mut clip = Clip::new_video(demo_path.to_str().unwrap(), 0, 0, 1_000_000);
+
+        // 1. Speed change: 2.0x
+        clip.speed = 2.0;
+
+        // 2. Keyframes: Opacity ramp from 0.2 to 1.0
+        clip.set_keyframe("opacity", 0, 0.2, rd_core::Easing::EaseIn);
+        clip.set_keyframe("opacity", 500_000, 1.0, rd_core::Easing::EaseOut);
+
+        // 3. Audio volume and stereo pan
+        clip.volume = 1.2;
+        clip.pan = -0.3; // Slight left pan
+
+        // 4. Shape mask effect: Ellipse with feather
+        let mut mask_params = std::collections::HashMap::new();
+        mask_params.insert("shape_type".into(), 1.0); // Ellipse
+        mask_params.insert("center_x".into(), 0.5);
+        mask_params.insert("center_y".into(), 0.5);
+        mask_params.insert("size_x".into(), 0.4);
+        mask_params.insert("size_y".into(), 0.4);
+        mask_params.insert("feather".into(), 0.08);
+        mask_params.insert("invert".into(), 0.0);
+        clip.effects.push(rd_core::ClipEffect {
+            effect_id: "mask_shape".into(),
+            parameters: mask_params,
+            enabled: true,
+        });
+
+        project.timeline.track_mut(tid).unwrap().add_clip(clip);
+
+        let preset = ExportPreset::youtube_1080p();
+        let dir = std::env::temp_dir().join(format!("reddart_kf_exp_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out_file = dir.join("keyframes_mask_rendered.mp4");
+
+        let req = RenderRequest {
+            project: &project,
+            output_path: &out_file,
+            preset: &preset,
+            grade: ColorGradeSettings::default(),
+        };
+
+        let res = render_project_to_file(req, None, None);
+        assert!(res.is_ok(), "render_project_to_file failed: {:?}", res);
+        assert!(out_file.exists());
+
+        let probe = ExportJob::probe_file(&out_file).expect("ffprobe must succeed");
+        assert!(probe.has_video);
+        assert!(probe.has_audio);
+        assert_eq!(probe.width, Some(1920));
+        assert_eq!(probe.height, Some(1080));
+        assert!(probe.duration_seconds.unwrap_or(0.0) >= 0.4);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -484,6 +484,9 @@ mod tests {
             opacity: 1.0,
             transform: crate::clip::Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 

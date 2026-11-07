@@ -4,7 +4,7 @@
 //! Quantized on-device speech-to-text pipeline (Whisper class model).
 //! Generates time-aligned subtitle TextClips directly onto a dedicated text track.
 
-use rd_core::{Clip, ClipId, ClipKind, TextClip, TimestampUs, TrackId};
+use rd_core::{Clip, ClipKind, TimestampUs, TrackId};
 use serde::{Deserialize, Serialize};
 
 /// A single word with start and end timestamps.
@@ -56,23 +56,13 @@ pub fn generate_caption_track(
     for seg in segments {
         let duration_us = (seg.end_us - seg.start_us).max(200_000); // Min 0.2s
 
-        let clip = Clip {
-            id: ClipId::new(),
-            kind: ClipKind::Text(TextClip {
-                text: seg.text.clone(),
-                font_family: style.font_family.clone(),
-                font_size: style.font_size,
-                color: style.color,
-                position: [0.5, style.position_y],
-            }),
-            position_us: seg.start_us,
-            source_in_us: 0,
-            source_out_us: duration_us,
-            speed: 1.0,
-            opacity: 1.0,
-            transform: rd_core::Transform2D::default(),
-            effects: Vec::new(),
-        };
+        let mut clip = Clip::new_text(&seg.text, seg.start_us, duration_us);
+        if let ClipKind::Text(ref mut tclip) = clip.kind {
+            tclip.font_family = style.font_family.clone();
+            tclip.font_size = style.font_size;
+            tclip.color = style.color;
+            tclip.position = [0.5, style.position_y];
+        }
 
         clips.push(clip);
     }

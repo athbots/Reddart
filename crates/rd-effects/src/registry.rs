@@ -52,6 +52,7 @@ pub const DIRECTIONAL_WIPE_WGSL: &str =
     include_str!("../../../effects/directional_wipe/shader.wgsl");
 pub const CHROMA_KEY_WGSL: &str = include_str!("../../../effects/chroma_key/shader.wgsl");
 pub const LUT_3D_WGSL: &str = include_str!("../../../effects/lut_3d/shader.wgsl");
+pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -324,6 +325,92 @@ impl EffectRegistry {
             },
             LUT_3D_WGSL.into(),
         );
+
+        // 8. Shape Mask (Rectangle, Ellipse, Linear Gradient, Vignette)
+        self.register(
+            EffectManifest {
+                id: "mask_shape".into(),
+                name: "Shape Mask".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "shape_type".into(),
+                        name: "Shape (0:Rect, 1:Ellipse, 2:Gradient, 3:Vignette)".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 3.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "center_x".into(),
+                        name: "Center X".into(),
+                        param_type: ParamType::Float,
+                        default: 0.5,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "center_y".into(),
+                        name: "Center Y".into(),
+                        param_type: ParamType::Float,
+                        default: 0.5,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "size_x".into(),
+                        name: "Size X / Radius".into(),
+                        param_type: ParamType::Float,
+                        default: 0.35,
+                        min: 0.01,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "size_y".into(),
+                        name: "Size Y".into(),
+                        param_type: ParamType::Float,
+                        default: 0.35,
+                        min: 0.01,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "feather".into(),
+                        name: "Edge Feather".into(),
+                        param_type: ParamType::Float,
+                        default: 0.05,
+                        min: 0.001,
+                        max: 0.5,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "invert".into(),
+                        name: "Invert Mask (0 or 1)".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            MASK_SHAPE_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -369,6 +456,12 @@ mod tests {
         assert!(registry.get("directional_wipe").is_some());
         assert!(registry.get("chroma_key").is_some());
         assert!(registry.get("lut_3d").is_some());
+        assert!(registry.get("mask_shape").is_some());
+
+        let mask = registry.get("mask_shape").unwrap();
+        assert_eq!(mask.manifest.cost_class, CostClass::Low);
+        assert_eq!(mask.manifest.parameters.len(), 7);
+        assert!(mask.wgsl_source.contains("fn fs_main"));
 
         let ck = registry.get("chroma_key").unwrap();
         assert_eq!(ck.manifest.cost_class, CostClass::Medium);

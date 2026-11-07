@@ -125,6 +125,10 @@ pub struct ClipEffect {
     pub enabled: bool,
 }
 
+fn default_volume() -> f32 {
+    1.0
+}
+
 /// A clip is a segment of media placed on a track.
 ///
 /// The clip references a source (video, audio, text, image) and defines
@@ -150,6 +154,15 @@ pub struct Clip {
     pub transform: Transform2D,
     /// Effects applied to this clip, in order.
     pub effects: Vec<ClipEffect>,
+    /// Audio volume multiplier (0.0 to 2.0, default 1.0).
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+    /// Audio stereo pan (-1.0 left to +1.0 right, default 0.0 center).
+    #[serde(default)]
+    pub pan: f32,
+    /// Keyframe animation tracks for parameters (e.g. "opacity", "pos_x", "pos_y", "scale_x", "scale_y", "rotation", "speed", "volume").
+    #[serde(default)]
+    pub keyframes: std::collections::HashMap<String, crate::KeyframeTrack>,
 }
 
 impl Clip {
@@ -174,6 +187,34 @@ impl Clip {
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new audio clip.
+    pub fn new_audio(
+        source_path: impl Into<String>,
+        position_us: crate::TimestampUs,
+        duration_us: crate::DurationUs,
+    ) -> Self {
+        Self {
+            id: ClipId::new(),
+            kind: ClipKind::Audio(AudioClip {
+                source_path: source_path.into(),
+                volume: 1.0,
+            }),
+            position_us,
+            source_in_us: 0,
+            source_out_us: duration_us,
+            speed: 1.0,
+            opacity: 1.0,
+            transform: Transform2D::default(),
+            effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 
@@ -199,7 +240,113 @@ impl Clip {
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
+    }
+
+    /// Add or update a keyframe for a parameter.
+    pub fn set_keyframe(
+        &mut self,
+        parameter: &str,
+        time_us: crate::TimestampUs,
+        value: f32,
+        easing: crate::Easing,
+    ) {
+        let track = self
+            .keyframes
+            .entry(parameter.to_string())
+            .or_insert_with(|| crate::KeyframeTrack::new(parameter));
+        track.add_keyframe(crate::Keyframe {
+            time_us,
+            value,
+            easing,
+        });
+    }
+
+    /// Remove a keyframe by parameter and index.
+    pub fn remove_keyframe(&mut self, parameter: &str, index: usize) -> Option<crate::Keyframe> {
+        self.keyframes
+            .get_mut(parameter)
+            .and_then(|t| t.remove_keyframe(index))
+    }
+
+    /// Clear all keyframes for a parameter.
+    pub fn clear_keyframes(&mut self, parameter: &str) {
+        self.keyframes.remove(parameter);
+    }
+
+    /// Evaluate a parameter's value at a given timeline position.
+    /// `timeline_us` is converted to relative clip offset time.
+    pub fn evaluate_keyframe(
+        &self,
+        parameter: &str,
+        timeline_us: crate::TimestampUs,
+    ) -> Option<f32> {
+        if timeline_us < self.position_us || timeline_us >= self.end_us() {
+            return None;
+        }
+        let rel_us = timeline_us - self.position_us;
+        self.keyframes
+            .get(parameter)
+            .and_then(|t| t.evaluate(rel_us))
+    }
+
+    /// Get effective opacity at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_opacity(&self, timeline_us: crate::TimestampUs) -> f32 {
+        self.evaluate_keyframe("opacity", timeline_us)
+            .unwrap_or(self.opacity)
+    }
+
+    /// Get effective transform at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_transform(&self, timeline_us: crate::TimestampUs) -> Transform2D {
+        let mut t = self.transform;
+        if let Some(x) = self.evaluate_keyframe("pos_x", timeline_us) {
+            t.position.x = x;
+        }
+        if let Some(y) = self.evaluate_keyframe("pos_y", timeline_us) {
+            t.position.y = y;
+        }
+        if let Some(sx) = self.evaluate_keyframe("scale_x", timeline_us) {
+            t.scale.x = sx;
+        }
+        if let Some(sy) = self.evaluate_keyframe("scale_y", timeline_us) {
+            t.scale.y = sy;
+        }
+        if let Some(rot) = self.evaluate_keyframe("rotation", timeline_us) {
+            t.rotation = rot;
+        }
+        t
+    }
+
+    /// Get effective audio volume at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_volume(&self, timeline_us: crate::TimestampUs) -> f32 {
+        let base_vol = match &self.kind {
+            ClipKind::Audio(a) => a.volume * self.volume,
+            _ => self.volume,
+        };
+        self.evaluate_keyframe("volume", timeline_us)
+            .unwrap_or(base_vol)
+    }
+
+    /// Get effective speed at a specific timeline timestamp.
+    pub fn effective_speed(&self, timeline_us: crate::TimestampUs) -> f64 {
+        if let Some(s) = self.evaluate_keyframe("speed", timeline_us) {
+            s as f64
+        } else {
+            self.speed
+        }
+    }
+
+    /// Returns true if this clip has any keyframes defined.
+    pub fn has_keyframes(&self) -> bool {
+        self.keyframes.values().any(|t| !t.is_empty())
+    }
+
+    /// Total count of keyframes across all animated parameters.
+    pub fn total_keyframe_count(&self) -> usize {
+        self.keyframes.values().map(|t| t.len()).sum()
     }
     /// Duration of this clip on the timeline, accounting for speed.
     pub fn duration_us(&self) -> DurationUs {
@@ -289,6 +436,9 @@ mod tests {
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 
@@ -326,5 +476,45 @@ mod tests {
         let mut clip = make_video_clip();
         clip.speed = 2.0; // Clip is 2.5s on timeline, plays 5s of source
         assert_eq!(clip.timeline_to_source_us(2_000_000), Some(2_000_000));
+    }
+
+    #[test]
+    fn test_clip_keyframe_animation() {
+        let mut clip = make_video_clip();
+        assert!(!clip.has_keyframes());
+        assert_eq!(clip.total_keyframe_count(), 0);
+
+        // Keyframe opacity from 0.0 at start to 1.0 at 2 seconds
+        clip.set_keyframe("opacity", 0, 0.0, crate::Easing::Linear);
+        clip.set_keyframe("opacity", 2_000_000, 1.0, crate::Easing::Linear);
+
+        assert!(clip.has_keyframes());
+        assert_eq!(clip.total_keyframe_count(), 2);
+
+        // Clip starts at 1_000_000 us on timeline
+        // At 1_000_000 (clip start): opacity is 0.0
+        assert_eq!(clip.effective_opacity(1_000_000), 0.0);
+        // At 2_000_000 (1s into clip): opacity is 0.5
+        let op_mid = clip.effective_opacity(2_000_000);
+        assert!((op_mid - 0.5).abs() < 0.01);
+        // At 3_000_000 (2s into clip): opacity is 1.0
+        assert_eq!(clip.effective_opacity(3_000_000), 1.0);
+        // At 4_000_000 (3s into clip, past last keyframe): holds 1.0
+        assert_eq!(clip.effective_opacity(4_000_000), 1.0);
+    }
+
+    #[test]
+    fn test_clip_keyframe_transform_and_volume() {
+        let mut clip = make_video_clip();
+        clip.set_keyframe("pos_x", 0, 100.0, crate::Easing::Linear);
+        clip.set_keyframe("pos_x", 1_000_000, 200.0, crate::Easing::Linear);
+        clip.set_keyframe("volume", 0, 0.2, crate::Easing::Linear);
+        clip.set_keyframe("volume", 1_000_000, 0.8, crate::Easing::Linear);
+
+        let t_mid = clip.effective_transform(1_500_000);
+        assert!((t_mid.position.x - 150.0).abs() < 0.01);
+
+        let v_mid = clip.effective_volume(1_500_000);
+        assert!((v_mid - 0.5).abs() < 0.01);
     }
 }

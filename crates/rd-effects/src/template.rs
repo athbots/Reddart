@@ -6,7 +6,7 @@
 //! Independent onset/beat detector (clean BSD-compatible algorithm, no GPL).
 
 use anyhow::Result;
-use rd_core::{Clip, ClipKind, DurationUs, Project, TimestampUs, TrackKind};
+use rd_core::{Clip, DurationUs, Project, TimestampUs, TrackKind};
 use serde::{Deserialize, Serialize};
 
 /// Slot placeholder in a video template where user media is injected.
@@ -71,20 +71,7 @@ impl TemplateSpec {
 
         if let Some(music) = &self.music_cue {
             let a_track = project.timeline.add_track(TrackKind::Audio, "Music");
-            let audio_clip = Clip {
-                id: rd_core::ClipId::new(),
-                kind: ClipKind::Audio(rd_core::AudioClip {
-                    source_path: music.audio_file.clone(),
-                    volume: 1.0,
-                }),
-                position_us: 0,
-                source_in_us: 0,
-                source_out_us: self.duration_us,
-                speed: 1.0,
-                opacity: 1.0,
-                transform: rd_core::Transform2D::default(),
-                effects: Vec::new(),
-            };
+            let audio_clip = Clip::new_audio(music.audio_file.clone(), 0, self.duration_us);
             if let Some(track) = project.timeline.track_mut(a_track) {
                 track.add_clip(audio_clip);
             }

@@ -124,6 +124,8 @@ pub struct EditorData {
     pub selected_template_idx: usize,
     pub left_panel_tab: LeftPanelTab,
     pub template_project_name: String,
+    pub keyframe_param_selected: String,
+    pub keyframe_easing_selected: rd_core::Easing,
 }
 
 impl EditorData {
@@ -246,6 +248,8 @@ impl EditorData {
             selected_template_idx: 0,
             left_panel_tab: LeftPanelTab::MediaBin,
             template_project_name: "New Template Project".into(),
+            keyframe_param_selected: "opacity".into(),
+            keyframe_easing_selected: rd_core::Easing::Linear,
         }
     }
 
@@ -393,6 +397,73 @@ impl EditorData {
                                     saturation: self.color_saturation,
                                 },
                             );
+
+                            // Apply effective keyframed opacity
+                            let eff_opacity = clip.effective_opacity(playhead_us);
+                            if eff_opacity < 0.999 {
+                                for pixel in self.monitor_frame_buffer.as_chunks_mut::<4>().0 {
+                                    pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
+                                    pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
+                                    pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
+                                    pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
+                                }
+                            }
+
+                            // Apply shape mask if present on clip (with keyframed mask parameters)
+                            if let Some(mask_eff) = clip
+                                .effects
+                                .iter()
+                                .find(|e| e.effect_id == "mask_shape" && e.enabled)
+                            {
+                                let shape_type = mask_eff
+                                    .parameters
+                                    .get("shape_type")
+                                    .copied()
+                                    .unwrap_or(0.0) as u32;
+                                let center_x = clip
+                                    .evaluate_keyframe("center_x", playhead_us)
+                                    .or_else(|| mask_eff.parameters.get("center_x").copied())
+                                    .unwrap_or(0.5);
+                                let center_y = clip
+                                    .evaluate_keyframe("center_y", playhead_us)
+                                    .or_else(|| mask_eff.parameters.get("center_y").copied())
+                                    .unwrap_or(0.5);
+                                let size_x = clip
+                                    .evaluate_keyframe("size_x", playhead_us)
+                                    .or_else(|| mask_eff.parameters.get("size_x").copied())
+                                    .unwrap_or(0.35);
+                                let size_y = clip
+                                    .evaluate_keyframe("size_y", playhead_us)
+                                    .or_else(|| mask_eff.parameters.get("size_y").copied())
+                                    .unwrap_or(0.35);
+                                let feather = clip
+                                    .evaluate_keyframe("feather", playhead_us)
+                                    .or_else(|| mask_eff.parameters.get("feather").copied())
+                                    .unwrap_or(0.05);
+                                let invert = mask_eff
+                                    .parameters
+                                    .get("invert")
+                                    .copied()
+                                    .unwrap_or(0.0)
+                                    >= 0.5;
+
+                                let mask_params = rd_effects::ShapeMaskParams {
+                                    shape_type,
+                                    center_x,
+                                    center_y,
+                                    size_x,
+                                    size_y,
+                                    feather,
+                                    invert,
+                                };
+                                rd_effects::apply_shape_mask(
+                                    &mut self.monitor_frame_buffer,
+                                    1920,
+                                    1080,
+                                    &mask_params,
+                                );
+                            }
+
                             updated = true;
                             self.last_rendered_pts_us = source_time_us;
                             self.needs_monitor_update = false;
@@ -1901,6 +1972,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                     let mut clip_found = false;
                     if let Some(selected_cid) = ed.selected_clip {
+                        let playhead_us = ed.project.timeline.playhead_us;
+                        let fps_val = ed.project.frame_rate.as_f64();
+                        let mut kf_param = ed.keyframe_param_selected.clone();
+                        let mut kf_easing = ed.keyframe_easing_selected;
+                        let mut trigger_update = false;
+
                         for track in ed.project.timeline.tracks_mut() {
                             let track_name = track.name.clone();
                             if let Some(clip) =
@@ -1918,14 +1995,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     });
                                     ui.label(format!(
                                         "In: {} | Dur: {}",
-                                        format_smpte(
-                                            clip.position_us,
-                                            ed.project.frame_rate.as_f64()
-                                        ),
-                                        format_smpte(
-                                            clip.duration_us(),
-                                            ed.project.frame_rate.as_f64()
-                                        )
+                                        format_smpte(clip.position_us, fps_val),
+                                        format_smpte(clip.duration_us(), fps_val)
                                     ));
                                 });
 
@@ -1939,104 +2010,235 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                                 ui.horizontal(|ui| {
                                     ui.label("Pos X:");
-                                    ui.add(
-                                        egui::DragValue::new(&mut clip.transform.position.x)
-                                            .speed(1.0),
-                                    );
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut clip.transform.position.x)
+                                                .speed(1.0),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     ui.label("Y:");
-                                    ui.add(
-                                        egui::DragValue::new(&mut clip.transform.position.y)
-                                            .speed(1.0),
-                                    );
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut clip.transform.position.y)
+                                                .speed(1.0),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     if studio_reset_btn(ui).clicked() {
                                         clip.transform.position.x = 0.0;
                                         clip.transform.position.y = 0.0;
+                                        trigger_update = true;
                                     }
                                 });
 
                                 ui.horizontal(|ui| {
                                     ui.label("Scale X:");
-                                    ui.add(
-                                        egui::DragValue::new(&mut clip.transform.scale.x)
-                                            .speed(0.01)
-                                            .range(0.05..=10.0),
-                                    );
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut clip.transform.scale.x)
+                                                .speed(0.01)
+                                                .range(0.05..=10.0),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     ui.label("Y:");
-                                    ui.add(
-                                        egui::DragValue::new(&mut clip.transform.scale.y)
-                                            .speed(0.01)
-                                            .range(0.05..=10.0),
-                                    );
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut clip.transform.scale.y)
+                                                .speed(0.01)
+                                                .range(0.05..=10.0),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     if studio_reset_btn(ui).clicked() {
                                         clip.transform.scale.x = 1.0;
                                         clip.transform.scale.y = 1.0;
+                                        trigger_update = true;
                                     }
                                 });
 
                                 ui.horizontal(|ui| {
                                     ui.label("Rotation:");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut clip.transform.rotation,
-                                            -180.0..=180.0,
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(
+                                                &mut clip.transform.rotation,
+                                                -180.0..=180.0,
+                                            )
+                                            .suffix("°"),
                                         )
-                                        .suffix("°"),
-                                    );
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     if studio_reset_btn(ui).clicked() {
                                         clip.transform.rotation = 0.0;
+                                        trigger_update = true;
                                     }
                                 });
 
                                 ui.horizontal(|ui| {
                                     ui.label("Opacity:");
-                                    ui.add(egui::Slider::new(&mut clip.opacity, 0.0..=1.0));
+                                    if ui
+                                        .add(egui::Slider::new(&mut clip.opacity, 0.0..=1.0))
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     if studio_reset_btn(ui).clicked() {
                                         clip.opacity = 1.0;
+                                        trigger_update = true;
                                     }
                                 });
 
                                 ui.horizontal(|ui| {
                                     ui.label("Speed:");
-                                    ui.add(
-                                        egui::Slider::new(&mut clip.speed, 0.25..=4.0).suffix("x"),
-                                    );
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut clip.speed, 0.25..=4.0)
+                                                .suffix("x"),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
                                     if studio_reset_btn(ui).clicked() {
                                         clip.speed = 1.0;
+                                        trigger_update = true;
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("0.5x Slow").clicked() {
+                                        clip.speed = 0.5;
+                                        trigger_update = true;
+                                    }
+                                    if ui.small_button("1.0x").clicked() {
+                                        clip.speed = 1.0;
+                                        trigger_update = true;
+                                    }
+                                    if ui.small_button("1.5x").clicked() {
+                                        clip.speed = 1.5;
+                                        trigger_update = true;
+                                    }
+                                    if ui.small_button("2.0x Fast").clicked() {
+                                        clip.speed = 2.0;
+                                        trigger_update = true;
+                                    }
+                                    if ui.small_button("4.0x").clicked() {
+                                        clip.speed = 4.0;
+                                        trigger_update = true;
+                                    }
+                                });
+
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new("AUDIO VOLUME & PAN")
+                                        .strong()
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(180, 185, 200)),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label("Volume:");
+                                    ui.add(
+                                        egui::Slider::new(&mut clip.volume, 0.0..=2.0).suffix("x"),
+                                    );
+                                    if studio_reset_btn(ui).clicked() {
+                                        clip.volume = 1.0;
+                                    }
+                                });
+                                let c_db = if clip.volume <= 0.001 {
+                                    -60.0
+                                } else {
+                                    20.0 * clip.volume.log10()
+                                };
+                                ui.label(
+                                    egui::RichText::new(format!("Gain: {:.1} dB", c_db))
+                                        .monospace()
+                                        .size(10.5)
+                                        .color(egui::Color32::from_rgb(52, 211, 153)),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label("Pan:");
+                                    ui.add(egui::Slider::new(&mut clip.pan, -1.0..=1.0));
+                                    if studio_reset_btn(ui).clicked() {
+                                        clip.pan = 0.0;
                                     }
                                 });
 
                                 ui.add_space(8.0);
                                 ui.separator();
                                 ui.label(
-                                    egui::RichText::new("EFFECTS PIPELINE")
+                                    egui::RichText::new("EFFECTS & MASKING PIPELINE")
                                         .strong()
                                         .size(11.0)
                                         .color(egui::Color32::from_rgb(180, 185, 200)),
                                 );
 
-                                if studio_btn(
-                                    ui,
-                                    "+ ADD BRIGHTNESS / CONTRAST PASS",
-                                    Some(egui::Color32::from_rgb(37, 99, 235)),
-                                    false,
-                                )
-                                .clicked()
-                                {
-                                    let mut params = std::collections::HashMap::new();
-                                    params.insert("brightness".into(), 0.05);
-                                    params.insert("contrast".into(), 0.1);
-                                    clip.effects.push(rd_core::ClipEffect {
-                                        effect_id: "brightness_contrast".into(),
-                                        parameters: params,
-                                        enabled: true,
-                                    });
-                                }
+                                ui.horizontal(|ui| {
+                                    if studio_btn(
+                                        ui,
+                                        "+ SHAPE MASK",
+                                        Some(egui::Color32::from_rgb(16, 185, 129)),
+                                        false,
+                                    )
+                                    .on_hover_text("Add Shape Mask (Rect / Ellipse / Vignette)")
+                                    .clicked()
+                                    {
+                                        let mut params = std::collections::HashMap::new();
+                                        params.insert("shape_type".into(), 0.0);
+                                        params.insert("center_x".into(), 0.5);
+                                        params.insert("center_y".into(), 0.5);
+                                        params.insert("size_x".into(), 0.35);
+                                        params.insert("size_y".into(), 0.35);
+                                        params.insert("feather".into(), 0.05);
+                                        params.insert("invert".into(), 0.0);
+                                        clip.effects.push(rd_core::ClipEffect {
+                                            effect_id: "mask_shape".into(),
+                                            parameters: params,
+                                            enabled: true,
+                                        });
+                                        trigger_update = true;
+                                    }
+
+                                    if studio_btn(
+                                        ui,
+                                        "+ BRIGHTNESS",
+                                        Some(egui::Color32::from_rgb(37, 99, 235)),
+                                        false,
+                                    )
+                                    .clicked()
+                                    {
+                                        let mut params = std::collections::HashMap::new();
+                                        params.insert("brightness".into(), 0.05);
+                                        params.insert("contrast".into(), 0.1);
+                                        clip.effects.push(rd_core::ClipEffect {
+                                            effect_id: "brightness_contrast".into(),
+                                            parameters: params,
+                                            enabled: true,
+                                        });
+                                        trigger_update = true;
+                                    }
+                                });
 
                                 let mut to_remove = None;
                                 for (e_idx, effect) in clip.effects.iter_mut().enumerate() {
                                     ui.group(|ui| {
                                         ui.horizontal(|ui| {
-                                            ui.checkbox(&mut effect.enabled, &effect.effect_id);
+                                            if ui
+                                                .checkbox(&mut effect.enabled, &effect.effect_id)
+                                                .changed()
+                                            {
+                                                trigger_update = true;
+                                            }
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Center),
                                                 |ui| {
@@ -2050,26 +2252,391 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                                     .clicked()
                                                     {
                                                         to_remove = Some(e_idx);
+                                                        trigger_update = true;
                                                     }
                                                 },
                                             );
                                         });
-                                        for (k, v) in &mut effect.parameters {
+
+                                        if effect.effect_id == "mask_shape" {
+                                            let shape_names = [
+                                                "0: Rectangle",
+                                                "1: Ellipse",
+                                                "2: Linear Gradient",
+                                                "3: Vignette",
+                                            ];
+                                            let mut cur_st = effect
+                                                .parameters
+                                                .get("shape_type")
+                                                .copied()
+                                                .unwrap_or(0.0)
+                                                as usize;
+                                            if cur_st >= 4 {
+                                                cur_st = 0;
+                                            }
                                             ui.horizontal(|ui| {
-                                                ui.label(k.as_str());
-                                                ui.add(egui::Slider::new(v, -1.0..=1.0));
-                                                if studio_reset_btn(ui).clicked() {
-                                                    *v = 0.0;
+                                                ui.label("Shape:");
+                                                egui::ComboBox::from_id_salt(format!(
+                                                    "mask_shape_cb_{}",
+                                                    e_idx
+                                                ))
+                                                .selected_text(shape_names[cur_st])
+                                                .show_ui(ui, |ui| {
+                                                    for (s_i, s_name) in
+                                                        shape_names.iter().enumerate()
+                                                    {
+                                                        if ui
+                                                            .selectable_value(
+                                                                &mut cur_st,
+                                                                s_i,
+                                                                *s_name,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            effect.parameters.insert(
+                                                                "shape_type".into(),
+                                                                cur_st as f32,
+                                                            );
+                                                            trigger_update = true;
+                                                        }
+                                                    }
+                                                });
+                                            });
+
+                                            let mut cx = effect
+                                                .parameters
+                                                .get("center_x")
+                                                .copied()
+                                                .unwrap_or(0.5);
+                                            let mut cy = effect
+                                                .parameters
+                                                .get("center_y")
+                                                .copied()
+                                                .unwrap_or(0.5);
+                                            ui.horizontal(|ui| {
+                                                ui.label("Center X:");
+                                                if ui
+                                                    .add(egui::Slider::new(&mut cx, 0.0..=1.0))
+                                                    .changed()
+                                                {
+                                                    effect
+                                                        .parameters
+                                                        .insert("center_x".into(), cx);
+                                                    trigger_update = true;
+                                                }
+                                                ui.label("Y:");
+                                                if ui
+                                                    .add(egui::Slider::new(&mut cy, 0.0..=1.0))
+                                                    .changed()
+                                                {
+                                                    effect
+                                                        .parameters
+                                                        .insert("center_y".into(), cy);
+                                                    trigger_update = true;
                                                 }
                                             });
+
+                                            let mut sx = effect
+                                                .parameters
+                                                .get("size_x")
+                                                .copied()
+                                                .unwrap_or(0.35);
+                                            let mut sy = effect
+                                                .parameters
+                                                .get("size_y")
+                                                .copied()
+                                                .unwrap_or(0.35);
+                                            ui.horizontal(|ui| {
+                                                ui.label("Size X:");
+                                                if ui
+                                                    .add(egui::Slider::new(&mut sx, 0.01..=1.0))
+                                                    .changed()
+                                                {
+                                                    effect.parameters.insert("size_x".into(), sx);
+                                                    trigger_update = true;
+                                                }
+                                                ui.label("Y:");
+                                                if ui
+                                                    .add(egui::Slider::new(&mut sy, 0.01..=1.0))
+                                                    .changed()
+                                                {
+                                                    effect.parameters.insert("size_y".into(), sy);
+                                                    trigger_update = true;
+                                                }
+                                            });
+
+                                            let mut feather = effect
+                                                .parameters
+                                                .get("feather")
+                                                .copied()
+                                                .unwrap_or(0.05);
+                                            let mut invert = effect
+                                                .parameters
+                                                .get("invert")
+                                                .copied()
+                                                .unwrap_or(0.0)
+                                                >= 0.5;
+                                            ui.horizontal(|ui| {
+                                                ui.label("Feather:");
+                                                if ui
+                                                    .add(egui::Slider::new(
+                                                        &mut feather,
+                                                        0.001..=0.5,
+                                                    ))
+                                                    .changed()
+                                                {
+                                                    effect
+                                                        .parameters
+                                                        .insert("feather".into(), feather);
+                                                    trigger_update = true;
+                                                }
+                                                if ui.checkbox(&mut invert, "Invert").changed() {
+                                                    effect.parameters.insert(
+                                                        "invert".into(),
+                                                        if invert { 1.0 } else { 0.0 },
+                                                    );
+                                                    trigger_update = true;
+                                                }
+                                            });
+
+                                            ui.horizontal(|ui| {
+                                                if ui.small_button("Center Spot").clicked() {
+                                                    effect
+                                                        .parameters
+                                                        .insert("shape_type".into(), 1.0);
+                                                    effect
+                                                        .parameters
+                                                        .insert("size_x".into(), 0.35);
+                                                    effect
+                                                        .parameters
+                                                        .insert("size_y".into(), 0.35);
+                                                    effect
+                                                        .parameters
+                                                        .insert("feather".into(), 0.08);
+                                                    trigger_update = true;
+                                                }
+                                                if ui.small_button("Letterbox").clicked() {
+                                                    effect
+                                                        .parameters
+                                                        .insert("shape_type".into(), 0.0);
+                                                    effect
+                                                        .parameters
+                                                        .insert("size_x".into(), 0.50);
+                                                    effect
+                                                        .parameters
+                                                        .insert("size_y".into(), 0.38);
+                                                    effect
+                                                        .parameters
+                                                        .insert("feather".into(), 0.01);
+                                                    trigger_update = true;
+                                                }
+                                                if ui.small_button("Vignette").clicked() {
+                                                    effect
+                                                        .parameters
+                                                        .insert("shape_type".into(), 3.0);
+                                                    effect
+                                                        .parameters
+                                                        .insert("size_x".into(), 0.45);
+                                                    effect
+                                                        .parameters
+                                                        .insert("feather".into(), 0.15);
+                                                    trigger_update = true;
+                                                }
+                                            });
+                                        } else {
+                                            for (k, v) in &mut effect.parameters {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(k.as_str());
+                                                    if ui
+                                                        .add(egui::Slider::new(v, -1.0..=1.0))
+                                                        .changed()
+                                                    {
+                                                        trigger_update = true;
+                                                    }
+                                                    if studio_reset_btn(ui).clicked() {
+                                                        *v = 0.0;
+                                                        trigger_update = true;
+                                                    }
+                                                });
+                                            }
                                         }
                                     });
                                 }
                                 if let Some(idx) = to_remove {
                                     clip.effects.remove(idx);
                                 }
+
+                                // Keyframe Animator & Automation Section
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new("KEYFRAME ANIMATOR & AUTOMATION")
+                                        .strong()
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(180, 185, 200)),
+                                );
+
+                                let anim_params = [
+                                    ("opacity", "Opacity (0..1)"),
+                                    ("pos_x", "Position X"),
+                                    ("pos_y", "Position Y"),
+                                    ("scale_x", "Scale X"),
+                                    ("scale_y", "Scale Y"),
+                                    ("rotation", "Rotation (deg)"),
+                                    ("speed", "Speed Multiplier"),
+                                    ("volume", "Audio Volume"),
+                                    ("size_x", "Mask Size X"),
+                                    ("feather", "Mask Feather"),
+                                ];
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Param:");
+                                    egui::ComboBox::from_id_salt("kf_param_combo")
+                                        .selected_text(
+                                            anim_params
+                                                .iter()
+                                                .find(|(id, _)| id == &kf_param)
+                                                .map(|(_, name)| *name)
+                                                .unwrap_or("Opacity"),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for (id, name) in &anim_params {
+                                                if ui
+                                                    .selectable_label(&kf_param == id, *name)
+                                                    .clicked()
+                                                {
+                                                    kf_param = (*id).to_string();
+                                                }
+                                            }
+                                        });
+                                });
+
+                                let easing_modes = [
+                                    (rd_core::Easing::Linear, "Linear"),
+                                    (rd_core::Easing::EaseIn, "Ease In"),
+                                    (rd_core::Easing::EaseOut, "Ease Out"),
+                                    (rd_core::Easing::EaseInOut, "Ease In-Out"),
+                                    (rd_core::Easing::Hold, "Hold"),
+                                ];
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Easing:");
+                                    egui::ComboBox::from_id_salt("kf_easing_combo")
+                                        .selected_text(match kf_easing {
+                                            rd_core::Easing::Linear => "Linear",
+                                            rd_core::Easing::EaseIn => "Ease In",
+                                            rd_core::Easing::EaseOut => "Ease Out",
+                                            rd_core::Easing::EaseInOut => "Ease In-Out",
+                                            rd_core::Easing::Hold => "Hold",
+                                            _ => "Custom",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for (e, name) in &easing_modes {
+                                                if ui
+                                                    .selectable_label(&kf_easing == e, *name)
+                                                    .clicked()
+                                                {
+                                                    kf_easing = *e;
+                                                }
+                                            }
+                                        });
+                                });
+
+                                let rel_time_us = (playhead_us - clip.position_us).max(0);
+                                let cur_val = match kf_param.as_str() {
+                                    "opacity" => clip.effective_opacity(playhead_us),
+                                    "pos_x" => clip.effective_transform(playhead_us).position.x,
+                                    "pos_y" => clip.effective_transform(playhead_us).position.y,
+                                    "scale_x" => clip.effective_transform(playhead_us).scale.x,
+                                    "scale_y" => clip.effective_transform(playhead_us).scale.y,
+                                    "rotation" => clip.effective_transform(playhead_us).rotation,
+                                    "speed" => clip.effective_speed(playhead_us) as f32,
+                                    "volume" => clip.effective_volume(playhead_us),
+                                    "size_x" => clip
+                                        .evaluate_keyframe("size_x", playhead_us)
+                                        .unwrap_or(0.35),
+                                    "feather" => clip
+                                        .evaluate_keyframe("feather", playhead_us)
+                                        .unwrap_or(0.05),
+                                    _ => 1.0,
+                                };
+
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("At Playhead: {:.2}", cur_val));
+                                    if studio_btn(
+                                        ui,
+                                        "◆ Add Keyframe",
+                                        Some(egui::Color32::from_rgb(234, 179, 8)),
+                                        true,
+                                    )
+                                    .on_hover_text(
+                                        "Add or update keyframe for selected parameter at current playhead",
+                                    )
+                                    .clicked()
+                                    {
+                                        clip.set_keyframe(&kf_param, rel_time_us, cur_val, kf_easing);
+                                        trigger_update = true;
+                                    }
+                                });
+
+                                if let Some(track) = clip.keyframes.get_mut(&kf_param)
+                                    && !track.is_empty()
+                                {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Active Keyframes ({})",
+                                            track.len()
+                                        ))
+                                        .size(10.5)
+                                        .color(egui::Color32::from_rgb(200, 205, 220)),
+                                    );
+                                    let mut kf_remove_idx = None;
+                                    egui::ScrollArea::vertical()
+                                        .max_height(100.0)
+                                        .show(ui, |ui| {
+                                            for (k_idx, kf) in
+                                                track.keyframes().iter().enumerate()
+                                            {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "◆ {}",
+                                                            format_smpte(
+                                                                clip.position_us + kf.time_us,
+                                                                fps_val
+                                                            )
+                                                        ))
+                                                        .monospace()
+                                                        .size(10.5)
+                                                        .color(egui::Color32::from_rgb(
+                                                            234, 179, 8,
+                                                        )),
+                                                    );
+                                                    ui.label(format!("Val: {:.2}", kf.value));
+                                                    if ui
+                                                        .small_button("✕")
+                                                        .on_hover_text("Remove this keyframe")
+                                                        .clicked()
+                                                    {
+                                                        kf_remove_idx = Some(k_idx);
+                                                        trigger_update = true;
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    if let Some(r_idx) = kf_remove_idx {
+                                        track.remove_keyframe(r_idx);
+                                    }
+                                }
+
                                 break;
                             }
+                        }
+
+                        ed.keyframe_param_selected = kf_param;
+                        ed.keyframe_easing_selected = kf_easing;
+                        if trigger_update {
+                            ed.needs_monitor_update = true;
                         }
                     }
 

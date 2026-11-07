@@ -533,6 +533,9 @@ mod tests {
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 

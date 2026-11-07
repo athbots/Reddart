@@ -300,24 +300,27 @@ impl RenderGraph {
                     // 1. Source node
                     let mut current = graph.add_source(clip.id, track.id, source_time);
 
-                    // 2. Transform node
+                    // 2. Transform node with keyframe evaluation
+                    let eff_transform = clip.effective_transform(time_us);
+                    let eff_opacity = clip.effective_opacity(time_us);
                     current = graph.add_transform(
                         current,
-                        clip.transform.position.x,
-                        clip.transform.position.y,
-                        clip.transform.scale.x,
-                        clip.transform.scale.y,
-                        clip.transform.rotation,
-                        clip.opacity,
+                        eff_transform.position.x,
+                        eff_transform.position.y,
+                        eff_transform.scale.x,
+                        eff_transform.scale.y,
+                        eff_transform.rotation,
+                        eff_opacity,
                     );
 
-                    // 3. Effects stack
+                    // 3. Effects stack with keyframe evaluation
                     for effect in &clip.effects {
                         if effect.enabled {
                             let mut param_hasher = DefaultHasher::new();
                             for (k, v) in &effect.parameters {
                                 k.hash(&mut param_hasher);
-                                v.to_bits().hash(&mut param_hasher);
+                                let val = clip.evaluate_keyframe(k, time_us).unwrap_or(*v);
+                                val.to_bits().hash(&mut param_hasher);
                             }
                             current =
                                 graph.add_effect(current, &effect.effect_id, param_hasher.finish());

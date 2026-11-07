@@ -2700,6 +2700,7 @@ dependencies = [
  "rd-audio",
  "rd-core",
  "rd-decode",
+ "rd-effects",
  "rd-render",
  "serde",
  "serde_json",
