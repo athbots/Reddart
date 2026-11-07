@@ -1,6 +1,9 @@
-Reddart — Zero-Lag Native Video Editor
-Version: 0.1.0
-Platform: Windows (x86_64)
-Architecture: Shared Rust Core (Path C) + Hardware Accelerated WGSL
-Audio Engine: Lock-Free PCM Master Clock (WASAPI/CPAL)
-Zero Subscription | Zero Cloud Latency | On-Device AI
+Reddart Video Editor — Professional Studio Edition
+Version: 0.2.0
+Platform: Windows 11 (x86_64)
+Architecture: Rust 2024 + Direct3D 12 / Vulkan + wgpu 24 + egui 0.31
+Audio Engine: Dedicated Low-Latency WASAPI 48kHz Master Clock + 36-Segment dBFS Meter
+Timeline Engine: Full NLE Deck (Razor [C], Ripple Trim [B], Roll, Slip, Slide, Markers, In/Out)
+Project Persistence: Append-Only Monotonic CRC32 Write-Ahead Log (WAL)
+Video Export: Multi-Track Timeline Hardware Frame Pipeline (NVENC / QuickSync)
+Zero Subscription | Zero Cloud Latency | On-Device AI | Standalone 9.9 MB Binary
