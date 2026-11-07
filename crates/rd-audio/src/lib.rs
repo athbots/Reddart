@@ -4,9 +4,13 @@
 //! and provides the master clock that video follows.
 
 pub mod clock;
+pub mod decode;
+pub mod engine;
 pub mod mixer;
 
 pub use clock::{AudioClock, SyncDecision};
+pub use decode::decode_audio_to_pcm;
+pub use engine::{AudioEngine, AudioTelemetry, MeteringState, amp_to_dbfs};
 pub use mixer::AudioMixer;
 
 /// Audio sample rate in Hz.

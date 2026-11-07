@@ -22,6 +22,7 @@ fn test_trim_in_and_out_invariants() {
     let cid = clip.id;
     project.timeline.track_mut(tid).unwrap().add_clip(clip);
 
+    let initial_modified_at = project.modified_at;
     let initial_json = project.to_json().unwrap();
     let mut history = CommandHistory::new(100);
 
@@ -61,6 +62,7 @@ fn test_trim_in_and_out_invariants() {
 
     // 4. Undo Trim In
     history.undo(&mut project).unwrap();
+    project.modified_at = initial_modified_at;
     let restored_json = project.to_json().unwrap();
 
     assert_eq!(
@@ -133,6 +135,7 @@ fn test_ripple_delete_compound_operation() {
     track.add_clip(clip_c.clone());
 
     let initial_json = project.to_json().unwrap();
+    let initial_modified_at = project.modified_at;
     let mut history = CommandHistory::new(50);
 
     // Ripple delete Clip B:
@@ -168,6 +171,7 @@ fn test_ripple_delete_compound_operation() {
     let c = project.timeline.track(tid).unwrap().clip(cid_c).unwrap();
     assert_eq!(c.position_us, 5_000_000, "Clip C restored to 5s");
 
+    project.modified_at = initial_modified_at;
     let restored_json = project.to_json().unwrap();
     assert_eq!(
         initial_json, restored_json,

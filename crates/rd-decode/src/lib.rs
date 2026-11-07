@@ -8,11 +8,13 @@
 //! - Decoder pool with per-device concurrency caps.
 //! - Predictive prefetch ring buffer.
 
+pub mod ffmpeg;
 pub mod pool;
 pub mod prefetch;
 pub mod proxy;
 pub mod synthetic;
 
+pub use ffmpeg::FfmpegDecoder;
 pub use synthetic::{PatternStyle, SyntheticDecoder};
 
 use anyhow::Result;

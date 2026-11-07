@@ -16,8 +16,11 @@ $RECYCLE.BIN/
 
 # Project files and media caches
 *.reddart
+*.wal
 *.log
 *.pdb
+test_*.png
+test_*.mp4
 
 # Gradle & Android build caches
 .gradle/

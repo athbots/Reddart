@@ -154,6 +154,190 @@ impl Track {
 
         Some(new_id)
     }
+
+    /// Ripple Trim In: adjusts the clip's head and ripples all downstream clips.
+    pub fn ripple_trim_in(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
+        if self.locked {
+            return Err("Track is locked");
+        }
+        let pos = self
+            .clips
+            .iter()
+            .position(|c| c.id == clip_id)
+            .ok_or("Clip not found")?;
+
+        let clip = &mut self.clips[pos];
+        let new_source_in = clip.source_in_us + delta_us;
+        if new_source_in < 0 || new_source_in >= clip.source_out_us {
+            return Err("Invalid trim boundary: source in out of bounds");
+        }
+        let new_pos = (clip.position_us + delta_us).max(0);
+        clip.source_in_us = new_source_in;
+        clip.position_us = new_pos;
+
+        // Shift downstream clips
+        for downstream in &mut self.clips[pos + 1..] {
+            downstream.position_us = (downstream.position_us + delta_us).max(0);
+        }
+        Ok(())
+    }
+
+    /// Ripple Trim Out: adjusts the clip's tail and ripples all downstream clips.
+    pub fn ripple_trim_out(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
+        if self.locked {
+            return Err("Track is locked");
+        }
+        let pos = self
+            .clips
+            .iter()
+            .position(|c| c.id == clip_id)
+            .ok_or("Clip not found")?;
+
+        let clip = &mut self.clips[pos];
+        let new_source_out = clip.source_out_us + delta_us;
+        if new_source_out <= clip.source_in_us {
+            return Err("Invalid trim boundary: source out cannot precede source in");
+        }
+        clip.source_out_us = new_source_out;
+
+        // Shift downstream clips
+        for downstream in &mut self.clips[pos + 1..] {
+            downstream.position_us = (downstream.position_us + delta_us).max(0);
+        }
+        Ok(())
+    }
+
+    /// Roll Edit: dual-sided edit between two adjacent clips preserving total sequence duration.
+    pub fn roll_edit(
+        &mut self,
+        outgoing_id: ClipId,
+        incoming_id: ClipId,
+        delta_us: i64,
+    ) -> Result<(), &'static str> {
+        if self.locked {
+            return Err("Track is locked");
+        }
+        let out_idx = self
+            .clips
+            .iter()
+            .position(|c| c.id == outgoing_id)
+            .ok_or("Outgoing clip not found")?;
+        let in_idx = self
+            .clips
+            .iter()
+            .position(|c| c.id == incoming_id)
+            .ok_or("Incoming clip not found")?;
+
+        if out_idx + 1 != in_idx {
+            return Err("Clips must be immediately adjacent for roll edit");
+        }
+
+        let out_clip = &self.clips[out_idx];
+        let in_clip = &self.clips[in_idx];
+
+        let new_out_source_out = out_clip.source_out_us + delta_us;
+        let new_in_source_in = in_clip.source_in_us + delta_us;
+
+        if new_out_source_out <= out_clip.source_in_us {
+            return Err("Outgoing clip cannot be rolled to zero duration");
+        }
+        if new_in_source_in >= in_clip.source_out_us || new_in_source_in < 0 {
+            return Err("Incoming clip cannot be rolled beyond source boundaries");
+        }
+
+        self.clips[out_idx].source_out_us = new_out_source_out;
+        self.clips[in_idx].source_in_us = new_in_source_in;
+        self.clips[in_idx].position_us = (self.clips[in_idx].position_us + delta_us).max(0);
+
+        Ok(())
+    }
+
+    /// Slip Edit: shifts source in/out while keeping timeline position and duration constant.
+    pub fn slip_edit(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
+        if self.locked {
+            return Err("Track is locked");
+        }
+        let clip = self.clip_mut(clip_id).ok_or("Clip not found")?;
+        let new_in = clip.source_in_us + delta_us;
+        let new_out = clip.source_out_us + delta_us;
+        if new_in < 0 {
+            return Err("Cannot slip earlier than beginning of media");
+        }
+        clip.source_in_us = new_in;
+        clip.source_out_us = new_out;
+        Ok(())
+    }
+
+    /// Slide Edit: moves clip on timeline while trimming adjacent clips to preserve sequence duration.
+    pub fn slide_edit(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
+        if self.locked {
+            return Err("Track is locked");
+        }
+        let pos = self
+            .clips
+            .iter()
+            .position(|c| c.id == clip_id)
+            .ok_or("Clip not found")?;
+
+        if pos > 0 {
+            let prev = &self.clips[pos - 1];
+            let new_prev_out = prev.source_out_us + delta_us;
+            if new_prev_out <= prev.source_in_us {
+                return Err("Predecessor clip cannot shrink below minimum duration");
+            }
+        }
+
+        if pos + 1 < self.clips.len() {
+            let next = &self.clips[pos + 1];
+            let new_next_in = next.source_in_us + delta_us;
+            if new_next_in >= next.source_out_us || new_next_in < 0 {
+                return Err("Successor clip cannot shrink below minimum duration");
+            }
+        }
+
+        if pos > 0 {
+            self.clips[pos - 1].source_out_us += delta_us;
+        }
+
+        self.clips[pos].position_us = (self.clips[pos].position_us + delta_us).max(0);
+
+        if pos + 1 < self.clips.len() {
+            self.clips[pos + 1].source_in_us += delta_us;
+            self.clips[pos + 1].position_us = (self.clips[pos + 1].position_us + delta_us).max(0);
+        }
+
+        Ok(())
+    }
+
+    /// Ripple Delete: removes a clip and shifts all downstream clips left to close the gap.
+    pub fn ripple_delete(&mut self, clip_id: ClipId) -> Option<(Clip, usize)> {
+        if self.locked {
+            return None;
+        }
+        let pos = self.clips.iter().position(|c| c.id == clip_id)?;
+        let removed = self.clips.remove(pos);
+        let duration = removed.duration_us();
+
+        for c in &mut self.clips[pos..] {
+            c.position_us = c.position_us.saturating_sub(duration);
+        }
+
+        Some((removed, pos))
+    }
+
+    /// Duplicate Clip: clones clip and places it directly adjacent.
+    pub fn duplicate_clip(&mut self, clip_id: ClipId) -> Option<ClipId> {
+        if self.locked {
+            return None;
+        }
+        let clip = self.clip(clip_id)?.clone();
+        let new_id = ClipId(uuid::Uuid::new_v4());
+        let mut dup = clip;
+        dup.id = new_id;
+        dup.position_us += dup.duration_us();
+        self.add_clip(dup);
+        Some(new_id)
+    }
 }
 
 #[cfg(test)]
@@ -220,5 +404,116 @@ mod tests {
         // Second half: 1-2s
         assert_eq!(track.clips()[1].position_us, 1_000_000);
         assert_eq!(track.clips()[1].duration_us(), 1_000_000);
+    }
+
+    #[test]
+    fn test_ripple_trim_invariants() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        let clip_a = make_test_clip(0, 2_000_000);
+        let clip_b = make_test_clip(2_000_000, 3_000_000);
+        let id_a = clip_a.id;
+        let id_b = clip_b.id;
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+
+        // Ripple trim in on clip A by +500ms
+        assert!(track.ripple_trim_in(id_a, 500_000).is_ok());
+        assert_eq!(track.clip(id_a).unwrap().source_in_us, 500_000);
+        assert_eq!(track.clip(id_a).unwrap().position_us, 500_000);
+        assert_eq!(track.clip(id_b).unwrap().position_us, 2_500_000); // Downstream rippled forward
+
+        // Ripple trim out on clip A by -200ms
+        assert!(track.ripple_trim_out(id_a, -200_000).is_ok());
+        assert_eq!(track.clip(id_a).unwrap().source_out_us, 1_800_000);
+        assert_eq!(track.clip(id_b).unwrap().position_us, 2_300_000); // Downstream rippled backward
+    }
+
+    #[test]
+    fn test_roll_edit_invariants() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        let clip_a = make_test_clip(0, 2_000_000);
+        let clip_b = make_test_clip(2_000_000, 2_000_000);
+        let id_a = clip_a.id;
+        let id_b = clip_b.id;
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+
+        let initial_total_duration = track.duration_us();
+
+        // Roll cut point by +500ms
+        assert!(track.roll_edit(id_a, id_b, 500_000).is_ok());
+        // Clip A expanded by 500ms
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 2_500_000);
+        // Clip B contracted by 500ms and starts at 2.5s
+        assert_eq!(track.clip(id_b).unwrap().position_us, 2_500_000);
+        assert_eq!(track.clip(id_b).unwrap().duration_us(), 1_500_000);
+        // Sequence total duration invariant preserved!
+        assert_eq!(track.duration_us(), initial_total_duration);
+    }
+
+    #[test]
+    fn test_slip_edit_invariants() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        let clip = make_test_clip(1_000_000, 2_000_000);
+        let cid = clip.id;
+        track.add_clip(clip);
+
+        let orig_pos = track.clip(cid).unwrap().position_us;
+        let orig_dur = track.clip(cid).unwrap().duration_us();
+
+        // Slip source forward by 300ms
+        assert!(track.slip_edit(cid, 300_000).is_ok());
+        let updated = track.clip(cid).unwrap();
+        assert_eq!(updated.source_in_us, 300_000);
+        assert_eq!(updated.source_out_us, 2_300_000);
+        // Timeline position and duration invariant strictly preserved
+        assert_eq!(updated.position_us, orig_pos);
+        assert_eq!(updated.duration_us(), orig_dur);
+    }
+
+    #[test]
+    fn test_slide_edit_invariants() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        let clip_a = make_test_clip(0, 2_000_000);
+        let clip_b = make_test_clip(2_000_000, 2_000_000);
+        let clip_c = make_test_clip(4_000_000, 2_000_000);
+        let id_b = clip_b.id;
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+        track.add_clip(clip_c);
+
+        let initial_dur = track.duration_us();
+
+        // Slide middle clip B by +400ms
+        assert!(track.slide_edit(id_b, 400_000).is_ok());
+        assert_eq!(track.clips()[0].duration_us(), 2_400_000); // Clip A lengthened
+        assert_eq!(track.clips()[1].position_us, 2_400_000); // Clip B shifted
+        assert_eq!(track.clips()[1].duration_us(), 2_000_000); // Clip B duration untouched!
+        assert_eq!(track.clips()[2].position_us, 4_400_000); // Clip C shifted
+        assert_eq!(track.clips()[2].duration_us(), 1_600_000); // Clip C shortened
+        assert_eq!(track.duration_us(), initial_dur); // Total duration invariant
+    }
+
+    #[test]
+    fn test_ripple_delete_and_duplicate() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        let clip_a = make_test_clip(0, 1_000_000);
+        let clip_b = make_test_clip(1_000_000, 2_000_000);
+        let clip_c = make_test_clip(3_000_000, 1_000_000);
+        let id_b = clip_b.id;
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+        track.add_clip(clip_c);
+
+        // Ripple delete clip B (2s)
+        let res = track.ripple_delete(id_b);
+        assert!(res.is_some());
+        assert_eq!(track.clips().len(), 2);
+        assert_eq!(track.clips()[1].position_us, 1_000_000); // Clip C pulled back by 2s!
+
+        // Duplicate clip A
+        let dup_id = track.duplicate_clip(track.clips()[0].id);
+        assert!(dup_id.is_some());
+        assert_eq!(track.clips().len(), 3);
     }
 }

@@ -6,6 +6,7 @@
 
 mod app;
 mod gpu;
+pub mod ui;
 
 use anyhow::Result;
 

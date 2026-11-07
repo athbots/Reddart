@@ -9,3 +9,4 @@ rd-core = { workspace = true }
 cpal = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }

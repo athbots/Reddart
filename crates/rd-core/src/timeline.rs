@@ -5,6 +5,15 @@ use serde::{Deserialize, Serialize};
 use crate::track::{Track, TrackId, TrackKind};
 use crate::{DurationUs, TimestampUs};
 
+/// Professional timeline marker for notes, beats, or cue points.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TimelineMarker {
+    pub id: u64,
+    pub time_us: TimestampUs,
+    pub name: String,
+    pub color_rgb: [u8; 3],
+}
+
 /// The timeline holds all tracks and manages their ordering.
 ///
 /// Tracks are ordered from bottom (index 0) to top. During compositing,
@@ -18,6 +27,18 @@ pub struct Timeline {
     /// Playhead position in microseconds.
     #[serde(default)]
     pub playhead_us: TimestampUs,
+    /// In-point for sequence work area / export range.
+    #[serde(default)]
+    pub mark_in_us: Option<TimestampUs>,
+    /// Out-point for sequence work area / export range.
+    #[serde(default)]
+    pub mark_out_us: Option<TimestampUs>,
+    /// Production markers on the timeline.
+    #[serde(default)]
+    pub markers: Vec<TimelineMarker>,
+    /// Next marker ID counter.
+    #[serde(default)]
+    next_marker_id: u64,
 }
 
 impl Timeline {
@@ -27,6 +48,55 @@ impl Timeline {
             tracks: Vec::new(),
             next_track_id: 1,
             playhead_us: 0,
+            mark_in_us: None,
+            mark_out_us: None,
+            markers: Vec::new(),
+            next_marker_id: 1,
+        }
+    }
+
+    /// Set sequence In-point (I shortcut).
+    pub fn set_mark_in(&mut self, time_us: TimestampUs) {
+        self.mark_in_us = Some(time_us);
+    }
+
+    /// Set sequence Out-point (O shortcut).
+    pub fn set_mark_out(&mut self, time_us: TimestampUs) {
+        self.mark_out_us = Some(time_us);
+    }
+
+    /// Clear In and Out points (Alt+X / X shortcut).
+    pub fn clear_in_out(&mut self) {
+        self.mark_in_us = None;
+        self.mark_out_us = None;
+    }
+
+    /// Add a marker to the timeline at the specified timestamp.
+    pub fn add_marker(
+        &mut self,
+        time_us: TimestampUs,
+        name: impl Into<String>,
+        color_rgb: [u8; 3],
+    ) -> u64 {
+        let id = self.next_marker_id;
+        self.next_marker_id += 1;
+        self.markers.push(TimelineMarker {
+            id,
+            time_us,
+            name: name.into(),
+            color_rgb,
+        });
+        self.markers.sort_by_key(|m| m.time_us);
+        id
+    }
+
+    /// Remove marker by ID.
+    pub fn remove_marker(&mut self, id: u64) -> bool {
+        if let Some(pos) = self.markers.iter().position(|m| m.id == id) {
+            self.markers.remove(pos);
+            true
+        } else {
+            false
         }
     }
 

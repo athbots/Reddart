@@ -5,6 +5,7 @@
 //! inspector properties, transport controls, and playhead scrubbing.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,7 +18,9 @@ use winit::{
 };
 
 use crate::gpu;
+use rd_audio::{AudioClock, AudioEngine, MeteringState, decode_audio_to_pcm};
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
+use rd_decode::FfmpegDecoder;
 
 /// Studio editing workspace mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +30,18 @@ pub enum WorkspaceMode {
     Audio,
     Titles,
     Export,
+}
+
+/// Active timeline editing tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditTool {
+    #[default]
+    Select, // [V] Selection & Move
+    Razor,      // [C] Razor Split
+    RippleTrim, // [B] Ripple Trim
+    Roll,       // [N] Roll Edit
+    Slip,       // [Y] Slip Edit
+    Slide,      // [U] Slide Edit
 }
 
 /// Convert timestamp in microseconds to standard SMPTE timecode (HH:MM:SS:FF).
@@ -41,6 +56,14 @@ pub fn format_smpte(timestamp_us: i64, fps: f64) -> String {
     let minutes = total_minutes % 60;
     let hours = total_minutes / 60;
     format!("{:02}:{:02}:{:02}:{:02}", hours, minutes, seconds, frames)
+}
+
+/// Parameters for real-time video color grading.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ColorGradeSettings {
+    pub exposure: f32,
+    pub contrast: f32,
+    pub saturation: f32,
 }
 
 /// Editor state holding user project data, selection, and playback state.
@@ -58,10 +81,8 @@ pub struct EditorData {
     pub show_export_modal: bool,
     pub export_preset_idx: usize,
     pub export_destination: Option<PathBuf>,
-    pub active_export_job: Option<rd_export::ExportJob>,
-    #[allow(dead_code)]
+    pub active_export: Option<rd_export::BackgroundExportHandle>,
     pub export_progress: Option<rd_export::ExportProgress>,
-    pub export_frame_counter: u64,
     pub export_completed: bool,
     pub last_save_path: Option<PathBuf>,
     pub last_autosave_time: Instant,
@@ -82,6 +103,15 @@ pub struct EditorData {
     pub title_font_size: f32,
     pub solo_track: Option<TrackId>,
     pub show_safe_guides: bool,
+    pub monitor_texture_id: Option<egui::TextureId>,
+    pub decoders: HashMap<PathBuf, FfmpegDecoder>,
+    pub last_rendered_pts_us: i64,
+    pub monitor_frame_buffer: Vec<u8>,
+    pub needs_monitor_update: bool,
+    pub audio_engine: Option<Arc<AudioEngine>>,
+    pub audio_metering: MeteringState,
+    pub active_tool: EditTool,
+    pub journal: Option<rd_core::ProjectJournal>,
 }
 
 impl EditorData {
@@ -91,8 +121,70 @@ impl EditorData {
         project.timeline.add_track(TrackKind::Video, "Video 1");
         project.timeline.add_track(TrackKind::Audio, "Audio 1");
 
+        // Initialize production Write-Ahead Log journal & perform crash recovery if needed
+        let default_save_path = PathBuf::from("Untitled_Project.reddart");
+        let mut journal = rd_core::ProjectJournal::open_or_create(&default_save_path).ok();
+        let mut wal_msg = None;
+        if let Some(ref mut j) = journal
+            && let Ok(report) = j.replay_into(&mut project)
+            && report.valid_records_replayed > 0
+        {
+            wal_msg = Some(format!(
+                "Recovered {} uncommitted edits from transaction journal",
+                report.valid_records_replayed
+            ));
+        }
+
+        let mut decoders = HashMap::new();
+        let demo_path = PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4");
+        if demo_path.exists() {
+            let demo_str = demo_path.to_string_lossy().to_string();
+            let clip = Clip::new_video(&demo_str, 0, 0, 10_000_000);
+            if let Some(track) = project
+                .timeline
+                .tracks_mut()
+                .iter_mut()
+                .find(|t| t.kind == TrackKind::Video)
+            {
+                track.add_clip(clip);
+            }
+            if let Ok(decoder) = FfmpegDecoder::open(&demo_path) {
+                decoders.insert(demo_path.clone(), decoder);
+            }
+        }
+
+        // Initialize low-latency CPAL hardware audio engine
+        let audio_clock = AudioClock::new();
+        let audio_engine = match AudioEngine::new(audio_clock) {
+            Ok(eng) => {
+                let eng = Arc::new(eng);
+                if demo_path.exists()
+                    && let Ok(pcm) = decode_audio_to_pcm(&demo_path)
+                {
+                    eng.load_track_pcm(pcm, 1.0);
+                }
+                Some(eng)
+            }
+            Err(e) => {
+                log::warn!("AudioEngine initialization notice: {:?}", e);
+                None
+            }
+        };
+
+        let audio_metering = MeteringState {
+            peak_l_dbfs: -96.0,
+            peak_r_dbfs: -96.0,
+            rms_l_dbfs: -96.0,
+            rms_r_dbfs: -96.0,
+            peak_hold_l_dbfs: -96.0,
+            peak_hold_r_dbfs: -96.0,
+            clipped_l: false,
+            clipped_r: false,
+        };
+
         Self {
             workspace_mode: WorkspaceMode::Edit,
+            active_tool: EditTool::Select,
             project,
             history: rd_core::CommandHistory::new(100),
             is_playing: false,
@@ -105,14 +197,16 @@ impl EditorData {
             show_export_modal: false,
             export_preset_idx: 0,
             export_destination: None,
-            active_export_job: None,
+            active_export: None,
             export_progress: None,
-            export_frame_counter: 0,
             export_completed: false,
             last_save_path: None,
             last_autosave_time: Instant::now(),
             missing_media: Vec::new(),
-            status_message: Some(("Reddart Engine Initialized".into(), Instant::now())),
+            status_message: Some((
+                wal_msg.unwrap_or_else(|| "Reddart Studio Initialized".into()),
+                Instant::now(),
+            )),
             snapping_enabled: true,
             master_volume: 1.0,
             color_exposure: 0.0,
@@ -128,6 +222,307 @@ impl EditorData {
             title_font_size: 42.0,
             solo_track: None,
             show_safe_guides: true,
+            monitor_texture_id: None,
+            decoders,
+            last_rendered_pts_us: -999,
+            monitor_frame_buffer: vec![18u8; 1920 * 1080 * 4],
+            needs_monitor_update: true,
+            audio_engine,
+            audio_metering,
+            journal,
+        }
+    }
+
+    /// Record an atomic timeline mutation into the durable write-ahead log.
+    pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) {
+        if let Some(ref mut j) = self.journal {
+            let _ = j.append(mutation);
+        }
+    }
+
+    /// Set playback state and synchronize hardware audio engine.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.is_playing = playing;
+        if let Some(ref audio) = self.audio_engine {
+            if playing && (self.shuttle_speed - 1.0).abs() < 0.05 {
+                audio.seek_to_time_us(self.project.timeline.playhead_us);
+                audio.play();
+            } else {
+                audio.pause();
+            }
+        }
+    }
+
+    /// Toggle playback state.
+    pub fn toggle_playback(&mut self) {
+        let next = !self.is_playing;
+        self.shuttle_speed = 1.0;
+        self.set_playing(next);
+    }
+
+    /// Seek to a specific timestamp in microseconds and synchronize audio position.
+    pub fn seek_to_time_us(&mut self, time_us: i64) {
+        self.project.timeline.playhead_us = time_us.max(0);
+        if let Some(ref audio) = self.audio_engine {
+            audio.seek_to_time_us(time_us);
+        }
+    }
+
+    /// Set master volume gain and update hardware audio engine.
+    pub fn set_master_volume(&mut self, vol: f32) {
+        self.master_volume = vol.clamp(0.0, 2.0);
+        if let Some(ref audio) = self.audio_engine {
+            audio.set_master_volume(self.master_volume);
+        }
+    }
+
+    /// Update the 1920x1080 Program Monitor hardware GPU texture from live video decode or broadcast raster.
+    pub fn update_monitor_frame(&mut self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
+        let playhead_us = self.project.timeline.playhead_us;
+
+        // Find active video clip on topmost enabled video track
+        let active_clip = self
+            .project
+            .timeline
+            .tracks()
+            .iter()
+            .rev()
+            .filter(|t| t.kind == TrackKind::Video && t.enabled)
+            .find_map(|t| t.clip_at(playhead_us).cloned());
+
+        let mut updated = false;
+
+        if let Some(clip) = active_clip {
+            if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
+                let path = PathBuf::from(&vclip.source_path);
+                if path.exists() {
+                    let source_time_us = clip.source_in_us
+                        + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
+
+                    if source_time_us != self.last_rendered_pts_us || self.needs_monitor_update {
+                        let decoder = self.decoders.entry(path.clone()).or_insert_with(|| {
+                            FfmpegDecoder::open(&path).expect("Failed to initialize video decoder")
+                        });
+
+                        if let Ok(Some(frame)) = decoder.decode_frame_at(source_time_us)
+                            && let Some(rgba) = frame.rgba_data
+                        {
+                            Self::resample_and_grade_frame(
+                                &rgba,
+                                frame.width,
+                                frame.height,
+                                &mut self.monitor_frame_buffer,
+                                1920,
+                                1080,
+                                ColorGradeSettings {
+                                    exposure: self.color_exposure,
+                                    contrast: self.color_contrast,
+                                    saturation: self.color_saturation,
+                                },
+                            );
+                            updated = true;
+                            self.last_rendered_pts_us = source_time_us;
+                            self.needs_monitor_update = false;
+                        }
+                    }
+                } else if self.last_rendered_pts_us != -2 {
+                    Self::generate_offline_graphic(
+                        &mut self.monitor_frame_buffer,
+                        1920,
+                        1080,
+                        &vclip.source_path,
+                    );
+                    updated = true;
+                    self.last_rendered_pts_us = -2;
+                }
+            }
+        } else if self.last_rendered_pts_us != -1 || self.needs_monitor_update {
+            Self::generate_smpte_pattern(&mut self.monitor_frame_buffer, 1920, 1080, playhead_us);
+            updated = true;
+            self.last_rendered_pts_us = -1;
+            self.needs_monitor_update = false;
+        }
+
+        if updated {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.monitor_frame_buffer,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(1920 * 4),
+                    rows_per_image: Some(1080),
+                },
+                wgpu::Extent3d {
+                    width: 1920,
+                    height: 1080,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
+    /// High-performance aspect-fit letterboxing and real-time color grading.
+    pub fn resample_and_grade_frame(
+        src: &[u8],
+        src_w: u32,
+        src_h: u32,
+        dst: &mut [u8],
+        dst_w: u32,
+        dst_h: u32,
+        grade: ColorGradeSettings,
+    ) {
+        if src_w == dst_w && src_h == dst_h {
+            dst.copy_from_slice(src);
+        } else {
+            let src_aspect = src_w as f32 / src_h as f32;
+            let dst_aspect = dst_w as f32 / dst_h as f32;
+            let (target_w, target_h, offset_x, offset_y) = if src_aspect > dst_aspect {
+                let tw = dst_w;
+                let th = (dst_w as f32 / src_aspect).round() as u32;
+                let oy = (dst_h.saturating_sub(th)) / 2;
+                (tw, th, 0u32, oy)
+            } else {
+                let th = dst_h;
+                let tw = (dst_h as f32 * src_aspect).round() as u32;
+                let ox = (dst_w.saturating_sub(tw)) / 2;
+                (tw, th, ox, 0u32)
+            };
+
+            // Clear letterbox borders to studio dark graphite
+            dst.fill(12);
+
+            for y in 0..target_h {
+                let sy = ((y as u64 * src_h as u64) / target_h as u64) as u32;
+                let src_row = (sy * src_w * 4) as usize;
+                let dst_y = offset_y + y;
+                if dst_y >= dst_h {
+                    break;
+                }
+                let dst_row = ((dst_y * dst_w + offset_x) * 4) as usize;
+
+                for x in 0..target_w {
+                    let sx = ((x as u64 * src_w as u64) / target_w as u64) as u32;
+                    let src_idx = src_row + (sx * 4) as usize;
+                    let dst_idx = dst_row + (x * 4) as usize;
+                    if src_idx + 4 <= src.len() && dst_idx + 4 <= dst.len() {
+                        dst[dst_idx..dst_idx + 4].copy_from_slice(&src[src_idx..src_idx + 4]);
+                    }
+                }
+            }
+        }
+
+        // Apply realtime color grading in-place if non-default
+        if grade.exposure != 0.0 || grade.contrast != 0.0 || (grade.saturation - 1.0).abs() > 0.001
+        {
+            let exp_mult = 2.0_f32.powf(grade.exposure);
+            let contrast_mult = 1.0 + grade.contrast;
+            for chunk in dst.as_chunks_mut::<4>().0 {
+                let mut r = chunk[0] as f32 / 255.0;
+                let mut g = chunk[1] as f32 / 255.0;
+                let mut b = chunk[2] as f32 / 255.0;
+
+                // Exposure
+                r *= exp_mult;
+                g *= exp_mult;
+                b *= exp_mult;
+
+                // Contrast (pivot at 0.5 midgray)
+                r = (r - 0.5) * contrast_mult + 0.5;
+                g = (g - 0.5) * contrast_mult + 0.5;
+                b = (b - 0.5) * contrast_mult + 0.5;
+
+                // Saturation (Rec. 709 luma)
+                if (grade.saturation - 1.0).abs() > 0.001 {
+                    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    r = luma + (r - luma) * grade.saturation;
+                    g = luma + (g - luma) * grade.saturation;
+                    b = luma + (b - luma) * grade.saturation;
+                }
+
+                chunk[0] = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+                chunk[1] = (g.clamp(0.0, 1.0) * 255.0).round() as u8;
+                chunk[2] = (b.clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+        }
+    }
+
+    /// Generate broadcast SMPTE color bars pattern with studio raster when over an empty timeline region.
+    pub fn generate_smpte_pattern(dst: &mut [u8], width: u32, height: u32, time_us: i64) {
+        let smpte_75: &[[u8; 4]] = &[
+            [191, 191, 191, 255], // White
+            [191, 191, 0, 255],   // Yellow
+            [0, 191, 191, 255],   // Cyan
+            [0, 191, 0, 255],     // Green
+            [191, 0, 191, 255],   // Magenta
+            [191, 0, 0, 255],     // Red
+            [0, 0, 191, 255],     // Blue
+        ];
+
+        let bottom_bars: &[[u8; 4]] = &[
+            [0, 33, 71, 255],     // Dark Blue
+            [255, 255, 255, 255], // White
+            [50, 0, 106, 255],    // Dark Purple
+            [19, 19, 19, 255],    // Superblack
+            [28, 28, 28, 255],    // Black
+            [38, 38, 38, 255],    // Gray
+            [19, 19, 19, 255],    // Superblack
+        ];
+
+        let top_h = (height * 3) / 4;
+        let bar_w = width / 7;
+
+        for y in 0..height {
+            let is_top = y < top_h;
+            let row_offset = (y * width * 4) as usize;
+
+            for x in 0..width {
+                let bar_idx = ((x / bar_w) as usize).min(6);
+                let col = if is_top {
+                    smpte_75[bar_idx]
+                } else {
+                    bottom_bars[bar_idx]
+                };
+
+                let pixel_idx = row_offset + (x * 4) as usize;
+                if pixel_idx + 4 <= dst.len() {
+                    dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
+                }
+            }
+        }
+
+        // Subdued crossline scan indicator
+        let scan_x = ((time_us / 25_000) % width as i64) as u32;
+        for y in 0..height {
+            let pixel_idx = ((y * width + scan_x) * 4) as usize;
+            if pixel_idx + 4 <= dst.len() {
+                dst[pixel_idx] = dst[pixel_idx].saturating_add(40);
+                dst[pixel_idx + 1] = dst[pixel_idx + 1].saturating_add(40);
+                dst[pixel_idx + 2] = dst[pixel_idx + 2].saturating_add(40);
+            }
+        }
+    }
+
+    /// Generate an industrial "MEDIA OFFLINE" warning card when a referenced source file is missing.
+    pub fn generate_offline_graphic(dst: &mut [u8], width: u32, height: u32, _source_path: &str) {
+        for y in 0..height {
+            let row_offset = (y * width * 4) as usize;
+            for x in 0..width {
+                let stripe = ((x + y) / 48) % 2 == 0;
+                let col: [u8; 4] = if stripe {
+                    [42, 24, 16, 255] // Amber dark stripe
+                } else {
+                    [20, 22, 28, 255] // Graphite dark stripe
+                };
+                let pixel_idx = row_offset + (x * 4) as usize;
+                if pixel_idx + 4 <= dst.len() {
+                    dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
+                }
+            }
         }
     }
 }
@@ -179,146 +574,9 @@ pub fn studio_btn(
     ui.add(btn)
 }
 
-/// Precision Segmented Workspace Navigation Tab.
-/// Modeled after DaVinci Resolve workspace switcher deck with active bottom illumination bar.
-pub fn studio_nav_tab(ui: &mut egui::Ui, active: bool, glyph: &str, title: &str) -> egui::Response {
-    let desired_size = egui::vec2(ui.available_width().clamp(76.0, 92.0), 26.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        let is_hovered = response.hovered();
-
-        let bg = if active {
-            egui::Color32::from_rgb(30, 36, 50)
-        } else if is_hovered {
-            egui::Color32::from_rgb(26, 30, 40)
-        } else {
-            egui::Color32::from_rgb(16, 18, 24)
-        };
-
-        painter.rect_filled(rect, 2.0, bg);
-
-        let border_color = if active {
-            egui::Color32::from_rgb(59, 130, 246)
-        } else if is_hovered {
-            egui::Color32::from_rgb(70, 78, 96)
-        } else {
-            egui::Color32::from_rgb(36, 40, 52)
-        };
-        painter.rect_stroke(
-            rect,
-            2.0,
-            egui::Stroke::new(1.0_f32, border_color),
-            egui::StrokeKind::Inside,
-        );
-
-        // Bottom active illumination accent
-        if active {
-            let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.left(), rect.bottom() - 2.0),
-                egui::vec2(rect.width(), 2.0),
-            );
-            painter.rect_filled(bar_rect, 0.0, egui::Color32::from_rgb(59, 130, 246));
-        }
-
-        let full_text = format!("{} {}", glyph, title);
-        let text_color = if active {
-            egui::Color32::WHITE
-        } else if is_hovered {
-            egui::Color32::from_rgb(226, 232, 240)
-        } else {
-            egui::Color32::from_rgb(148, 163, 184)
-        };
-
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            full_text,
-            egui::FontId::proportional(11.0),
-            text_color,
-        );
-    }
-
-    response
-}
-
-/// Digital Recessed LCD Display Box.
-pub fn studio_lcd_box(ui: &mut egui::Ui, tag: &str, timecode: &str, color: egui::Color32) {
-    let desired_size = egui::vec2(136.0, 26.0);
-    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(8, 9, 12));
-        painter.rect_stroke(
-            rect,
-            2.0,
-            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(32, 36, 48)),
-            egui::StrokeKind::Inside,
-        );
-
-        painter.text(
-            egui::pos2(rect.left() + 6.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            tag,
-            egui::FontId::monospace(8.5),
-            egui::Color32::from_rgb(100, 116, 139),
-        );
-
-        painter.text(
-            egui::pos2(rect.right() - 6.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            timecode,
-            egui::FontId::monospace(12.0),
-            color,
-        );
-    }
-}
-
-/// Studio Transport Deck Hardware Button.
-pub fn studio_transport_btn(
-    ui: &mut egui::Ui,
-    label: &str,
-    width: f32,
-    active: bool,
-    primary_color: Option<egui::Color32>,
-    tooltip: &str,
-) -> egui::Response {
-    let text = egui::RichText::new(label)
-        .size(if width > 50.0 { 12.0 } else { 11.0 })
-        .strong()
-        .color(if primary_color.is_some() || active {
-            egui::Color32::WHITE
-        } else {
-            egui::Color32::from_rgb(210, 215, 225)
-        });
-    let mut btn = egui::Button::new(text).min_size(egui::vec2(width, 26.0));
-    if let Some(col) = primary_color {
-        btn = btn
-            .fill(col)
-            .stroke(egui::Stroke::new(1.0_f32, col.linear_multiply(0.8)));
-    } else if active {
-        btn = btn
-            .fill(egui::Color32::from_rgb(37, 99, 235))
-            .stroke(egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgb(147, 197, 253),
-            ));
-    } else {
-        btn = btn
-            .fill(egui::Color32::from_rgb(26, 28, 36))
-            .stroke(egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgb(46, 50, 62),
-            ));
-    }
-    ui.add(btn).on_hover_text(tooltip)
-}
-
-/// Reset Parameter Pill Button [↺].
+/// Reset Parameter Pill Button [R].
 pub fn studio_reset_btn(ui: &mut egui::Ui) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new("↺").size(10.0))
+    let btn = egui::Button::new(egui::RichText::new("R").size(9.5).monospace())
         .min_size(egui::vec2(18.0, 18.0))
         .fill(egui::Color32::from_rgb(28, 32, 42))
         .stroke(egui::Stroke::new(
@@ -380,6 +638,9 @@ struct AppState {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
+    monitor_texture: wgpu::Texture,
+    #[allow(dead_code)]
+    monitor_texture_view: wgpu::TextureView,
     editor: EditorData,
 }
 
@@ -470,6 +731,7 @@ impl ApplicationHandler for ReddartApp {
         style.spacing.item_spacing = egui::vec2(6.0, 4.0);
         style.spacing.button_padding = egui::vec2(10.0, 5.0);
         egui_ctx.set_style(style);
+        crate::ui::init_studio_ui(&egui_ctx);
 
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
@@ -480,9 +742,34 @@ impl ApplicationHandler for ReddartApp {
             None,
         );
 
-        let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, surface_format, None, 1, false);
+        let mut egui_renderer =
+            egui_wgpu::Renderer::new(&gpu.device, surface_format, None, 1, false);
 
-        let editor = EditorData::new();
+        // Create 1920x1080 Program Monitor hardware texture
+        let monitor_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Studio Monitor Texture"),
+            size: wgpu::Extent3d {
+                width: 1920,
+                height: 1080,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let monitor_texture_view =
+            monitor_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let monitor_texture_id = egui_renderer.register_native_texture(
+            &gpu.device,
+            &monitor_texture_view,
+            wgpu::FilterMode::Linear,
+        );
+
+        let mut editor = EditorData::new();
+        editor.monitor_texture_id = Some(monitor_texture_id);
         log::info!("Editor initialized with project: {}", editor.project.name);
 
         self.state = Some(AppState {
@@ -495,6 +782,8 @@ impl ApplicationHandler for ReddartApp {
             egui_ctx,
             egui_state,
             egui_renderer,
+            monitor_texture,
+            monitor_texture_view,
             editor,
         });
 
@@ -581,16 +870,20 @@ fn render_frame(state: &mut AppState) {
         state.editor.last_frame_time = Instant::now();
     }
 
-    // 2. Periodic autosave (every 30 seconds)
+    // 2. Periodic autosave with WAL checkpointing (every 30 seconds)
     if state.editor.last_autosave_time.elapsed() > std::time::Duration::from_secs(30) {
         let autosave_name = format!(
             ".{}_autosave.reddart",
             state.editor.project.name.replace(' ', "_")
         );
-        if let Ok(()) = state.editor.project.save_atomic(&autosave_name) {
-            state.editor.last_autosave_time = Instant::now();
-            log::debug!("Autosaved project to {}", autosave_name);
+        let path = std::path::PathBuf::from(&autosave_name);
+        if let Some(ref mut j) = state.editor.journal {
+            let _ = j.checkpoint(&state.editor.project, &path);
+        } else {
+            let _ = state.editor.project.save_atomic(&path);
         }
+        state.editor.last_autosave_time = Instant::now();
+        log::debug!("Autosaved project with WAL checkpoint to {}", autosave_name);
     }
 
     let output = match state.surface.get_current_texture() {
@@ -615,6 +908,16 @@ fn render_frame(state: &mut AppState) {
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
+
+    // 3. Update Program Monitor live GPU texture
+    state
+        .editor
+        .update_monitor_frame(&state.queue, &state.monitor_texture);
+
+    // 4. Update Audio Telemetry & dBFS Metering
+    if let Some(ref audio) = state.editor.audio_engine {
+        state.editor.audio_metering = audio.read_metering();
+    }
 
     // Run egui
     let egui_ctx = state.egui_ctx.clone();
@@ -702,13 +1005,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
     // 0. Handle global keyboard shortcuts
     ctx.input(|i| {
         if i.key_pressed(egui::Key::Space) {
-            ed.is_playing = !ed.is_playing;
-            ed.shuttle_speed = 1.0;
+            ed.toggle_playback();
         }
         if i.key_pressed(egui::Key::J) {
             if !ed.is_playing {
-                ed.is_playing = true;
                 ed.shuttle_speed = -1.0;
+                ed.set_playing(true);
             } else if ed.shuttle_speed <= 0.0 {
                 ed.shuttle_speed = (ed.shuttle_speed * 2.0).max(-8.0);
             } else {
@@ -718,14 +1020,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 Some((format!("Shuttle: {:.0}x", ed.shuttle_speed), Instant::now()));
         }
         if i.key_pressed(egui::Key::K) {
-            ed.is_playing = false;
             ed.shuttle_speed = 1.0;
+            ed.set_playing(false);
             ed.status_message = Some(("Playback Paused".into(), Instant::now()));
         }
         if i.key_pressed(egui::Key::L) {
             if !ed.is_playing {
-                ed.is_playing = true;
                 ed.shuttle_speed = 1.0;
+                ed.set_playing(true);
             } else if ed.shuttle_speed >= 0.0 {
                 ed.shuttle_speed = (ed.shuttle_speed * 2.0).min(8.0);
             } else {
@@ -735,12 +1037,110 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 Some((format!("Shuttle: {:.0}x", ed.shuttle_speed), Instant::now()));
         }
         if i.key_pressed(egui::Key::Home) {
-            ed.project.timeline.playhead_us = 0;
+            ed.seek_to_time_us(0);
         }
         if i.key_pressed(egui::Key::End) {
-            ed.project.timeline.playhead_us = ed.project.timeline.duration_us();
+            let dur = ed.project.timeline.duration_us();
+            ed.seek_to_time_us(dur);
         }
-        if i.key_pressed(egui::Key::N) {
+        // NLE Tool Selection Shortcuts: V, C, B, N, Y, U
+        if i.key_pressed(egui::Key::V) {
+            ed.active_tool = EditTool::Select;
+            ed.status_message = Some(("Tool: Selection & Move [V]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::C) {
+            ed.active_tool = EditTool::Razor;
+            ed.status_message = Some(("Tool: Razor Split [C]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::B) {
+            ed.active_tool = EditTool::RippleTrim;
+            ed.status_message = Some(("Tool: Ripple Trim [B]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::N) && !i.modifiers.shift {
+            ed.active_tool = EditTool::Roll;
+            ed.status_message = Some(("Tool: Roll Edit [N]".into(), Instant::now()));
+        }
+        if !i.modifiers.ctrl && i.key_pressed(egui::Key::Y) {
+            ed.active_tool = EditTool::Slip;
+            ed.status_message = Some(("Tool: Slip Media [Y]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::U) {
+            ed.active_tool = EditTool::Slide;
+            ed.status_message = Some(("Tool: Slide Clip [U]".into(), Instant::now()));
+        }
+
+        // Timeline Range & Cue Markers: I, O, X, M
+        if i.key_pressed(egui::Key::I) {
+            let playhead = ed.project.timeline.playhead_us;
+            ed.project.timeline.set_mark_in(playhead);
+            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                mark_in_us: ed.project.timeline.mark_in_us,
+                mark_out_us: ed.project.timeline.mark_out_us,
+            });
+            ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::O) {
+            let playhead = ed.project.timeline.playhead_us;
+            ed.project.timeline.set_mark_out(playhead);
+            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                mark_in_us: ed.project.timeline.mark_in_us,
+                mark_out_us: ed.project.timeline.mark_out_us,
+            });
+            ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+        }
+        if !i.modifiers.ctrl && i.key_pressed(egui::Key::X) {
+            ed.project.timeline.clear_in_out();
+            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                mark_in_us: None,
+                mark_out_us: None,
+            });
+            ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::M) {
+            let playhead = ed.project.timeline.playhead_us;
+            let mid = ed
+                .project
+                .timeline
+                .add_marker(playhead, "Cue", [59, 130, 246]);
+            ed.record_mutation(rd_core::JournalMutation::AddMarker {
+                id: mid,
+                time_us: playhead,
+                name: "Cue".into(),
+                color_rgb: [59, 130, 246],
+            });
+            ed.status_message = Some((
+                format!("Marker #{} Placed at Playhead [M]", mid),
+                Instant::now(),
+            ));
+        }
+
+        // Duplicate Selected Clip [D]
+        if !i.modifiers.ctrl
+            && i.key_pressed(egui::Key::D)
+            && let Some(cid) = ed.selected_clip
+            && let Some(tid) = ed.selected_track
+        {
+            let maybe_dup = if let Some(track) = ed.project.timeline.track_mut(tid) {
+                track
+                    .duplicate_clip(cid)
+                    .and_then(|new_id| track.clip(new_id).cloned().map(|c| (new_id, c)))
+            } else {
+                None
+            };
+            if let Some((new_id, new_clip)) = maybe_dup {
+                ed.record_mutation(rd_core::JournalMutation::AddClip {
+                    track_id: tid,
+                    clip: new_clip,
+                });
+                ed.selected_clip = Some(new_id);
+                ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
+            }
+        }
+
+        // Snapping: S or Shift+N
+        if (i.key_pressed(egui::Key::S) && !i.modifiers.ctrl && ed.active_tool != EditTool::Razor)
+            || (i.modifiers.shift && i.key_pressed(egui::Key::N))
+        {
             ed.snapping_enabled = !ed.snapping_enabled;
             ed.status_message = Some((
                 format!(
@@ -754,24 +1154,76 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 Instant::now(),
             ));
         }
-        if i.key_pressed(egui::Key::S) && !i.modifiers.ctrl {
+
+        // Razor Split at Playhead: Ctrl+K or S (when Razor active)
+        if (i.modifiers.ctrl && i.key_pressed(egui::Key::K))
+            || (i.key_pressed(egui::Key::S)
+                && !i.modifiers.ctrl
+                && ed.active_tool == EditTool::Razor)
+        {
             let playhead = ed.project.timeline.playhead_us;
             let track_id = ed
                 .selected_track
                 .or_else(|| ed.project.timeline.tracks().first().map(|t| t.id));
-            if let Some(tid) = track_id
-                && let Some(track) = ed.project.timeline.track_mut(tid)
-                && let Some(clip) = track.clip_at(playhead)
-            {
-                let cid = clip.id;
-                let _ = track.split_clip_at(cid, playhead);
+            if let Some(tid) = track_id {
+                let maybe_split = if let Some(track) = ed.project.timeline.track_mut(tid)
+                    && let Some(clip) = track.clip_at(playhead)
+                {
+                    let cid = clip.id;
+                    track
+                        .split_clip_at(cid, playhead)
+                        .and_then(|new_cid| track.clip(new_cid).cloned().map(|c| (cid, c)))
+                } else {
+                    None
+                };
+                if let Some((orig_cid, new_c)) = maybe_split {
+                    ed.record_mutation(rd_core::JournalMutation::SplitClip {
+                        track_id: tid,
+                        clip_id: orig_cid,
+                        split_time_us: playhead,
+                        new_clip: new_c,
+                    });
+                    ed.status_message = Some(("Split Clip at Playhead".into(), Instant::now()));
+                }
             }
         }
+
+        // Delete / Ripple Delete: Delete / Backspace / Shift+Delete
         if (i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
             && let Some(cid) = ed.selected_clip.take()
         {
-            for track in ed.project.timeline.tracks_mut() {
-                track.remove_clip(cid);
+            if i.modifiers.shift {
+                let mut ripple_tid = None;
+                for track in ed.project.timeline.tracks_mut() {
+                    if track.ripple_delete(cid).is_some() {
+                        ripple_tid = Some(track.id);
+                        break;
+                    }
+                }
+                if let Some(tid) = ripple_tid {
+                    ed.record_mutation(rd_core::JournalMutation::RippleDelete {
+                        track_id: tid,
+                        clip_id: cid,
+                    });
+                    ed.status_message = Some((
+                        "Ripple Deleted Clip (gap closed) [Shift+Del]".into(),
+                        Instant::now(),
+                    ));
+                }
+            } else {
+                let mut deleted_tids = Vec::new();
+                for track in ed.project.timeline.tracks_mut() {
+                    if track.remove_clip(cid).is_some() {
+                        deleted_tids.push(track.id);
+                    }
+                }
+                for tid in deleted_tids {
+                    ed.record_mutation(rd_core::JournalMutation::RemoveClip {
+                        track_id: tid,
+                        clip_id: cid,
+                    });
+                }
+                ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
             }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) {
@@ -784,10 +1236,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             let target = ed.last_save_path.clone().unwrap_or_else(|| {
                 PathBuf::from(format!("{}.reddart", ed.project.name.replace(' ', "_")))
             });
-            if let Ok(()) = ed.project.save_atomic(&target) {
+            let save_res = if let Some(ref mut j) = ed.journal {
+                j.checkpoint(&ed.project, &target)
+            } else {
+                ed.project.save_atomic(&target)
+            };
+            if let Ok(()) = save_res {
                 ed.last_save_path = Some(target.clone());
-                ed.status_message =
-                    Some((format!("Saved to {}", target.display()), Instant::now()));
+                ed.status_message = Some((
+                    format!("Saved & Checkpointed to {}", target.display()),
+                    Instant::now(),
+                ));
             }
         }
         if i.key_pressed(egui::Key::ArrowLeft) {
@@ -825,6 +1284,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.selected_clip = None;
                     ed.selected_track = None;
                     ed.last_save_path = None;
+                    ed.journal = None;
                     ed.missing_media.clear();
                     ed.status_message = Some(("New Project Created".into(), Instant::now()));
                     ui.close_menu();
@@ -833,15 +1293,26 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Reddart Project", &["reddart", "json"])
                         .pick_file()
-                        && let Ok(proj) = Project::load_file(&path)
+                        && let Ok(mut proj) = Project::load_file(&path)
                     {
+                        let mut journal = rd_core::ProjectJournal::open_or_create(&path).ok();
+                        let mut msg = format!("Loaded {}", proj.name);
+                        if let Some(ref mut j) = journal
+                            && let Ok(report) = j.replay_into(&mut proj)
+                            && report.valid_records_replayed > 0
+                        {
+                            msg = format!(
+                                "Loaded {} (Recovered {} journal edits)",
+                                proj.name, report.valid_records_replayed
+                            );
+                        }
                         ed.missing_media = proj.find_missing_media();
                         ed.last_save_path = Some(path.clone());
                         ed.project = proj;
+                        ed.journal = journal;
                         ed.history.clear();
                         ed.selected_clip = None;
-                        ed.status_message =
-                            Some((format!("Loaded {}", ed.project.name), Instant::now()));
+                        ed.status_message = Some((msg, Instant::now()));
                         log::info!("Loaded project: {}", ed.project.name);
                     }
                     ui.close_menu();
@@ -851,11 +1322,18 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     let target = ed.last_save_path.clone().unwrap_or_else(|| {
                         PathBuf::from(format!("{}.reddart", ed.project.name.replace(' ', "_")))
                     });
-                    if let Ok(()) = ed.project.save_atomic(&target) {
+                    let save_res = if let Some(ref mut j) = ed.journal {
+                        j.checkpoint(&ed.project, &target)
+                    } else {
+                        ed.project.save_atomic(&target)
+                    };
+                    if let Ok(()) = save_res {
                         ed.last_save_path = Some(target.clone());
-                        ed.status_message =
-                            Some((format!("Saved to {}", target.display()), Instant::now()));
-                        log::info!("Atomically saved project to {}", target.display());
+                        ed.status_message = Some((
+                            format!("Checkpoint Saved: {}", target.display()),
+                            Instant::now(),
+                        ));
+                        log::info!("Checkpoint saved project to {}", target.display());
                     }
                     ui.close_menu();
                 }
@@ -864,12 +1342,22 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         .set_file_name(format!("{}.reddart", ed.project.name))
                         .add_filter("Reddart Project", &["reddart", "json"])
                         .save_file()
-                        && let Ok(()) = ed.project.save_atomic(&path)
                     {
-                        ed.last_save_path = Some(path.clone());
-                        ed.status_message =
-                            Some((format!("Saved to {}", path.display()), Instant::now()));
-                        log::info!("Atomically saved project as {}", path.display());
+                        let mut journal = rd_core::ProjectJournal::open_or_create(&path).ok();
+                        let save_res = if let Some(ref mut j) = journal {
+                            j.checkpoint(&ed.project, &path)
+                        } else {
+                            ed.project.save_atomic(&path)
+                        };
+                        if let Ok(()) = save_res {
+                            ed.last_save_path = Some(path.clone());
+                            ed.journal = journal;
+                            ed.status_message = Some((
+                                format!("Saved As & Checkpointed: {}", path.display()),
+                                Instant::now(),
+                            ));
+                            log::info!("Saved project as {}", path.display());
+                        }
                     }
                     ui.close_menu();
                 }
@@ -969,33 +1457,51 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             ui.separator();
 
             // Precision Segmented Studio Navigation Deck
-            if studio_nav_tab(ui, ed.workspace_mode == WorkspaceMode::Edit, "✂", "EDIT").clicked()
+            if crate::ui::widgets::studio_workspace_tab(
+                ui,
+                ed.workspace_mode == WorkspaceMode::Edit,
+                "EDIT",
+                crate::ui::icons::draw_nav_edit,
+            )
+            .clicked()
             {
                 ed.workspace_mode = WorkspaceMode::Edit;
             }
-            if studio_nav_tab(ui, ed.workspace_mode == WorkspaceMode::Color, "◐", "COLOR").clicked()
+            if crate::ui::widgets::studio_workspace_tab(
+                ui,
+                ed.workspace_mode == WorkspaceMode::Color,
+                "COLOR",
+                crate::ui::icons::draw_nav_color,
+            )
+            .clicked()
             {
                 ed.workspace_mode = WorkspaceMode::Color;
             }
-            if studio_nav_tab(ui, ed.workspace_mode == WorkspaceMode::Audio, "♪", "AUDIO").clicked()
+            if crate::ui::widgets::studio_workspace_tab(
+                ui,
+                ed.workspace_mode == WorkspaceMode::Audio,
+                "AUDIO",
+                crate::ui::icons::draw_nav_audio,
+            )
+            .clicked()
             {
                 ed.workspace_mode = WorkspaceMode::Audio;
             }
-            if studio_nav_tab(
+            if crate::ui::widgets::studio_workspace_tab(
                 ui,
                 ed.workspace_mode == WorkspaceMode::Titles,
-                "T",
                 "TITLES",
+                crate::ui::icons::draw_nav_titles,
             )
             .clicked()
             {
                 ed.workspace_mode = WorkspaceMode::Titles;
             }
-            if studio_nav_tab(
+            if crate::ui::widgets::studio_workspace_tab(
                 ui,
                 ed.workspace_mode == WorkspaceMode::Export || ed.show_export_modal,
-                "▶",
                 "DELIVER",
+                crate::ui::icons::draw_nav_export,
             )
             .clicked()
             {
@@ -1005,7 +1511,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new("● 48.0 kHz 32-bit")
+                    egui::RichText::new("AUDIO: 48.0 kHz 32-bit")
                         .size(10.5)
                         .color(egui::Color32::from_rgb(16, 185, 129)),
                 );
@@ -1345,7 +1851,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                                 |ui| {
                                                     if studio_btn(
                                                         ui,
-                                                        "✕",
+                                                        "Remove",
                                                         Some(egui::Color32::from_rgb(220, 38, 38)),
                                                         false,
                                                     )
@@ -1476,7 +1982,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if studio_btn(ui, "↺ Reset Grade", None, false)
+                        if studio_btn(ui, "Reset Grade", None, false)
                             .on_hover_text("Reset all color grading adjustments to neutral")
                             .clicked()
                         {
@@ -1492,7 +1998,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         if let Some(cid) = ed.selected_clip
                             && studio_btn(
                                 ui,
-                                "✓ Apply to Clip",
+                                "Apply to Clip",
                                 Some(egui::Color32::from_rgb(37, 99, 235)),
                                 true,
                             )
@@ -1538,12 +2044,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             .color(egui::Color32::from_rgb(180, 185, 200)),
                     );
                     ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut ed.master_volume, 0.0..=2.0)
-                                .text("Master Fader"),
-                        );
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut ed.master_volume, 0.0..=2.0)
+                                    .text("Master Fader"),
+                            )
+                            .changed()
+                        {
+                            ed.set_master_volume(ed.master_volume);
+                        }
                         if studio_reset_btn(ui).clicked() {
-                            ed.master_volume = 1.0;
+                            ed.set_master_volume(1.0);
                         }
                     });
                     let db = if ed.master_volume <= 0.001 {
@@ -1563,43 +2074,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     );
 
                     ui.add_space(6.0);
-                    // Draw dual-channel peak dB meter with dB markers
-                    let (meter_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width().min(260.0), 22.0),
-                        egui::Sense::hover(),
+                    ui.add(
+                        crate::ui::widgets::StudioAudioMeter::new(ed.audio_metering)
+                            .height(30.0),
                     );
-                    let painter = ui.painter_at(meter_rect);
-                    painter.rect_filled(meter_rect, 2.0, egui::Color32::from_rgb(10, 11, 14));
-                    painter.rect_stroke(
-                        meter_rect,
-                        2.0,
-                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(38, 42, 54)),
-                        egui::StrokeKind::Inside,
-                    );
-
-                    let meter_fraction = if ed.is_playing {
-                        (ed.master_volume * 0.72).clamp(0.05, 0.95)
-                    } else {
-                        0.0
-                    };
-                    let bar_w = (meter_rect.width() - 8.0) * meter_fraction;
-                    let l_bar = egui::Rect::from_min_size(
-                        egui::pos2(meter_rect.left() + 4.0, meter_rect.top() + 3.0),
-                        egui::vec2(bar_w, 7.0),
-                    );
-                    let r_bar = egui::Rect::from_min_size(
-                        egui::pos2(meter_rect.left() + 4.0, meter_rect.top() + 12.0),
-                        egui::vec2(bar_w * 0.96, 7.0),
-                    );
-                    let bar_color = if meter_fraction > 0.85 {
-                        egui::Color32::from_rgb(239, 68, 68)
-                    } else if meter_fraction > 0.70 {
-                        egui::Color32::from_rgb(245, 158, 11)
-                    } else {
-                        egui::Color32::from_rgb(16, 185, 129)
-                    };
-                    painter.rect_filled(l_bar, 1.0, bar_color);
-                    painter.rect_filled(r_bar, 1.0, bar_color);
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -1712,15 +2190,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             .color(egui::Color32::from_rgb(180, 185, 200)),
                     );
                     ui.horizontal(|ui| {
-                        if studio_btn(ui, "▤ Lower Third", None, false).clicked() {
+                        if studio_btn(ui, "Lower Third", None, false).clicked() {
                             ed.title_text = "Featured Speaker | Keynote".into();
                             ed.title_font_size = 32.0;
                         }
-                        if studio_btn(ui, "☲ Center Subtitle", None, false).clicked() {
+                        if studio_btn(ui, "Center Subtitle", None, false).clicked() {
                             ed.title_text = "Broadcast dialogue line caption".into();
                             ed.title_font_size = 28.0;
                         }
-                        if studio_btn(ui, "█ Main Title", None, false).clicked() {
+                        if studio_btn(ui, "Main Title", None, false).clicked() {
                             ed.title_text = "REDDART CINEMA".into();
                             ed.title_font_size = 56.0;
                         }
@@ -1779,17 +2257,19 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 ed.project.frame_rate.as_f64()
                             )
                         ));
-                        ui.label("Hardware Encoder: NVENC / QuickSync / Metal / SW");
+                        let active_enc = rd_export::select_encoder("h264");
+                        ui.label(format!("Hardware Encoder: {} (Active)", active_enc));
                     });
 
                     ui.add_space(12.0);
-                    if studio_btn(
-                        ui,
-                        "▶ OPEN RENDER SETTINGS MODAL...",
-                        Some(egui::Color32::from_rgb(37, 99, 235)),
-                        true,
-                    )
-                    .clicked()
+                    if ui
+                        .add(
+                            crate::ui::widgets::StudioButton::new("Open Render Settings...")
+                                .accent(egui::Color32::from_rgb(37, 99, 235))
+                                .active(true)
+                                .icon(crate::ui::icons::draw_nav_export),
+                        )
+                        .clicked()
                     {
                         ed.show_export_modal = true;
                     }
@@ -1848,9 +2328,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
             // Center status LED
             let (status_text, status_col) = if ed.is_playing {
-                ("● LIVE 29.97 FPS", egui::Color32::from_rgb(52, 211, 153))
+                ("LIVE 29.97 FPS", egui::Color32::from_rgb(52, 211, 153))
             } else {
-                ("⏸ PAUSED", egui::Color32::from_rgb(148, 163, 184))
+                ("PAUSED", egui::Color32::from_rgb(148, 163, 184))
             };
             ui.add_space(20.0);
             ui.label(
@@ -1869,9 +2349,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 );
                 ui.separator();
                 let guide_label = if ed.show_safe_guides {
-                    "⛶ Guides: ON"
+                    "Guides: ON"
                 } else {
-                    "⛶ Guides: OFF"
+                    "Guides: OFF"
                 };
                 if studio_btn(
                     ui,
@@ -1900,8 +2380,16 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         );
 
         let painter = ui.painter_at(rect);
-        // Video monitor frame
+        // Video monitor frame background
         painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(10, 11, 14));
+
+        // Draw live hardware GPU texture from wgpu
+        if let Some(tex_id) = ed.monitor_texture_id {
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.image(tex_id, rect, uv, egui::Color32::WHITE);
+        }
+
+        // Precision bezel outline
         painter.rect_stroke(
             rect,
             2.0,
@@ -1955,7 +2443,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             );
         }
 
-        // Query active tracks at current playhead
+        // Query active tracks at current playhead for HUD
         let active_tracks = ed
             .project
             .timeline
@@ -1963,21 +2451,20 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         let active_layer_count = active_tracks.len();
 
         if active_layer_count > 0 {
-            // Draw simulated video composite
             painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                format!("Composited Frame ({} Active Layers)", active_layer_count),
-                egui::FontId::proportional(15.0),
-                egui::Color32::from_rgb(215, 220, 230),
+                egui::pos2(rect.left() + 10.0, rect.bottom() - 18.0),
+                egui::Align2::LEFT_BOTTOM,
+                format!("V1 HARDWARE DECODE ({} ACTIVE)", active_layer_count),
+                egui::FontId::monospace(9.5),
+                egui::Color32::from_rgb(52, 211, 153),
             );
         } else {
             painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "No clip at playhead",
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_rgb(90, 95, 110),
+                egui::pos2(rect.left() + 10.0, rect.bottom() - 18.0),
+                egui::Align2::LEFT_BOTTOM,
+                "SMPTE BARS (TIMELINE GAP)",
+                egui::FontId::monospace(9.5),
+                egui::Color32::from_rgb(245, 158, 11),
             );
         }
 
@@ -2033,27 +2520,35 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             // Precision Hardware Transport & Editing Control Deck
             ui.horizontal(|ui| {
                 // 1. Hardware Deck Cluster
-                if studio_transport_btn(ui, "|◀", 30.0, false, None, "First Frame (Home)").clicked()
-                {
-                    ed.project.timeline.playhead_us = 0;
-                }
-                if studio_transport_btn(
+                if crate::ui::widgets::studio_transport_button(
                     ui,
-                    "◀◀ 1s",
-                    44.0,
+                    crate::ui::icons::draw_jump_start,
+                    28.0,
+                    false,
+                    None,
+                    "First Frame (Home)",
+                )
+                .clicked()
+                {
+                    ed.seek_to_time_us(0);
+                }
+                if crate::ui::widgets::studio_transport_button(
+                    ui,
+                    crate::ui::icons::draw_shuttle_rev,
+                    28.0,
                     false,
                     None,
                     "Step Back 1s (Shift+Left Arrow)",
                 )
                 .clicked()
                 {
-                    ed.project.timeline.playhead_us =
-                        ed.project.timeline.playhead_us.saturating_sub(1_000_000);
+                    let target = ed.project.timeline.playhead_us.saturating_sub(1_000_000);
+                    ed.seek_to_time_us(target);
                 }
-                if studio_transport_btn(
+                if crate::ui::widgets::studio_transport_button(
                     ui,
-                    "◀ Fr",
-                    38.0,
+                    crate::ui::icons::draw_step_backward,
+                    28.0,
                     false,
                     None,
                     "Step Back 1 Frame (Left Arrow)",
@@ -2061,33 +2556,40 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 .clicked()
                 {
                     let frame_step = (1_000_000.0 / ed.project.frame_rate.as_f64()) as i64;
-                    ed.project.timeline.playhead_us =
-                        ed.project.timeline.playhead_us.saturating_sub(frame_step);
+                    let target = ed.project.timeline.playhead_us.saturating_sub(frame_step);
+                    ed.seek_to_time_us(target);
                 }
 
                 // Master Play/Pause Hardware Switch
-                let (play_label, play_col) = if ed.is_playing {
-                    ("❚❚ PAUSE", Some(egui::Color32::from_rgb(220, 38, 38)))
+                let is_playing = ed.is_playing;
+                let play_col = if is_playing {
+                    Some(egui::Color32::from_rgb(220, 38, 38))
                 } else {
-                    ("▶ PLAY", Some(egui::Color32::from_rgb(37, 99, 235)))
+                    Some(egui::Color32::from_rgb(37, 99, 235))
                 };
-                if studio_transport_btn(
+                if crate::ui::widgets::studio_transport_button(
                     ui,
-                    play_label,
-                    82.0,
-                    ed.is_playing,
+                    move |p, r, c| {
+                        if is_playing {
+                            crate::ui::icons::draw_pause(p, r, c);
+                        } else {
+                            crate::ui::icons::draw_play(p, r, c);
+                        }
+                    },
+                    32.0,
+                    is_playing,
                     play_col,
                     "Play / Pause Sequence Playback (Space)",
                 )
                 .clicked()
                 {
-                    ed.is_playing = !ed.is_playing;
+                    ed.toggle_playback();
                 }
 
-                if studio_transport_btn(
+                if crate::ui::widgets::studio_transport_button(
                     ui,
-                    "Fr ▶",
-                    38.0,
+                    crate::ui::icons::draw_step_forward,
+                    28.0,
                     false,
                     None,
                     "Step Forward 1 Frame (Right Arrow)",
@@ -2095,23 +2597,34 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 .clicked()
                 {
                     let frame_step = (1_000_000.0 / ed.project.frame_rate.as_f64()) as i64;
-                    ed.project.timeline.playhead_us += frame_step;
+                    let target = ed.project.timeline.playhead_us + frame_step;
+                    ed.seek_to_time_us(target);
                 }
-                if studio_transport_btn(
+                if crate::ui::widgets::studio_transport_button(
                     ui,
-                    "1s ▶▶",
-                    44.0,
+                    crate::ui::icons::draw_shuttle_fwd,
+                    28.0,
                     false,
                     None,
                     "Step Forward 1s (Shift+Right Arrow)",
                 )
                 .clicked()
                 {
-                    ed.project.timeline.playhead_us += 1_000_000;
+                    let target = ed.project.timeline.playhead_us + 1_000_000;
+                    ed.seek_to_time_us(target);
                 }
-                if studio_transport_btn(ui, "▶|", 30.0, false, None, "Last Frame (End)").clicked()
+                if crate::ui::widgets::studio_transport_button(
+                    ui,
+                    crate::ui::icons::draw_jump_end,
+                    28.0,
+                    false,
+                    None,
+                    "Last Frame (End)",
+                )
+                .clicked()
                 {
-                    ed.project.timeline.playhead_us = ed.project.timeline.duration_us();
+                    let target = ed.project.timeline.duration_us();
+                    ed.seek_to_time_us(target);
                 }
 
                 ui.separator();
@@ -2121,7 +2634,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.project.timeline.playhead_us,
                     ed.project.frame_rate.as_f64(),
                 );
-                studio_lcd_box(
+                crate::ui::widgets::studio_lcd_box(
                     ui,
                     "PLAYHEAD",
                     &timecode,
@@ -2132,7 +2645,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.project.timeline.duration_us(),
                     ed.project.frame_rate.as_f64(),
                 );
-                studio_lcd_box(
+                crate::ui::widgets::studio_lcd_box(
                     ui,
                     "SEQUENCE",
                     &total_time,
@@ -2141,87 +2654,283 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                 ui.separator();
 
-                // 3. Quick Edit Action Tools: Split (S) and Delete (Del)
-                if studio_btn(
-                    ui,
-                    "✂ SPLIT (S)",
-                    Some(egui::Color32::from_rgb(217, 119, 6)),
-                    false,
-                )
-                .on_hover_text("Split active clip at playhead position (S)")
-                .clicked()
+                // 3. Professional NLE Tool Palette
+                let active_tool = ed.active_tool;
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Select")
+                            .shortcut("V")
+                            .active(active_tool == EditTool::Select)
+                            .accent(egui::Color32::from_rgb(59, 130, 246))
+                            .icon(crate::ui::icons::draw_selection_arrow)
+                            .tooltip("Selection & Move Tool (V)"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::Select;
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Razor")
+                            .shortcut("C")
+                            .active(active_tool == EditTool::Razor)
+                            .accent(egui::Color32::from_rgb(217, 119, 6))
+                            .icon(crate::ui::icons::draw_razor)
+                            .tooltip("Razor Split Tool (C) - Click clip on timeline to split"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::Razor;
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Ripple")
+                            .shortcut("B")
+                            .active(active_tool == EditTool::RippleTrim)
+                            .accent(egui::Color32::from_rgb(168, 85, 247))
+                            .icon(|p, r, c| crate::ui::icons::draw_ripple_trim(p, r, true, c))
+                            .tooltip("Ripple Trim Tool (B) - Trims clip and ripples downstream sequence"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::RippleTrim;
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Roll")
+                            .shortcut("N")
+                            .active(active_tool == EditTool::Roll)
+                            .accent(egui::Color32::from_rgb(14, 165, 233))
+                            .icon(crate::ui::icons::draw_roll_tool)
+                            .tooltip("Roll Edit Tool (N) - Adjust cut point between adjacent clips"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::Roll;
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Slip")
+                            .shortcut("Y")
+                            .active(active_tool == EditTool::Slip)
+                            .accent(egui::Color32::from_rgb(16, 185, 129))
+                            .icon(crate::ui::icons::draw_slip_tool)
+                            .tooltip("Slip Tool (Y) - Shift source in/out while keeping timeline position invariant"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::Slip;
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Slide")
+                            .shortcut("U")
+                            .active(active_tool == EditTool::Slide)
+                            .accent(egui::Color32::from_rgb(234, 179, 8))
+                            .icon(crate::ui::icons::draw_slide_tool)
+                            .tooltip("Slide Tool (U) - Move clip along timeline while adjusting adjacent trims"),
+                    )
+                    .clicked()
+                {
+                    ed.active_tool = EditTool::Slide;
+                }
+
+                ui.separator();
+
+                // Work Area Range & Markers: [I] Mark In, [O] Mark Out, [X] Clear, [M] Cue Marker
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("In")
+                            .shortcut("I")
+                            .icon(crate::ui::icons::draw_mark_in)
+                            .tooltip("Set Work Area In-Point (I)"),
+                    )
+                    .clicked()
                 {
                     let playhead = ed.project.timeline.playhead_us;
-                    let track_id = ed
-                        .selected_track
-                        .or_else(|| ed.project.timeline.tracks().first().map(|t| t.id));
-                    if let Some(tid) = track_id
-                        && let Some(track) = ed.project.timeline.track_mut(tid)
-                        && let Some(clip) = track.clip_at(playhead)
-                    {
-                        let cid = clip.id;
-                        let _ = track.split_clip_at(cid, playhead);
-                        ed.status_message = Some(("Split Clip at Playhead".into(), Instant::now()));
+                    ed.project.timeline.set_mark_in(playhead);
+                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                        mark_in_us: ed.project.timeline.mark_in_us,
+                        mark_out_us: ed.project.timeline.mark_out_us,
+                    });
+                    ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Out")
+                            .shortcut("O")
+                            .icon(crate::ui::icons::draw_mark_out)
+                            .tooltip("Set Work Area Out-Point (O)"),
+                    )
+                    .clicked()
+                {
+                    let playhead = ed.project.timeline.playhead_us;
+                    ed.project.timeline.set_mark_out(playhead);
+                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                        mark_in_us: ed.project.timeline.mark_in_us,
+                        mark_out_us: ed.project.timeline.mark_out_us,
+                    });
+                    ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Clear")
+                            .shortcut("X")
+                            .tooltip("Clear Work Area In/Out Range (X)"),
+                    )
+                    .clicked()
+                {
+                    ed.project.timeline.clear_in_out();
+                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
+                        mark_in_us: None,
+                        mark_out_us: None,
+                    });
+                    ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+                }
+
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Marker")
+                            .shortcut("M")
+                            .accent(egui::Color32::from_rgb(59, 130, 246))
+                            .icon(crate::ui::icons::draw_marker)
+                            .tooltip("Place Cue Marker at Playhead (M)"),
+                    )
+                    .clicked()
+                {
+                    let playhead = ed.project.timeline.playhead_us;
+                    let mid = ed.project.timeline.add_marker(playhead, "Cue", [59, 130, 246]);
+                    ed.record_mutation(rd_core::JournalMutation::AddMarker {
+                        id: mid,
+                        time_us: playhead,
+                        name: "Cue".into(),
+                        color_rgb: [59, 130, 246],
+                    });
+                    ed.status_message = Some((format!("Marker #{} Placed at Playhead [M]", mid), Instant::now()));
+                }
+
+                ui.separator();
+
+                // Quick Edit Action Tools: Duplicate (D) and Ripple Delete (Shift+Del)
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Dup")
+                            .shortcut("D")
+                            .tooltip("Duplicate Selected Clip [D]"),
+                    )
+                    .clicked()
+                    && let Some(cid) = ed.selected_clip
+                    && let Some(tid) = ed.selected_track
+                {
+                    let maybe_dup = if let Some(track) = ed.project.timeline.track_mut(tid) {
+                        track
+                            .duplicate_clip(cid)
+                            .and_then(|new_id| track.clip(new_id).cloned().map(|c| (new_id, c)))
+                    } else {
+                        None
+                    };
+                    if let Some((new_id, new_clip)) = maybe_dup {
+                        ed.record_mutation(rd_core::JournalMutation::AddClip {
+                            track_id: tid,
+                            clip: new_clip,
+                        });
+                        ed.selected_clip = Some(new_id);
+                        ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
                     }
                 }
 
-                if studio_btn(
-                    ui,
-                    "⌫ DEL",
-                    Some(egui::Color32::from_rgb(220, 38, 38)),
-                    false,
-                )
-                .on_hover_text("Delete selected clip from sequence (Del)")
-                .clicked()
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("RipDel")
+                            .shortcut("Shift+Del")
+                            .accent(egui::Color32::from_rgb(220, 38, 38))
+                            .tooltip("Ripple Delete Selected Clip & Close Gap (Shift+Del)"),
+                    )
+                    .clicked()
                     && let Some(cid) = ed.selected_clip.take()
                 {
+                    let mut ripple_tid = None;
                     for track in ed.project.timeline.tracks_mut() {
-                        track.remove_clip(cid);
+                        if track.ripple_delete(cid).is_some() {
+                            ripple_tid = Some(track.id);
+                            break;
+                        }
                     }
-                    ed.status_message = Some(("Deleted Clip".into(), Instant::now()));
+                    if let Some(tid) = ripple_tid {
+                        ed.record_mutation(rd_core::JournalMutation::RippleDelete {
+                            track_id: tid,
+                            clip_id: cid,
+                        });
+                        ed.status_message = Some(("Ripple Deleted Clip [Shift+Del]".into(), Instant::now()));
+                    }
                 }
 
                 // Magnet Snapping Toggle
-                let snap_title = if ed.snapping_enabled {
-                    "🧲 SNAP: ON"
-                } else {
-                    "🧲 SNAP: OFF"
-                };
-                if studio_btn(
-                    ui,
-                    snap_title,
-                    Some(egui::Color32::from_rgb(59, 130, 246)),
-                    ed.snapping_enabled,
-                )
-                .on_hover_text("Toggle Timeline Magnet Snapping (N)")
-                .clicked()
+                let snapping = ed.snapping_enabled;
+                let snap_title = if snapping { "Snap: ON" } else { "Snap: OFF" };
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new(snap_title)
+                            .shortcut("S")
+                            .accent(egui::Color32::from_rgb(59, 130, 246))
+                            .active(snapping)
+                            .icon(move |p, r, c| {
+                                crate::ui::icons::draw_snapping_magnet(p, r, snapping, c);
+                            })
+                            .tooltip("Toggle Timeline Magnet Snapping (S)"),
+                    )
+                    .clicked()
                 {
                     ed.snapping_enabled = !ed.snapping_enabled;
                 }
 
-                // Zoom presets
-                if studio_btn(ui, "–", None, false)
-                    .on_hover_text("Zoom Out Timeline")
+                // Zoom controls
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Zoom -")
+                            .tooltip("Zoom Out Timeline"),
+                    )
                     .clicked()
                 {
                     ed.zoom_px_per_sec = (ed.zoom_px_per_sec / 1.25).max(10.0);
                 }
-                if studio_btn(ui, "+", None, false)
-                    .on_hover_text("Zoom In Timeline")
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Zoom +").tooltip("Zoom In Timeline"),
+                    )
                     .clicked()
                 {
                     ed.zoom_px_per_sec = (ed.zoom_px_per_sec * 1.25).min(500.0);
                 }
-                if studio_btn(ui, "↔ FIT", None, false)
-                    .on_hover_text("Fit Entire Sequence into Timeline Window")
+                if ui
+                    .add(
+                        crate::ui::widgets::StudioButton::new("Fit")
+                            .shortcut("Shift+Z")
+                            .tooltip("Fit Entire Sequence into Timeline Window"),
+                    )
                     .clicked()
                 {
                     let dur_s = (ed.project.timeline.duration_us() as f32 / 1_000_000.0).max(1.0);
                     ed.zoom_px_per_sec = (800.0 / dur_s).clamp(10.0, 300.0);
                 }
 
-                // 4. Right side: Track Adders
+                // 4. Right side: Master Audio Meter & Track Adders
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        crate::ui::widgets::StudioAudioMeter::new(ed.audio_metering)
+                            .height(24.0)
+                            .show_labels(true),
+                    );
+                    ui.separator();
+
                     if studio_btn(
                         ui,
                         "+ Text Track",
@@ -2331,11 +3040,127 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 sec += 1.0;
             }
 
+            // 1. Draw In / Out Work Area Range on Ruler
+            if ed.project.timeline.mark_in_us.is_some() || ed.project.timeline.mark_out_us.is_some() {
+                let mark_in = ed.project.timeline.mark_in_us.unwrap_or(0);
+                let mark_out = ed
+                    .project
+                    .timeline
+                    .mark_out_us
+                    .unwrap_or_else(|| ed.project.timeline.duration_us());
+                let in_x = timeline_x_start + (mark_in as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                let out_x = timeline_x_start + (mark_out as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                let in_clamped = in_x.max(timeline_x_start);
+                let out_clamped = out_x.min(rect.right());
+                if out_clamped > in_clamped {
+                    let work_area = egui::Rect::from_min_max(
+                        egui::pos2(in_clamped, ruler_rect.top()),
+                        egui::pos2(out_clamped, ruler_rect.bottom()),
+                    );
+                    painter.rect_filled(
+                        work_area,
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(56, 189, 248, 45),
+                    );
+                }
+                // In-point bracket line & flags
+                if in_x >= timeline_x_start && in_x <= rect.right() {
+                    painter.line_segment(
+                        [
+                            egui::pos2(in_x, ruler_rect.top()),
+                            egui::pos2(in_x, ruler_rect.bottom()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(in_x, ruler_rect.top()),
+                            egui::pos2(in_x + 5.0, ruler_rect.top()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(in_x, ruler_rect.bottom()),
+                            egui::pos2(in_x + 5.0, ruler_rect.bottom()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                }
+                // Out-point bracket line & flags
+                if out_x >= timeline_x_start && out_x <= rect.right() {
+                    painter.line_segment(
+                        [
+                            egui::pos2(out_x, ruler_rect.top()),
+                            egui::pos2(out_x, ruler_rect.bottom()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(out_x, ruler_rect.top()),
+                            egui::pos2(out_x - 5.0, ruler_rect.top()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(out_x, ruler_rect.bottom()),
+                            egui::pos2(out_x - 5.0, ruler_rect.bottom()),
+                        ],
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(56, 189, 248)),
+                    );
+                }
+            }
+
+            // 2. Draw Marker Diamonds on Ruler & Guidelines down timeline
+            for m in &ed.project.timeline.markers {
+                let mx = timeline_x_start + (m.time_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                if mx >= timeline_x_start && mx <= rect.right() {
+                    let m_color = egui::Color32::from_rgb(m.color_rgb[0], m.color_rgb[1], m.color_rgb[2]);
+                    let m_rect = egui::Rect::from_center_size(
+                        egui::pos2(mx, ruler_rect.center().y),
+                        egui::vec2(10.0, 10.0),
+                    );
+                    crate::ui::icons::draw_marker(&painter, m_rect, m_color);
+                    painter.line_segment(
+                        [
+                            egui::pos2(mx, ruler_rect.bottom()),
+                            egui::pos2(mx, rect.bottom()),
+                        ],
+                        egui::Stroke::new(
+                            1.0_f32,
+                            egui::Color32::from_rgba_unmultiplied(m.color_rgb[0], m.color_rgb[1], m.color_rgb[2], 80),
+                        ),
+                    );
+                }
+            }
+
+            // Contextual studio cursor feedback
+            if response.hovered() {
+                match ed.active_tool {
+                    EditTool::Select => ctx.set_cursor_icon(egui::CursorIcon::Default),
+                    EditTool::Razor => ctx.set_cursor_icon(egui::CursorIcon::Crosshair),
+                    EditTool::RippleTrim => ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
+                    EditTool::Roll => ctx.set_cursor_icon(egui::CursorIcon::ResizeColumn),
+                    EditTool::Slip | EditTool::Slide => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+                }
+            }
+
             // Draw Track Lanes and Clips
             let track_lane_height = 44.0;
             let mut y = rect.top() + ruler_height + 4.0;
 
-            let mut clicked_clip = None;
+            enum PendingClipOp {
+                Select(ClipId, TrackId),
+                Razor(ClipId, TrackId, i64),
+                RippleTrim(ClipId, TrackId, bool),
+                Roll(ClipId, TrackId),
+                Slip(ClipId, TrackId),
+                Slide(ClipId, TrackId),
+            }
+
+            let mut pending_clip_op = None;
             let mut clicked_track = None;
             let mut toggled_mute_track = None;
             let mut toggled_solo_track = None;
@@ -2532,13 +3357,37 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         egui::Color32::from_rgb(220, 225, 235),
                     );
 
-                    // Check click on clip
+                    // Check click on clip based on active studio tool
                     if response.clicked()
                         && let Some(pos) = response.interact_pointer_pos()
                         && clip_rect.contains(pos)
                     {
-                        clicked_clip = Some(clip.id);
-                        clicked_track = Some(track.id);
+                        let click_time_us = (clip.position_us as f64
+                            + ((pos.x - clip_rect.left()) / ed.zoom_px_per_sec * 1_000_000.0) as f64)
+                            as i64;
+                        match ed.active_tool {
+                            EditTool::Select => {
+                                pending_clip_op = Some(PendingClipOp::Select(clip.id, track.id));
+                            }
+                            EditTool::Razor => {
+                                pending_clip_op =
+                                    Some(PendingClipOp::Razor(clip.id, track.id, click_time_us));
+                            }
+                            EditTool::RippleTrim => {
+                                let is_head = (pos.x - clip_rect.left()) < (clip_rect.right() - pos.x);
+                                pending_clip_op =
+                                    Some(PendingClipOp::RippleTrim(clip.id, track.id, is_head));
+                            }
+                            EditTool::Roll => {
+                                pending_clip_op = Some(PendingClipOp::Roll(clip.id, track.id));
+                            }
+                            EditTool::Slip => {
+                                pending_clip_op = Some(PendingClipOp::Slip(clip.id, track.id));
+                            }
+                            EditTool::Slide => {
+                                pending_clip_op = Some(PendingClipOp::Slide(clip.id, track.id));
+                            }
+                        }
                     }
                 }
 
@@ -2569,9 +3418,138 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 ed.status_message = Some((format!("{} {}", t.name, st), Instant::now()));
             }
 
-            if let Some(cid) = clicked_clip {
-                ed.selected_clip = Some(cid);
-                ed.selected_track = clicked_track;
+            if let Some(tid) = clicked_track {
+                ed.selected_track = Some(tid);
+            }
+
+            // Execute pending clip operations outside the immutable tracks borrow
+            if let Some(op) = pending_clip_op {
+                let frame_step = (1_000_000.0 / ed.project.frame_rate.as_f64()) as i64;
+                match op {
+                    PendingClipOp::Select(cid, tid) => {
+                        ed.selected_clip = Some(cid);
+                        ed.selected_track = Some(tid);
+                    }
+                    PendingClipOp::Razor(cid, tid, split_time) => {
+                        let maybe_split = if let Some(t) = ed.project.timeline.track_mut(tid) {
+                            t.split_clip_at(cid, split_time)
+                                .and_then(|new_cid| t.clip(new_cid).cloned())
+                        } else {
+                            None
+                        };
+                        if let Some(new_clip) = maybe_split {
+                            ed.record_mutation(rd_core::JournalMutation::SplitClip {
+                                track_id: tid,
+                                clip_id: cid,
+                                split_time_us: split_time,
+                                new_clip,
+                            });
+                            ed.status_message =
+                                Some(("Split Clip with Razor Tool [C]".into(), Instant::now()));
+                        }
+                    }
+                    PendingClipOp::RippleTrim(cid, tid, is_head) => {
+                        let res = if let Some(t) = ed.project.timeline.track_mut(tid) {
+                            if is_head {
+                                t.ripple_trim_in(cid, frame_step).map(|_| true)
+                            } else {
+                                t.ripple_trim_out(cid, -frame_step).map(|_| false)
+                            }
+                        } else {
+                            Err("No track")
+                        };
+                        if let Ok(head) = res {
+                            if head {
+                                ed.record_mutation(rd_core::JournalMutation::RippleTrimIn {
+                                    track_id: tid,
+                                    clip_id: cid,
+                                    delta_us: frame_step,
+                                });
+                                ed.status_message = Some((
+                                    "Ripple Trimmed In-Point (+1 frame) [B]".into(),
+                                    Instant::now(),
+                                ));
+                            } else {
+                                ed.record_mutation(rd_core::JournalMutation::RippleTrimOut {
+                                    track_id: tid,
+                                    clip_id: cid,
+                                    delta_us: -frame_step,
+                                });
+                                ed.status_message = Some((
+                                    "Ripple Trimmed Out-Point (-1 frame) [B]".into(),
+                                    Instant::now(),
+                                ));
+                            }
+                        }
+                    }
+                    PendingClipOp::Roll(cid, tid) => {
+                        let res = if let Some(t) = ed.project.timeline.track_mut(tid) {
+                            if let Some(pos_idx) = t.clips().iter().position(|c| c.id == cid) {
+                                if pos_idx + 1 < t.clips().len() {
+                                    let next_id = t.clips()[pos_idx + 1].id;
+                                    t.roll_edit(cid, next_id, frame_step).map(|_| (cid, next_id))
+                                } else if pos_idx > 0 {
+                                    let prev_id = t.clips()[pos_idx - 1].id;
+                                    t.roll_edit(prev_id, cid, frame_step).map(|_| (prev_id, cid))
+                                } else {
+                                    Err("No adjacent clip to roll")
+                                }
+                            } else {
+                                Err("Clip not found")
+                            }
+                        } else {
+                            Err("Track not found")
+                        };
+                        if let Ok((outgoing_id, incoming_id)) = res {
+                            ed.record_mutation(rd_core::JournalMutation::RollEdit {
+                                track_id: tid,
+                                outgoing_id,
+                                incoming_id,
+                                delta_us: frame_step,
+                            });
+                            ed.status_message = Some((
+                                "Rolled Edit Boundary (+1 frame) [N]".into(),
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                    PendingClipOp::Slip(cid, tid) => {
+                        let ok = if let Some(t) = ed.project.timeline.track_mut(tid) {
+                            t.slip_edit(cid, frame_step).is_ok()
+                        } else {
+                            false
+                        };
+                        if ok {
+                            ed.record_mutation(rd_core::JournalMutation::SlipEdit {
+                                track_id: tid,
+                                clip_id: cid,
+                                delta_us: frame_step,
+                            });
+                            ed.status_message = Some((
+                                "Slipped Media Source (+1 frame) [Y]".into(),
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                    PendingClipOp::Slide(cid, tid) => {
+                        let ok = if let Some(t) = ed.project.timeline.track_mut(tid) {
+                            t.slide_edit(cid, frame_step).is_ok()
+                        } else {
+                            false
+                        };
+                        if ok {
+                            ed.record_mutation(rd_core::JournalMutation::SlideEdit {
+                                track_id: tid,
+                                clip_id: cid,
+                                delta_us: frame_step,
+                            });
+                            ed.status_message = Some((
+                                "Slid Clip on Timeline (+1 frame) [U]".into(),
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                }
             }
 
             // Playhead Vertical Line
@@ -2648,7 +3626,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if studio_btn(ui, "📂 Browse Destination...", None, false).clicked() {
+                    if ui
+                        .add(
+                            crate::ui::widgets::StudioButton::new("Browse Destination...")
+                                .icon(crate::ui::icons::draw_folder),
+                        )
+                        .clicked()
+                    {
                         let default_name = format!(
                             "{}_{}.mp4",
                             ed.project.name.replace(' ', "_"),
@@ -2684,89 +3668,124 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 let mut should_finish = false;
                 let mut should_cancel = false;
 
-                if let Some(job) = &ed.active_export_job {
-                    let progress = job.progress(ed.export_frame_counter);
-                    ui.label(format!(
-                        "Encoding Frame {} of {}",
-                        progress.current_frame, progress.total_frames
-                    ));
-                    ui.add(egui::ProgressBar::new(progress.fraction).show_percentage());
-                    ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Speed: {:.1}x real-time",
-                            progress.speed_multiplier
-                        ));
-                        ui.label(format!("ETA: {:.1}s", progress.eta_seconds));
-                    });
+                if let Some(handle) = &mut ed.active_export {
+                    // Drain all pending progress messages from background rendering worker
+                    while let Ok(progress) = handle.progress_rx.try_recv() {
+                        ed.export_progress = Some(progress);
+                    }
 
-                    // Advance simulated encode frames
-                    if ed.export_frame_counter < progress.total_frames {
-                        ed.export_frame_counter += 2; // Simulated pipeline throughput
+                    if let Some(progress) = &ed.export_progress {
+                        ui.label(format!(
+                            "Encoding Frame {} of {} ({:.1}%)",
+                            progress.current_frame,
+                            progress.total_frames,
+                            progress.fraction * 100.0
+                        ));
+                        ui.add(egui::ProgressBar::new(progress.fraction).show_percentage());
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "Encoder Speed: {:.1}x real-time",
+                                progress.speed_multiplier
+                            ));
+                            ui.label(format!("ETA: {:.1}s", progress.eta_seconds));
+                        });
                     } else {
+                        ui.label("Initializing hardware pipeline & mixing audio...");
+                        ui.add(egui::ProgressBar::new(0.0).animate(true));
+                    }
+
+                    if handle.is_finished() {
                         should_finish = true;
                     }
 
-                    if studio_btn(
-                        ui,
-                        "✕ Cancel Render",
-                        Some(egui::Color32::from_rgb(220, 38, 38)),
-                        false,
-                    )
-                    .clicked()
+                    if ui
+                        .add(
+                            crate::ui::widgets::StudioButton::new("Cancel Render")
+                                .accent(egui::Color32::from_rgb(220, 38, 38))
+                                .icon(crate::ui::icons::draw_close),
+                        )
+                        .clicked()
                     {
-                        job.cancel();
+                        handle.cancel();
                         should_cancel = true;
                     }
                 }
 
                 if should_finish {
-                    if let Some(dest) = &ed.export_destination {
-                        let dur_s =
-                            (ed.project.timeline.duration_us() as f64 / 1_000_000.0).max(1.0);
-                        let preset = &presets[ed.export_preset_idx];
-                        if let Err(e) = rd_export::ExportJob::render_to_file(dest, preset, dur_s) {
-                            log::warn!("Real encode returned note: {:?}. Output file written.", e);
-                        } else {
-                            log::info!("Real export successfully written to {}", dest.display());
+                    if let Some(handle) = ed.active_export.take() {
+                        match handle.join() {
+                            Ok(()) => {
+                                ed.export_completed = true;
+                                ed.status_message = Some((
+                                    "Project Export Rendered Successfully".into(),
+                                    Instant::now(),
+                                ));
+                            }
+                            Err(e) => {
+                                ed.export_completed = false;
+                                ed.status_message =
+                                    Some((format!("Export Render Failed: {}", e), Instant::now()));
+                            }
                         }
                     }
-                    ed.export_completed = true;
-                    ed.active_export_job = None;
                 } else if should_cancel {
-                    ed.active_export_job = None;
+                    if let Some(handle) = ed.active_export.take() {
+                        let _ = handle.join();
+                    }
+                    ed.status_message = Some(("Export Render Cancelled".into(), Instant::now()));
                 } else if ed.export_completed {
                     ui.label(
                         egui::RichText::new("Export completed successfully.")
-                            .color(egui::Color32::from_rgb(52, 211, 153)),
+                            .color(egui::Color32::from_rgb(52, 211, 153))
+                            .strong(),
                     );
+                    if let Some(dest) = &ed.export_destination {
+                        ui.label(
+                            egui::RichText::new(format!("Saved to: {}", dest.display()))
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(148, 163, 184)),
+                        );
+                    }
                     if studio_btn(ui, "Close", None, false).clicked() {
                         ed.show_export_modal = false;
                         ed.export_completed = false;
+                        ed.export_progress = None;
                     }
                 } else {
                     ui.horizontal(|ui| {
                         let can_export = ed.export_destination.is_some()
                             && ed.project.timeline.duration_us() > 0;
                         if can_export {
-                            if studio_btn(
-                                ui,
-                                "▶ START RENDER",
-                                Some(egui::Color32::from_rgb(37, 99, 235)),
-                                true,
-                            )
-                            .clicked()
+                            if ui
+                                .add(
+                                    crate::ui::widgets::StudioButton::new("Start Render")
+                                        .accent(egui::Color32::from_rgb(37, 99, 235))
+                                        .active(true)
+                                        .icon(crate::ui::icons::draw_play),
+                                )
+                                .clicked()
+                                && let Some(dest) = ed.export_destination.clone()
                             {
-                                let dur_s = ed.project.timeline.duration_us() as f64 / 1_000_000.0;
-                                let total_frames = (dur_s * selected_preset.fps).max(1.0) as u64;
-                                ed.active_export_job = Some(rd_export::ExportJob::new(
+                                let grade = rd_export::ColorGradeSettings {
+                                    exposure: ed.color_exposure,
+                                    contrast: ed.color_contrast,
+                                    saturation: ed.color_saturation,
+                                };
+                                ed.active_export = Some(rd_export::start_export_project(
+                                    ed.project.clone(),
+                                    dest,
                                     selected_preset.clone(),
-                                    total_frames,
+                                    grade,
                                 ));
-                                ed.export_frame_counter = 0;
+                                ed.export_progress = None;
                                 ed.export_completed = false;
                             }
                         } else {
-                            let _ = studio_btn(ui, "▶ START RENDER (Select File)", None, false);
+                            let _ = ui.add(
+                                crate::ui::widgets::StudioButton::new("Start Render (Select File)")
+                                    .disabled(true)
+                                    .icon(crate::ui::icons::draw_play),
+                            );
                         }
                         if studio_btn(ui, "Close", None, false).clicked() {
                             ed.show_export_modal = false;
