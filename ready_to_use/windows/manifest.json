@@ -1,11 +1,12 @@
 {
   "name": "Reddart Video Editor",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "build_profile": "release-optimized",
   "target_os": "windows-x86_64",
   "executable": "Reddart.exe",
   "renderer": "wgpu (DirectX 12 / Vulkan)",
   "ui_framework": "egui 0.31",
+  "audio_engine": "WASAPI 48kHz Stereo",
   "features": [
     "multi_track_editing",
     "atomic_save_and_relink",
@@ -15,7 +16,13 @@
     "audio_mixing_soft_limiter",
     "hardware_export_presets",
     "industrial_nle_studio_controls",
-    "hardware_playback_deck"
+    "hardware_playback_deck",
+    "keyframe_automation",
+    "geometric_shape_masking",
+    "wasapi_48khz_audio_engine",
+    "starter_templates_engine",
+    "wal_crash_journal",
+    "headless_cli_environment"
   ],
   "sample_project": "samples/Demo_Project.reddart"
 }

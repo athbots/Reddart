@@ -252,7 +252,7 @@ Reddart/
 ## Building from Source
 
 ### Prerequisites
-- [Rust toolchain](https://rustup.rs/) (version 1.80 or later recommended).
+- [Rust toolchain](https://rustup.rs/) (version 1.85.0 or later for Rust 2024 Edition support).
 - Windows 10/11 with MSVC C++ Build Tools installed.
 - Optional: `ffmpeg` and `ffprobe` installed on system `PATH` for video container probing and software encoding fallback.
 
@@ -262,10 +262,10 @@ Clone the repository and compile using Cargo:
 
 ```bash
 # Clone the repository
-git clone https://github.com/reddart/reddart.git
-cd reddart
+git clone https://github.com/athbots/Reddart.git
+cd Reddart
 
-# Run workspace unit and integration test suite (83 tests)
+# Run workspace unit and integration test suite (86 tests)
 cargo test --workspace
 
 # Build optimized release binary
@@ -300,6 +300,12 @@ Test coverage includes:
 - **Effects & Masking:** Shape mask rasterization, invert logic, feather interpolation, and 3D LUT parsing (`rd-effects`).
 - **Render Graph:** DAG compilation, node hashing, topological sorting, and frame quality adaptation (`rd-render`).
 - **Export Pipeline:** Container generation, audio muxing, and probe verification (`rd-export`).
+
+---
+
+## Codec & FFmpeg Distribution Compliance
+
+For licensing policies, LGPL/GPL build obligations, and hardware encoder patent compliance, refer to the [FFmpeg & Codec Audit](docs/FFMPEG_AND_CODEC_AUDIT.md).
 
 ---
 
