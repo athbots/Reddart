@@ -303,9 +303,13 @@ Test coverage includes:
 
 ---
 
-## Codec & FFmpeg Distribution Compliance
+## Documentation & Beta Resources
 
-For licensing policies, LGPL/GPL build obligations, and hardware encoder patent compliance, refer to the [FFmpeg & Codec Audit](docs/FFMPEG_AND_CODEC_AUDIT.md).
+- **FFmpeg & Codec Distribution Compliance:** [docs/FFMPEG_AND_CODEC_AUDIT.md](docs/FFMPEG_AND_CODEC_AUDIT.md)
+- **Creator Workflows & Closed-Alpha Plan:** [docs/CREATOR_WORKFLOWS_AND_ALPHA_PLAN.md](docs/CREATOR_WORKFLOWS_AND_ALPHA_PLAN.md)
+- **Public Beta Release Notes & Limitations:** [docs/RELEASE_NOTES_AND_LIMITATIONS.md](docs/RELEASE_NOTES_AND_LIMITATIONS.md)
+- **Commercial Support & Studio Services:** [docs/COMMERCIAL_SUPPORT_OFFERING.md](docs/COMMERCIAL_SUPPORT_OFFERING.md)
+- **Official Website:** [website/index.html](website/index.html)
 
 ---
 

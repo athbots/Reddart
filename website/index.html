@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reddart — Professional Zero-Lag Video Editor in Rust</title>
+  <meta name="description" content="Reddart is a standalone, offline, subscription-free non-linear video editor written in Rust with Direct3D 12/Vulkan render graph, 48 kHz WASAPI audio mixing, and hardware export.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand">
+        <span class="logo-mark">RD</span>
+        <span class="logo-text">Reddart</span>
+        <span class="badge">v0.2.1 Beta</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#cli">CLI</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="https://github.com/athbots/Reddart" target="_blank" rel="noopener" class="nav-gh">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container hero-content">
+      <div class="hero-tag">Standalone Desktop NLE • 100% Offline • Zero Telemetry</div>
+      <h1 class="hero-title">Zero-Lag Video Editing.<br><span class="accent-text">Engineered in Rust.</span></h1>
+      <p class="hero-subtitle">
+        Direct3D 12 &amp; Vulkan render graph compilation, dedicated 48 kHz WASAPI audio mixing, 
+        eased keyframe automation, geometric shape masking, and native hardware export. No cloud logins. No subscriptions.
+      </p>
+
+      <div class="hero-cta-group">
+        <a href="https://github.com/athbots/Reddart/releases/download/v0.2.1/Reddart-v0.2.1-Windows-x86_64.zip" class="btn btn-primary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          Download for Windows (.zip, 6.6 MB)
+        </a>
+        <a href="https://github.com/athbots/Reddart" target="_blank" rel="noopener" class="btn btn-secondary">
+          View Source on GitHub
+        </a>
+      </div>
+
+      <div class="hero-meta">
+        <span>Windows 10 / 11 (x86_64)</span>
+        <span>•</span>
+        <span>Dual Licensed: MIT / Apache-2.0</span>
+        <span>•</span>
+        <span>MSRV: Rust 1.85.0+</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Core Architecture Highlights -->
+  <section id="features" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Engineered for Latency-Critical Production</h2>
+        <p class="section-desc">Every subsystem is built from the ground up for sub-millisecond responsiveness, memory safety, and complete data resilience.</p>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <div class="card-icon">⚡</div>
+          <h3>Directed Acyclic Graph (DAG)</h3>
+          <p>Compiles multi-track timeline states into an immutable topological render graph. Content-addressed hashing eliminates redundant GPU shader execution.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🎚️</div>
+          <h3>48 kHz Low-Latency WASAPI</h3>
+          <p>Native 48,000 Hz 32-bit floating-point audio engine. Dynamic linear resampling, automated clip volume and stereo pan, 3-band EQ, and lookahead tanh soft limiter.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">📈</div>
+          <h3>Keyframe Automation</h3>
+          <p>Five interpolation curves (Linear, Ease In, Ease Out, Ease In-Out, Hold) driving spatial transforms, layer opacity, speed remapping, and audio volume envelopes.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">📐</div>
+          <h3>Geometric Shape Masking</h3>
+          <p>Pixel-accurate Rectangle, Ellipse, Linear Gradient, and Vignette mask generators with normalized feather radius and alpha inversion.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🛡️</div>
+          <h3>CRC32 Write-Ahead Log</h3>
+          <p>Append-only binary journal (.reddart.wal) recording all timeline mutations with CRC32 checksums. Automatic torn-write truncation guarantees zero project corruption.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🚀</div>
+          <h3>Hardware Video Export</h3>
+          <p>Automatic discovery for NVIDIA NVENC, AMD AMF, Intel QuickSync, and Apple VideoToolbox with software libx264/libx265 fallback.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Benchmarks Section -->
+  <section id="benchmarks" class="section section-dark">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Verified Hardware Latency Benchmarks</h2>
+        <p class="section-desc">Measured on Intel Core i9-13900K, 64 GB DDR5, Windows 11:</p>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Workload Profile</th>
+              <th>Tracks</th>
+              <th>Clips</th>
+              <th>Iterations</th>
+              <th>p50 Latency</th>
+              <th>p95 Latency</th>
+              <th>Mean Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Single Track Sequence</td>
+              <td>1</td>
+              <td>5</td>
+              <td>1,000</td>
+              <td><strong>2.60 µs</strong></td>
+              <td>3.00 µs</td>
+              <td>2.68 µs</td>
+            </tr>
+            <tr>
+              <td>Mainstream Desktop</td>
+              <td>4</td>
+              <td>40</td>
+              <td>1,000</td>
+              <td><strong>14.90 µs</strong></td>
+              <td>24.40 µs</td>
+              <td>15.71 µs</td>
+            </tr>
+            <tr>
+              <td>High-End Multi-Layer</td>
+              <td>8</td>
+              <td>160</td>
+              <td>1,000</td>
+              <td><strong>26.10 µs</strong></td>
+              <td>48.80 µs</td>
+              <td>30.19 µs</td>
+            </tr>
+            <tr>
+              <td>Stress Profile</td>
+              <td>16</td>
+              <td>800</td>
+              <td>500</td>
+              <td><strong>47.80 µs</strong></td>
+              <td>69.10 µs</td>
+              <td>51.25 µs</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-caption">
+        *At 47.8 µs p50 latency for 800 clips, DAG compilation consumes less than 0.3% of a 16.6 ms (60 fps) frame interval.
+      </p>
+    </div>
+  </section>
+
+  <!-- CLI Reference -->
+  <section id="cli" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Native Command-Line Interface</h2>
+        <p class="section-desc">Automate batch rendering, inspect media containers, and benchmark DAG compiler performance without spawning a GUI window.</p>
+      </div>
+
+      <div class="cli-box">
+        <div class="cli-header">Terminal / Command Prompt</div>
+        <pre class="cli-code"><code><span class="prompt">$</span> reddart export project.reddart -o output.mp4 --preset youtube_1080p
+Executing Headless Export Pipeline:
+  Project Name:     Short Promo
+  Output Location:  output.mp4
+  Format:           YouTube 1080p (1920x1080 @ 30.0 fps)
+  Video Encoder:    h264_nvenc (hardware acceleration active)
+  Audio Format:     48 kHz stereo AAC (320 kbps)
+  Sequence Length:  12.00s
+[========================] 100% (360/360) [1.85x real-time, ETA: 0.0s]
+Export finished successfully in 6.48s (1.9x real-time speed).
+
+<span class="prompt">$</span> reddart probe raw_camera_footage.mp4
+Inspecting container: raw_camera_footage.mp4
+  Video Stream: Detected (1920x1080, Aspect: 16:9 widescreen)
+  Audio Stream: Detected
+  Duration:     32.000s (SMPTE: 00:00:32:00)
+
+<span class="prompt">$</span> reddart templates
+Available Starter Project Templates (5 curated):
+tiktok_reels_beat_sync       Reels / TikTok Beat Cut  9:16     1080x1920    10.0s
+cinematic_vlog_widescreen    Cinematic Vlog 16:9      16:9     1920x1080    12.0s
+social_square_highlight      Social Square 1:1        1:1      1080x1080    8.0s
+youtube_4k_documentary       YouTube 4K Documentary   16:9     3840x2160    16.0s
+fast_action_music_video      High-Tempo Action Video  16:9     1920x1080    8.0s</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Keyboard Shortcuts Cheat Sheet -->
+  <section id="shortcuts" class="section section-dark">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Industry-Standard NLE Keyboard Shortcuts</h2>
+        <p class="section-desc">Designed to preserve muscle memory from existing professional video editors.</p>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="shortcut-card">
+          <kbd>Space</kbd>
+          <div class="shortcut-desc">Toggle playback (Play / Pause)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>J / K / L</kbd>
+          <div class="shortcut-desc">Shuttle backwards / Stop / Shuttle forward (1x, 2x, 4x, 8x)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>C</kbd>
+          <div class="shortcut-desc">Razor tool (split clip at playhead)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>B</kbd>
+          <div class="shortcut-desc">Ripple trim tool (trim in/out with automatic downstream ripple)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>N</kbd>
+          <div class="shortcut-desc">Roll edit tool (adjust boundary preserving total sequence length)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>Y / U</kbd>
+          <div class="shortcut-desc">Slip &amp; Slide edit tools</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>V</kbd>
+          <div class="shortcut-desc">Selection tool (move clips &amp; drag edit points)</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>I / O</kbd>
+          <div class="shortcut-desc">Set Mark-In / Mark-Out render work area</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>M</kbd>
+          <div class="shortcut-desc">Add timeline cue marker at playhead</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>Ctrl + T</kbd>
+          <div class="shortcut-desc">Open Starter Project Templates gallery</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>Ctrl + S</kbd>
+          <div class="shortcut-desc">Force atomic project flush &amp; checkpoint</div>
+        </div>
+        <div class="shortcut-card">
+          <kbd>Ctrl + E</kbd>
+          <div class="shortcut-desc">Open Hardware Video Export dialog</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download & Verification -->
+  <section class="section">
+    <div class="container text-center">
+      <h2 class="section-title">Get Started with Reddart v0.2.1</h2>
+      <p class="section-desc">Download the standalone binary or build directly from source using the Rust toolchain.</p>
+
+      <div class="download-card">
+        <div class="download-info">
+          <h3>Reddart v0.2.1 for Windows</h3>
+          <p>Standalone ZIP archive containing <code>Reddart.exe</code>, sample project, and file association scripts.</p>
+          <div class="hash-box">
+            <code>SHA-256: 860cb4c65dba89995d04ad4f77b006a847c797f68d1d622b68415e1b85d78529</code>
+          </div>
+        </div>
+        <div class="download-actions">
+          <a href="https://github.com/athbots/Reddart/releases/download/v0.2.1/Reddart-v0.2.1-Windows-x86_64.zip" class="btn btn-primary btn-large">
+            Download Reddart.zip (6.65 MB)
+          </a>
+        </div>
+      </div>
+
+      <div class="build-guide">
+        <h3>Building from Source</h3>
+        <pre class="cli-code"><code>git clone https://github.com/athbots/Reddart.git
+cd Reddart
+cargo test --workspace      # Run all 90 automated tests
+cargo build --release -p reddart-windows</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-content">
+      <div class="footer-left">
+        <strong>Reddart Video Editor</strong> — Open-source, private, on-device creative software.
+        <div class="footer-license">Distributed under dual MIT OR Apache-2.0 licensing.</div>
+      </div>
+      <div class="footer-right">
+        <a href="https://github.com/athbots/Reddart" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/athbots/Reddart/releases">Releases</a>
+        <a href="https://github.com/athbots/Reddart/blob/master/README.md">Documentation</a>
+        <a href="https://github.com/athbots/Reddart/blob/master/LICENSE">License</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
