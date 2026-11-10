@@ -19,9 +19,13 @@ No installation or runtime dependencies required.
 - Dedicated 48 kHz WASAPI stereo audio with clip volume/pan, 3-band EQ, limiter
 - Continuous variable speed remapping (0.25x to 4.0x)
 - Curated 3D LUT Color Grading presets and external .cube 3D LUT import
+- In-engine Title & Subtitle Generator (bitmap glyphs, drop shadow, pill bounding box)
 - Curated Starter Templates (Reels/TikTok Beat Cut, Cinematic Vlog, Social Square, 4K Doc)
 - Append-only Write-Ahead Log (.reddart.wal) with CRC32 crash recovery
 - Multi-format hardware video export (NVENC, AMF, QuickSync, VideoToolbox, CPU)
+
+🌐 OFFICIAL PRODUCT WEBSITE:
+https://athbots.github.io/Reddart/
 
 ⌨️ KEYBOARD SHORTCUTS:
 - Space               : Play / Pause

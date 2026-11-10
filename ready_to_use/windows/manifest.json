@@ -21,6 +21,7 @@
     "geometric_shape_masking",
     "wasapi_48khz_audio_engine",
     "starter_templates_engine",
+    "title_and_subtitle_generator",
     "wal_crash_journal",
     "headless_cli_environment"
   ],

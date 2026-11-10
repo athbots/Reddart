@@ -50,7 +50,9 @@ audio mixing, eased keyframe automation, and geometric shape masking.
 - Unexpected process termination is automatically recovered via transaction replay.
 - Atomic temporary swaps prevent corrupted saves or 0-byte project files.
 
-For documentation, issues, and updates:
-https://github.com/athbots/Reddart
+6. OFFICIAL LINKS
+- Official Website: https://athbots.github.io/Reddart/
+- GitHub Repository: https://github.com/athbots/Reddart
+- Alpha Feedback: https://github.com/athbots/Reddart/issues
 ================================================================================
 
