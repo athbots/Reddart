@@ -419,7 +419,8 @@ impl EditorData {
                                     .parameters
                                     .get("shape_type")
                                     .copied()
-                                    .unwrap_or(0.0) as u32;
+                                    .unwrap_or(0.0)
+                                    as u32;
                                 let center_x = clip
                                     .evaluate_keyframe("center_x", playhead_us)
                                     .or_else(|| mask_eff.parameters.get("center_x").copied())
@@ -440,12 +441,9 @@ impl EditorData {
                                     .evaluate_keyframe("feather", playhead_us)
                                     .or_else(|| mask_eff.parameters.get("feather").copied())
                                     .unwrap_or(0.05);
-                                let invert = mask_eff
-                                    .parameters
-                                    .get("invert")
-                                    .copied()
-                                    .unwrap_or(0.0)
-                                    >= 0.5;
+                                let invert =
+                                    mask_eff.parameters.get("invert").copied().unwrap_or(0.0)
+                                        >= 0.5;
 
                                 let mask_params = rd_effects::ShapeMaskParams {
                                     shape_type,
@@ -768,6 +766,7 @@ pub fn studio_pill_btn(
 /// Main application state.
 struct ReddartApp {
     state: Option<AppState>,
+    initial_project: Option<PathBuf>,
 }
 
 /// Rendering state tied to a window.
@@ -789,8 +788,11 @@ struct AppState {
 }
 
 impl ReddartApp {
-    fn new() -> Self {
-        Self { state: None }
+    fn new(initial_project: Option<PathBuf>) -> Self {
+        Self {
+            state: None,
+            initial_project,
+        }
     }
 }
 
@@ -912,7 +914,29 @@ impl ApplicationHandler for ReddartApp {
             wgpu::FilterMode::Linear,
         );
 
-        let mut editor = EditorData::new();
+        let mut editor = if let Some(ref path) = self.initial_project {
+            let mut ed = EditorData::new();
+            if path.exists() {
+                if let Ok(proj) = rd_core::Project::load_file(path) {
+                    ed.project = proj;
+                    ed.last_save_path = Some(path.clone());
+                    ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
+                    log::info!("Loaded project from CLI: {}", path.display());
+                }
+            } else {
+                ed.project.name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("New Project")
+                    .to_string();
+                ed.last_save_path = Some(path.clone());
+                ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
+                log::info!("Initialized new project from CLI path: {}", path.display());
+            }
+            ed
+        } else {
+            EditorData::new()
+        };
         editor.monitor_texture_id = Some(monitor_texture_id);
         log::info!("Editor initialized with project: {}", editor.project.name);
 
@@ -4770,10 +4794,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
     }
 }
 
-/// Run the application event loop.
-pub fn run() -> Result<()> {
+/// Run the application event loop with an optional project path to open.
+pub fn run_with_project(initial_project: Option<PathBuf>) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    let mut app = ReddartApp::new();
+    let mut app = ReddartApp::new(initial_project);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+/// Run the application event loop with default project.
+pub fn run() -> Result<()> {
+    run_with_project(None)
 }

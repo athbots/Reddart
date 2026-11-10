@@ -357,8 +357,9 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
                 if !pcm.is_empty() {
                     let clip_start_frame =
                         ((clip.position_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize;
-                    let source_start_frame =
-                        ((clip.source_in_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize;
+                    let source_start_frame = ((clip.source_in_us.max(0) as f64 / 1_000_000.0)
+                        * 48000.0)
+                        .round() as usize;
                     let clip_duration_frames =
                         ((clip.duration_us() as f64 / 1_000_000.0) * 48000.0).round() as usize;
                     let speed = clip.speed.abs().max(0.0001);
@@ -376,8 +377,8 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
                             break;
                         }
 
-                        let time_us = clip.position_us
-                            + ((frame_i as f64 / 48000.0) * 1_000_000.0) as i64;
+                        let time_us =
+                            clip.position_us + ((frame_i as f64 / 48000.0) * 1_000_000.0) as i64;
                         let vol = clip.effective_volume(time_us);
                         let pan = clip.pan.clamp(-1.0, 1.0);
                         let pan_l = ((1.0 - pan) * 0.5).clamp(0.0, 1.0);
@@ -640,12 +641,8 @@ pub fn render_project_to_file(
                             .evaluate_keyframe("feather", time_us)
                             .or_else(|| mask_eff.parameters.get("feather").copied())
                             .unwrap_or(0.05);
-                        let invert = mask_eff
-                            .parameters
-                            .get("invert")
-                            .copied()
-                            .unwrap_or(0.0)
-                            >= 0.5;
+                        let invert =
+                            mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
 
                         let mask_params = rd_effects::ShapeMaskParams {
                             shape_type,

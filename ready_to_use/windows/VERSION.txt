@@ -1,9 +1,12 @@
 Reddart Video Editor — Professional Studio Edition
-Version: 0.2.0
+Version: 0.2.1
 Platform: Windows 11 (x86_64)
 Architecture: Rust 2024 + Direct3D 12 / Vulkan + wgpu 24 + egui 0.31
 Audio Engine: Dedicated Low-Latency WASAPI 48kHz Master Clock + 36-Segment dBFS Meter
 Timeline Engine: Full NLE Deck (Razor [C], Ripple Trim [B], Roll, Slip, Slide, Markers, In/Out)
+Keyframing Engine: Eased Automation (Linear, Ease In, Ease Out, Ease In-Out, Hold) for Transform, Opacity, Speed, Audio, Masks
+Effects: Geometric Shape Masking (Rect, Ellipse, Gradient, Vignette, Feather, Invert), Rec.709 3D LUTs
 Project Persistence: Append-Only Monotonic CRC32 Write-Ahead Log (WAL)
-Video Export: Multi-Track Timeline Hardware Frame Pipeline (NVENC / QuickSync)
-Zero Subscription | Zero Cloud Latency | On-Device AI | Standalone 9.9 MB Binary
+Video Export: Multi-Track Timeline Hardware Frame Pipeline (NVENC / QuickSync / CPU)
+CLI Capabilities: Headless Video Export, Media Probe, Template Inspection, DAG Benchmarks
+Zero Subscription | Zero Cloud Latency | On-Device AI | Standalone Binary
