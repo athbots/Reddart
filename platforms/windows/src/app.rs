@@ -150,9 +150,29 @@ impl EditorData {
         }
 
         let mut decoders = HashMap::new();
-        let demo_path = PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4");
-        if demo_path.exists() {
-            let demo_str = demo_path.to_string_lossy().to_string();
+        let demo_path = [
+            PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4"),
+            PathBuf::from("Reddart_Master_Demo.mp4"),
+            PathBuf::from("samples/Reddart_Master_Demo.mp4"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .or_else(|| {
+            std::env::current_exe().ok().and_then(|exe| {
+                exe.parent().and_then(|dir| {
+                    let p1 = dir.join("Reddart_Master_Demo.mp4");
+                    if p1.exists() {
+                        Some(p1)
+                    } else {
+                        let p2 = dir.join("samples/Reddart_Master_Demo.mp4");
+                        if p2.exists() { Some(p2) } else { None }
+                    }
+                })
+            })
+        });
+
+        if let Some(ref d_path) = demo_path {
+            let demo_str = d_path.to_string_lossy().to_string();
             let clip = Clip::new_video(&demo_str, 0, 0, 10_000_000);
             if let Some(track) = project
                 .timeline
@@ -162,8 +182,8 @@ impl EditorData {
             {
                 track.add_clip(clip);
             }
-            if let Ok(decoder) = FfmpegDecoder::open(&demo_path) {
-                decoders.insert(demo_path.clone(), decoder);
+            if let Ok(decoder) = FfmpegDecoder::open(d_path) {
+                decoders.insert(d_path.clone(), decoder);
             }
         }
 
@@ -172,8 +192,8 @@ impl EditorData {
         let audio_engine = match AudioEngine::new(audio_clock) {
             Ok(eng) => {
                 let eng = Arc::new(eng);
-                if demo_path.exists()
-                    && let Ok(pcm) = decode_audio_to_pcm(&demo_path)
+                if let Some(ref d_path) = demo_path
+                    && let Ok(pcm) = decode_audio_to_pcm(d_path)
                 {
                     eng.load_track_pcm(pcm, 1.0);
                 }
@@ -218,7 +238,10 @@ impl EditorData {
             last_autosave_time: Instant::now(),
             missing_media: Vec::new(),
             status_message: Some((
-                wal_msg.unwrap_or_else(|| "Reddart Studio Initialized".into()),
+                wal_msg.unwrap_or_else(|| {
+                    "Reddart Studio v0.2.1 | Press Space to preview, Ctrl+T for templates, Ctrl+E to export"
+                        .into()
+                }),
                 Instant::now(),
             )),
             snapping_enabled: true,

@@ -110,3 +110,4 @@ To maintain complete legal compliance with both copyright licensing (LGPL/GPL) a
 Reddart's CI and automated test suites verify compliance:
 - `rd-export` verifies encoder discovery dynamically at runtime without hardcoded binary paths.
 - `cargo test --workspace` validates that all tests pass even in completely isolated environments without FFmpeg present on disk.
+
