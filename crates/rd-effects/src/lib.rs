@@ -8,8 +8,12 @@ pub mod mask;
 pub mod registry;
 pub mod shader;
 pub mod template;
+pub mod text;
 
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
+pub use text::{
+    TextAlignment, TextOverlayParams, get_glyph_8x8, render_text_clip_overlay, render_text_overlay,
+};
 
 /// An effect's performance cost class, used by the quality governor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

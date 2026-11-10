@@ -676,6 +676,45 @@ pub fn render_project_to_file(
             }
         }
 
+        // Composite active text / title overlays from all enabled tracks
+        for track in req.project.timeline.tracks() {
+            if !track.enabled {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(time_us)
+                && let ClipKind::Text(ref tclip) = clip.kind
+            {
+                let eff_opacity = clip.effective_opacity(time_us);
+                if eff_opacity > 0.001 {
+                    let pos_x = clip
+                        .evaluate_keyframe("pos_x", time_us)
+                        .unwrap_or(tclip.position[0]);
+                    let pos_y = clip
+                        .evaluate_keyframe("pos_y", time_us)
+                        .unwrap_or(tclip.position[1]);
+                    let mut color = tclip.color;
+                    color[3] = (color[3] * eff_opacity).clamp(0.0, 1.0);
+
+                    let params = rd_effects::TextOverlayParams {
+                        text: &tclip.text,
+                        pos_x,
+                        pos_y,
+                        font_size: tclip.font_size,
+                        color,
+                        bg_color: Some([0.0, 0.0, 0.0, 0.65 * eff_opacity]),
+                        drop_shadow: true,
+                        alignment: rd_effects::TextAlignment::Center,
+                    };
+                    rd_effects::render_text_overlay(
+                        &mut frame_buffer,
+                        req.preset.width,
+                        req.preset.height,
+                        &params,
+                    );
+                }
+            }
+        }
+
         if let Err(e) = stdin.write_all(&frame_buffer) {
             let _ = child.kill();
             let _ = std::fs::remove_file(&temp_audio_path);

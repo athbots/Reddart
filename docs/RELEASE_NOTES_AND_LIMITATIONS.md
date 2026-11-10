@@ -63,3 +63,4 @@ As a public beta release, creators should be aware of the following known archit
 To report bugs or regressions without compromising your media privacy:
 - **GitHub Issues:** [github.com/athbots/Reddart/issues](https://github.com/athbots/Reddart/issues)
 - Include your GPU model, Windows version, and stdout from `reddart --version`.
+

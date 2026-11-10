@@ -139,3 +139,46 @@ fn test_corpus_render_vertical_preset() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_corpus_render_with_title_overlay() {
+    let temp_dir = std::env::temp_dir().join(format!("rd_title_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let out_file = temp_dir.join("title_overlay_test.mp4");
+
+    let mut project = Project::new("Title Overlay Render Test");
+    let v_id = project.timeline.add_track(TrackKind::Video, "V1");
+    let t_id = project.timeline.add_track(TrackKind::Text, "T1");
+
+    let vid_clip = Clip::new_video("synthetic.mp4", 0, 0, 600_000);
+    project.timeline.track_mut(v_id).unwrap().add_clip(vid_clip);
+
+    let text_clip = Clip::new_text("IN-ENGINE TITLE OVERLAY", 0, 600_000);
+    project
+        .timeline
+        .track_mut(t_id)
+        .unwrap()
+        .add_clip(text_clip);
+
+    let preset = ExportPreset::youtube_1080p();
+    let req = RenderRequest {
+        project: &project,
+        output_path: &out_file,
+        preset: &preset,
+        grade: ColorGradeSettings::default(),
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let res = render_project_to_file(req, Some(&tx), None);
+
+    if let Ok(()) = res {
+        while rx.try_recv().is_ok() {}
+        assert!(out_file.exists());
+        if let Ok(probe) = ExportJob::probe_file(&out_file) {
+            assert_eq!(probe.width, Some(1920));
+            assert_eq!(probe.height, Some(1080));
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

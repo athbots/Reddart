@@ -1,0 +1,65 @@
+name: "🧪 Closed-Alpha Creator Feedback"
+description: "Submit structured feedback from the Reddart Closed-Alpha Creator Test Script"
+labels: ["alpha-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Welcome Closed-Alpha Creator! Thank you for testing Reddart v0.2.1. Your feedback directly shapes our roadmap.
+
+  - type: input
+    id: creator_type
+    attributes:
+      label: "Creator Profile"
+      description: "e.g. YouTube Long-Form Tech, TikTok/Reels Short-Form, Podcast Producer"
+      placeholder: "YouTube Widescreen 16:9 Editor"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: test_task
+    attributes:
+      label: "Alpha Test Script Task"
+      options:
+        - "Task 1: Clean Unzip & Immediate Launch"
+        - "Task 2: Media Ingestion & Media Bin"
+        - "Task 3: Timeline Manipulation (Razor, Ripple Trim, Roll)"
+        - "Task 4: Keyframing & 3D LUT Color Grading"
+        - "Task 5: WAL Crash Recovery Test"
+        - "Task 6: Hardware Video Export"
+        - "General Workflow & Ergonomics"
+    validations:
+      required: true
+
+  - type: textarea
+    id: experience
+    attributes:
+      label: "Workflow Observations & Switching Friction"
+      description: "How did the workflow compare to your current editing software? What felt intuitive? What caused friction?"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: responsiveness
+    attributes:
+      label: "Timeline Scrubbing & Playback Responsiveness"
+      options:
+        - "Flawless: Instant scrub, no dropped frames (Feels Zero-Lag)"
+        - "Good: Minor frame drop on heavy multi-layer tracks"
+        - "Fair: Noticeable scrub latency"
+        - "Poor: Frequent stutter or audio de-sync"
+    validations:
+      required: true
+
+  - type: textarea
+    id: missing_features
+    attributes:
+      label: "Top 3 Missing Features for Daily Production"
+      description: "What are the 3 most critical missing tools preventing you from switching full-time?"
+      placeholder: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+

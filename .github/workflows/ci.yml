@@ -12,7 +12,7 @@ env:
 
 jobs:
   check:
-    name: Check & Lint
+    name: Check & Lint (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +35,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
-        run: cargo build --release
+      - name: Build release binary
+        run: cargo build --release -p reddart-windows
 
   test:
-    name: Tests
-    runs-on: windows-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -54,17 +62,10 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run tests
+      - name: Run Windows Workspace Tests
+        if: runner.os == 'Windows'
         run: cargo test --workspace
 
-  # Performance budget gate (runs on PRs, compares against baseline)
-  # TODO: Enable once we have real device benchmarks
-  # perf:
-  #   name: Performance Budget
-  #   runs-on: windows-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Run benchmarks
-  #       run: cargo bench
-  #     - name: Check budgets
-  #       run: python scripts/check_perf_budgets.py
+      - name: Run Linux/macOS Core Engine Tests
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --exclude reddart-windows

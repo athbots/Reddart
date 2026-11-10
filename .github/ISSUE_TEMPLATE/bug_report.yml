@@ -1,0 +1,75 @@
+name: "🐛 Bug Report"
+description: "Report a reproducible bug, playback issue, or unexpected crash in Reddart"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! In accordance with our zero-telemetry policy, Reddart does not send automated error reports. Please provide the details below so we can reproduce and fix the issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: "Reddart Version"
+      description: "Run `reddart --version` in terminal or check Help -> About"
+      placeholder: "e.g. v0.2.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: "Operating System"
+      options:
+        - "Windows 11 (64-bit)"
+        - "Windows 10 (64-bit)"
+        - "Linux (Ubuntu / Fedora / Arch)"
+        - "macOS (Apple Silicon / Intel)"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: "Graphics Hardware (GPU)"
+      description: "e.g. NVIDIA RTX 4070, AMD Radeon RX 7800XT, Intel Arc A770, Intel Iris Xe"
+      placeholder: "NVIDIA GeForce RTX 4070 (Driver 560.xx)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "Bug Description"
+      description: "A clear and concise description of what happened."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Exact steps to trigger the behavior"
+      placeholder: |
+        1. Open project 'xyz.reddart'
+        2. Move playhead to 00:01:23:00
+        3. Press 'C' to slice clip
+        4. See crash or visual artifact
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior"
+      description: "What should have happened instead."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Log Output (Optional)"
+      description: "Paste terminal output or excerpts from local log files (sensitive paths redacted)."
+      render: shell
+

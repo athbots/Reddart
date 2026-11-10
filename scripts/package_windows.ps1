@@ -101,3 +101,4 @@ Write-Host "Archive:  $ZipOut" -ForegroundColor Green
 Write-Host "Size:     $([math]::Round((Get-Item $ZipOut).Length / 1MB, 2)) MB" -ForegroundColor Green
 Write-Host "SHA-256:  $($Hash.Hash)" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
+

@@ -9,3 +9,4 @@ ftype Reddart.Project=
 
 echo [Reddart] File association removed successfully.
 pause
+

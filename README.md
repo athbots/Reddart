@@ -265,7 +265,7 @@ Clone the repository and compile using Cargo:
 git clone https://github.com/athbots/Reddart.git
 cd Reddart
 
-# Run workspace unit and integration test suite (90 tests)
+# Run workspace unit and integration test suite (95 tests)
 cargo test --workspace
 
 # Build optimized release binary

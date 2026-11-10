@@ -107,3 +107,4 @@ In accordance with Reddart's strict privacy policy, no telemetry is gathered aut
 1. **Local Diagnostic Log:** When a crash occurs, users can view local logs in `appdata/Reddart/logs/` and manually submit them.
 2. **Structured GitHub Alpha Issue Form:** Pre-configured with environment tags (GPU model, driver version, Windows build).
 3. **Weekly Asynchronous Creator Check-In:** Focuses on timeline responsiveness, missing audio features, and UI scaling feedback.
+

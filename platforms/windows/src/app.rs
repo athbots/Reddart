@@ -501,11 +501,51 @@ impl EditorData {
                     self.last_rendered_pts_us = -2;
                 }
             }
-        } else if self.last_rendered_pts_us != -1 || self.needs_monitor_update {
+        } else if self.last_rendered_pts_us != playhead_us || self.needs_monitor_update {
             Self::generate_smpte_pattern(&mut self.monitor_frame_buffer, 1920, 1080, playhead_us);
             updated = true;
-            self.last_rendered_pts_us = -1;
+            self.last_rendered_pts_us = playhead_us;
             self.needs_monitor_update = false;
+        }
+
+        // Composite active text / title overlays from all enabled tracks
+        for track in self.project.timeline.tracks() {
+            if !track.enabled {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(playhead_us)
+                && let rd_core::ClipKind::Text(ref tclip) = clip.kind
+            {
+                let eff_opacity = clip.effective_opacity(playhead_us);
+                if eff_opacity > 0.001 {
+                    let pos_x = clip
+                        .evaluate_keyframe("pos_x", playhead_us)
+                        .unwrap_or(tclip.position[0]);
+                    let pos_y = clip
+                        .evaluate_keyframe("pos_y", playhead_us)
+                        .unwrap_or(tclip.position[1]);
+                    let mut color = tclip.color;
+                    color[3] = (color[3] * eff_opacity).clamp(0.0, 1.0);
+
+                    let params = rd_effects::TextOverlayParams {
+                        text: &tclip.text,
+                        pos_x,
+                        pos_y,
+                        font_size: tclip.font_size,
+                        color,
+                        bg_color: Some([0.0, 0.0, 0.0, 0.65 * eff_opacity]),
+                        drop_shadow: true,
+                        alignment: rd_effects::TextAlignment::Center,
+                    };
+                    rd_effects::render_text_overlay(
+                        &mut self.monitor_frame_buffer,
+                        1920,
+                        1080,
+                        &params,
+                    );
+                    updated = true;
+                }
+            }
         }
 
         if updated {
@@ -2186,6 +2226,65 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     }
                                 });
 
+                                if let rd_core::ClipKind::Text(ref mut tclip) = clip.kind {
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.label(
+                                        egui::RichText::new("TITLE & SUBTITLE SETTINGS")
+                                            .strong()
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(217, 119, 6)),
+                                    );
+                                    ui.label("Text Content:");
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::multiline(&mut tclip.text)
+                                                .desired_rows(2)
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .changed()
+                                    {
+                                        trigger_update = true;
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label("Font Size:");
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(
+                                                    &mut tclip.font_size,
+                                                    12.0..=120.0,
+                                                )
+                                                .suffix(" pt"),
+                                            )
+                                            .changed()
+                                        {
+                                            trigger_update = true;
+                                        }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Pos X:");
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut tclip.position[0], 0.0..=1.0)
+                                                    .step_by(0.01),
+                                            )
+                                            .changed()
+                                        {
+                                            trigger_update = true;
+                                        }
+                                        ui.label("Y:");
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut tclip.position[1], 0.0..=1.0)
+                                                    .step_by(0.01),
+                                            )
+                                            .changed()
+                                        {
+                                            trigger_update = true;
+                                        }
+                                    });
+                                }
+
                                 ui.add_space(6.0);
                                 ui.label(
                                     egui::RichText::new("AUDIO VOLUME & PAN")
@@ -3031,10 +3130,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             None => ed.project.timeline.add_track(TrackKind::Text, "Text 1"),
                         };
                         let playhead = ed.project.timeline.playhead_us;
-                        let clip = Clip::new_text(&ed.title_text, playhead, 4_000_000);
+                        let mut clip = Clip::new_text(&ed.title_text, playhead, 4_000_000);
+                        if let rd_core::ClipKind::Text(ref mut tclip) = clip.kind {
+                            tclip.font_size = ed.title_font_size;
+                        }
                         if let Some(track) = ed.project.timeline.track_mut(target_track_id) {
                             track.add_clip(clip);
                             ed.status_message = Some(("Title Clip Added".into(), Instant::now()));
+                            ed.needs_monitor_update = true;
                         }
                     }
                 }
