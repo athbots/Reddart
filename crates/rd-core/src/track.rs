@@ -186,6 +186,10 @@ impl Track {
     }
 
     /// Ripple Trim In: adjusts the clip's head and ripples all downstream clips.
+    ///
+    /// Trimming in by `delta_us` (timeline microseconds):
+    /// - `delta_us > 0`: cuts from head, shortening the clip. Downstream clips shift left (earlier) to close the gap.
+    /// - `delta_us < 0`: extends head earlier in media, lengthening the clip. Downstream clips shift right (later).
     pub fn ripple_trim_in(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
         if self.locked {
             return Err("Track is locked");
@@ -196,23 +200,36 @@ impl Track {
             .position(|c| c.id == clip_id)
             .ok_or("Clip not found")?;
 
-        let clip = &mut self.clips[pos];
-        let new_source_in = clip.source_in_us + delta_us;
-        if new_source_in < 0 || new_source_in >= clip.source_out_us {
+        let clip = &self.clips[pos];
+        let speed = clip.speed.abs().max(0.0001);
+        let source_delta = (delta_us as f64 * speed).round() as i64;
+        let new_source_in = clip.source_in_us + source_delta;
+
+        if new_source_in < 0 {
+            return Err("Cannot trim in earlier than start of media");
+        }
+        if new_source_in >= clip.source_out_us {
             return Err("Invalid trim boundary: source in out of bounds");
         }
-        let new_pos = (clip.position_us + delta_us).max(0);
-        clip.source_in_us = new_source_in;
-        clip.position_us = new_pos;
 
-        // Shift downstream clips
+        let timeline_delta = (source_delta as f64 / speed).round() as i64;
+
+        self.clips[pos].source_in_us = new_source_in;
+
+        // Downstream clips shift to maintain contiguity without gaps:
+        // Shortening head (delta_us > 0) pulls downstream clips left (-timeline_delta)
+        // Lengthening head (delta_us < 0) pushes downstream clips right (+abs(timeline_delta))
         for downstream in &mut self.clips[pos + 1..] {
-            downstream.position_us = (downstream.position_us + delta_us).max(0);
+            downstream.position_us = (downstream.position_us - timeline_delta).max(0);
         }
         Ok(())
     }
 
     /// Ripple Trim Out: adjusts the clip's tail and ripples all downstream clips.
+    ///
+    /// Trimming out by `delta_us` (timeline microseconds):
+    /// - `delta_us > 0`: extends tail later in media, lengthening the clip. Downstream clips push right.
+    /// - `delta_us < 0`: cuts tail, shortening the clip. Downstream clips pull left.
     pub fn ripple_trim_out(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
         if self.locked {
             return Err("Track is locked");
@@ -223,16 +240,22 @@ impl Track {
             .position(|c| c.id == clip_id)
             .ok_or("Clip not found")?;
 
-        let clip = &mut self.clips[pos];
-        let new_source_out = clip.source_out_us + delta_us;
+        let clip = &self.clips[pos];
+        let speed = clip.speed.abs().max(0.0001);
+        let source_delta = (delta_us as f64 * speed).round() as i64;
+        let new_source_out = clip.source_out_us + source_delta;
+
         if new_source_out <= clip.source_in_us {
             return Err("Invalid trim boundary: source out cannot precede source in");
         }
-        clip.source_out_us = new_source_out;
 
-        // Shift downstream clips
+        let timeline_delta = (source_delta as f64 / speed).round() as i64;
+
+        self.clips[pos].source_out_us = new_source_out;
+
+        // Downstream clips shift to stay attached to the adjusted tail
         for downstream in &mut self.clips[pos + 1..] {
-            downstream.position_us = (downstream.position_us + delta_us).max(0);
+            downstream.position_us = (downstream.position_us + timeline_delta).max(0);
         }
         Ok(())
     }
@@ -265,8 +288,14 @@ impl Track {
         let out_clip = &self.clips[out_idx];
         let in_clip = &self.clips[in_idx];
 
-        let new_out_source_out = out_clip.source_out_us + delta_us;
-        let new_in_source_in = in_clip.source_in_us + delta_us;
+        let out_speed = out_clip.speed.abs().max(0.0001);
+        let in_speed = in_clip.speed.abs().max(0.0001);
+
+        let out_source_delta = (delta_us as f64 * out_speed).round() as i64;
+        let in_source_delta = (delta_us as f64 * in_speed).round() as i64;
+
+        let new_out_source_out = out_clip.source_out_us + out_source_delta;
+        let new_in_source_in = in_clip.source_in_us + in_source_delta;
 
         if new_out_source_out <= out_clip.source_in_us {
             return Err("Outgoing clip cannot be rolled to zero duration");
@@ -275,9 +304,12 @@ impl Track {
             return Err("Incoming clip cannot be rolled beyond source boundaries");
         }
 
+        let timeline_delta = (out_source_delta as f64 / out_speed).round() as i64;
+        let new_in_pos = (self.clips[in_idx].position_us + timeline_delta).max(0);
+
         self.clips[out_idx].source_out_us = new_out_source_out;
         self.clips[in_idx].source_in_us = new_in_source_in;
-        self.clips[in_idx].position_us = (self.clips[in_idx].position_us + delta_us).max(0);
+        self.clips[in_idx].position_us = new_in_pos;
 
         Ok(())
     }
@@ -288,8 +320,11 @@ impl Track {
             return Err("Track is locked");
         }
         let clip = self.clip_mut(clip_id).ok_or("Clip not found")?;
-        let new_in = clip.source_in_us + delta_us;
-        let new_out = clip.source_out_us + delta_us;
+        let speed = clip.speed.abs().max(0.0001);
+        let source_delta = (delta_us as f64 * speed).round() as i64;
+
+        let new_in = clip.source_in_us + source_delta;
+        let new_out = clip.source_out_us + source_delta;
         if new_in < 0 {
             return Err("Cannot slip earlier than beginning of media");
         }
@@ -299,42 +334,69 @@ impl Track {
     }
 
     /// Slide Edit: moves clip on timeline while trimming adjacent clips to preserve sequence duration.
+    ///
+    /// Requires an adjacent predecessor and successor clip.
+    /// Positive delta slides clip to the right (extending predecessor, shrinking successor).
+    /// Negative delta slides clip to the left (shrinking predecessor, extending successor).
     pub fn slide_edit(&mut self, clip_id: ClipId, delta_us: i64) -> Result<(), &'static str> {
         if self.locked {
             return Err("Track is locked");
         }
+        if delta_us == 0 {
+            return Ok(());
+        }
+
         let pos = self
             .clips
             .iter()
             .position(|c| c.id == clip_id)
             .ok_or("Clip not found")?;
 
-        if pos > 0 {
-            let prev = &self.clips[pos - 1];
-            let new_prev_out = prev.source_out_us + delta_us;
-            if new_prev_out <= prev.source_in_us {
-                return Err("Predecessor clip cannot shrink below minimum duration");
-            }
+        if pos == 0 {
+            return Err("Cannot slide clip: predecessor clip required");
+        }
+        if pos + 1 >= self.clips.len() {
+            return Err("Cannot slide clip: successor clip required");
         }
 
-        if pos + 1 < self.clips.len() {
-            let next = &self.clips[pos + 1];
-            let new_next_in = next.source_in_us + delta_us;
-            if new_next_in >= next.source_out_us || new_next_in < 0 {
-                return Err("Successor clip cannot shrink below minimum duration");
-            }
+        let prev = &self.clips[pos - 1];
+        let target = &self.clips[pos];
+        let next = &self.clips[pos + 1];
+
+        let prev_speed = prev.speed.abs().max(0.0001);
+        let next_speed = next.speed.abs().max(0.0001);
+
+        let prev_source_delta = (delta_us as f64 * prev_speed).round() as i64;
+        let next_source_delta = (delta_us as f64 * next_speed).round() as i64;
+
+        let new_prev_source_out = prev.source_out_us + prev_source_delta;
+        if new_prev_source_out <= prev.source_in_us {
+            return Err("Predecessor clip cannot shrink below minimum duration");
         }
 
-        if pos > 0 {
-            self.clips[pos - 1].source_out_us += delta_us;
+        let new_next_source_in = next.source_in_us + next_source_delta;
+        if new_next_source_in >= next.source_out_us {
+            return Err("Successor clip cannot shrink below minimum duration");
+        }
+        if new_next_source_in < 0 {
+            return Err("Successor clip cannot be extended earlier than start of media");
         }
 
-        self.clips[pos].position_us = (self.clips[pos].position_us + delta_us).max(0);
-
-        if pos + 1 < self.clips.len() {
-            self.clips[pos + 1].source_in_us += delta_us;
-            self.clips[pos + 1].position_us = (self.clips[pos + 1].position_us + delta_us).max(0);
+        let new_target_pos = target.position_us + delta_us;
+        if new_target_pos < 0 {
+            return Err("Cannot slide clip before start of timeline");
         }
+
+        let new_next_pos = next.position_us + delta_us;
+        if new_next_pos < 0 {
+            return Err("Successor clip position cannot precede timeline start");
+        }
+
+        // Apply mutations
+        self.clips[pos - 1].source_out_us = new_prev_source_out;
+        self.clips[pos].position_us = new_target_pos;
+        self.clips[pos + 1].source_in_us = new_next_source_in;
+        self.clips[pos + 1].position_us = new_next_pos;
 
         Ok(())
     }
@@ -449,16 +511,57 @@ mod tests {
         track.add_clip(clip_a);
         track.add_clip(clip_b);
 
-        // Ripple trim in on clip A by +500ms
+        // Ripple trim in on clip A by +500ms (shortening head by 500ms)
         assert!(track.ripple_trim_in(id_a, 500_000).is_ok());
         assert_eq!(track.clip(id_a).unwrap().source_in_us, 500_000);
-        assert_eq!(track.clip(id_a).unwrap().position_us, 500_000);
-        assert_eq!(track.clip(id_b).unwrap().position_us, 2_500_000); // Downstream rippled forward
+        assert_eq!(track.clip(id_a).unwrap().position_us, 0); // Position at track start remains 0
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 1_500_000); // 2.0s - 0.5s = 1.5s
+        assert_eq!(track.clip(id_b).unwrap().position_us, 1_500_000); // Downstream pulled backward to close gap!
 
-        // Ripple trim out on clip A by -200ms
+        // Ripple trim in on clip A by -200ms (extending head earlier by 200ms)
+        assert!(track.ripple_trim_in(id_a, -200_000).is_ok());
+        assert_eq!(track.clip(id_a).unwrap().source_in_us, 300_000);
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 1_700_000); // 1.5s + 0.2s = 1.7s
+        assert_eq!(track.clip(id_b).unwrap().position_us, 1_700_000); // Downstream pushed forward to accommodate extension!
+
+        // Ripple trim out on clip A by -200ms (shortening tail)
         assert!(track.ripple_trim_out(id_a, -200_000).is_ok());
         assert_eq!(track.clip(id_a).unwrap().source_out_us, 1_800_000);
-        assert_eq!(track.clip(id_b).unwrap().position_us, 2_300_000); // Downstream rippled backward
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 1_500_000);
+        assert_eq!(track.clip(id_b).unwrap().position_us, 1_500_000); // Downstream pulled backward to close gap!
+
+        // Ripple trim out on clip A by +300ms (extending tail)
+        assert!(track.ripple_trim_out(id_a, 300_000).is_ok());
+        assert_eq!(track.clip(id_a).unwrap().source_out_us, 2_100_000);
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 1_800_000);
+        assert_eq!(track.clip(id_b).unwrap().position_us, 1_800_000); // Downstream pushed forward!
+    }
+
+    #[test]
+    fn test_ripple_trim_with_non_unity_speed() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        // Clip A at 2.0x speed: 2s source = 1s timeline
+        let mut clip_a = make_test_clip(0, 2_000_000);
+        clip_a.speed = 2.0;
+        assert_eq!(clip_a.duration_us(), 1_000_000);
+        let id_a = clip_a.id;
+
+        // Clip B at 0.5x speed: 1s source = 2s timeline
+        let mut clip_b = make_test_clip(1_000_000, 1_000_000);
+        clip_b.speed = 0.5;
+        assert_eq!(clip_b.duration_us(), 2_000_000);
+        let id_b = clip_b.id;
+
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+
+        // Ripple trim in on clip A by 250ms timeline time:
+        // Source delta = 250ms * 2.0x = 500ms
+        assert!(track.ripple_trim_in(id_a, 250_000).is_ok());
+        assert_eq!(track.clip(id_a).unwrap().source_in_us, 500_000);
+        assert_eq!(track.clip(id_a).unwrap().duration_us(), 750_000);
+        // Downstream clip B must be pulled left by 250ms timeline time
+        assert_eq!(track.clip(id_b).unwrap().position_us, 750_000);
     }
 
     #[test]
@@ -509,7 +612,11 @@ mod tests {
         let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
         let clip_a = make_test_clip(0, 2_000_000);
         let clip_b = make_test_clip(2_000_000, 2_000_000);
-        let clip_c = make_test_clip(4_000_000, 2_000_000);
+        // Clip C has 1s of head media available (source 1s..3s)
+        let mut clip_c = make_test_clip(4_000_000, 2_000_000);
+        clip_c.source_in_us = 1_000_000;
+        clip_c.source_out_us = 3_000_000;
+
         let id_b = clip_b.id;
         track.add_clip(clip_a);
         track.add_clip(clip_b);
@@ -517,7 +624,7 @@ mod tests {
 
         let initial_dur = track.duration_us();
 
-        // Slide middle clip B by +400ms
+        // Slide middle clip B by +400ms (positive delta: moves right)
         assert!(track.slide_edit(id_b, 400_000).is_ok());
         assert_eq!(track.clips()[0].duration_us(), 2_400_000); // Clip A lengthened
         assert_eq!(track.clips()[1].position_us, 2_400_000); // Clip B shifted
@@ -525,6 +632,55 @@ mod tests {
         assert_eq!(track.clips()[2].position_us, 4_400_000); // Clip C shifted
         assert_eq!(track.clips()[2].duration_us(), 1_600_000); // Clip C shortened
         assert_eq!(track.duration_us(), initial_dur); // Total duration invariant
+
+        // Slide middle clip B by -600ms (negative delta: moves left)
+        assert!(track.slide_edit(id_b, -600_000).is_ok());
+        assert_eq!(track.clips()[0].duration_us(), 1_800_000); // Clip A shortened
+        assert_eq!(track.clips()[1].position_us, 1_800_000); // Clip B shifted left
+        assert_eq!(track.clips()[1].duration_us(), 2_000_000); // Clip B duration untouched!
+        assert_eq!(track.clips()[2].position_us, 3_800_000); // Clip C shifted left
+        assert_eq!(track.clips()[2].duration_us(), 2_200_000); // Clip C lengthened
+        assert_eq!(track.duration_us(), initial_dur); // Total duration invariant
+
+        // Edge case: slide first clip (no predecessor) must fail
+        assert!(track.slide_edit(track.clips()[0].id, 100_000).is_err());
+        // Edge case: slide last clip (no successor) must fail
+        assert!(track.slide_edit(track.clips()[2].id, 100_000).is_err());
+        // Edge case: excessive delta that would shrink predecessor below 0 must fail
+        assert!(track.slide_edit(id_b, -2_000_000).is_err());
+    }
+
+    #[test]
+    fn test_slide_edit_with_non_unity_speeds() {
+        let mut track = Track::new(TrackId(1), TrackKind::Video, "V1");
+        // Clip A: 2.0x speed, 4s source -> 2s timeline
+        let mut clip_a = make_test_clip(0, 4_000_000);
+        clip_a.speed = 2.0;
+        // Clip B: 1.0x speed, 2s source -> 2s timeline
+        let clip_b = make_test_clip(2_000_000, 2_000_000);
+        let id_b = clip_b.id;
+        // Clip C: 0.5x speed, 1s source -> 2s timeline
+        let mut clip_c = make_test_clip(4_000_000, 1_000_000);
+        clip_c.speed = 0.5;
+
+        track.add_clip(clip_a);
+        track.add_clip(clip_b);
+        track.add_clip(clip_c);
+
+        let initial_dur = track.duration_us();
+        assert_eq!(initial_dur, 6_000_000);
+
+        // Slide B by +500ms
+        assert!(track.slide_edit(id_b, 500_000).is_ok());
+        // Predecessor A at 2.0x speed: +500ms timeline requires +1000ms source
+        assert_eq!(track.clips()[0].source_out_us, 5_000_000);
+        assert_eq!(track.clips()[0].duration_us(), 2_500_000);
+        assert_eq!(track.clips()[1].position_us, 2_500_000);
+        // Successor C at 0.5x speed: -500ms timeline requires +250ms source in
+        assert_eq!(track.clips()[2].source_in_us, 250_000);
+        assert_eq!(track.clips()[2].duration_us(), 1_500_000);
+        // Total duration invariant strictly preserved
+        assert_eq!(track.duration_us(), initial_dur);
     }
 
     #[test]

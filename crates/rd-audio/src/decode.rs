@@ -41,8 +41,8 @@ pub fn decode_audio_to_pcm(path: impl AsRef<Path>) -> Result<Vec<f32>> {
 
     let sample_count = raw_bytes.len() / 4;
     let mut pcm = Vec::with_capacity(sample_count);
-    for chunk in raw_bytes.as_chunks::<4>().0 {
-        pcm.push(f32::from_le_bytes(*chunk));
+    for chunk in raw_bytes.chunks_exact(4) {
+        pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
 
     log::info!(

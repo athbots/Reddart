@@ -257,7 +257,7 @@ pub fn resample_and_grade_frame(
         };
 
         // Letterbox fill with opaque dark slate
-        for pixel in dst.as_chunks_mut::<4>().0 {
+        for pixel in dst.chunks_exact_mut(4) {
             pixel[0] = 10;
             pixel[1] = 12;
             pixel[2] = 16;
@@ -297,7 +297,7 @@ pub fn resample_and_grade_frame(
         let contrast = grade.contrast;
         let sat = grade.saturation;
 
-        for chunk in dst.as_chunks_mut::<4>().0 {
+        for chunk in dst.chunks_exact_mut(4) {
             let mut r = chunk[0] as f32 / 255.0;
             let mut g = chunk[1] as f32 / 255.0;
             let mut b = chunk[2] as f32 / 255.0;
@@ -602,7 +602,7 @@ pub fn render_project_to_file(
                     // Apply effective keyframed opacity
                     let eff_opacity = clip.effective_opacity(time_us);
                     if eff_opacity < 0.999 {
-                        for pixel in frame_buffer.as_chunks_mut::<4>().0 {
+                        for pixel in frame_buffer.chunks_exact_mut(4) {
                             pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
                             pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
                             pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
@@ -668,7 +668,7 @@ pub fn render_project_to_file(
 
         if !rendered {
             // Timeline gap: fill with dark letterbox slate
-            for pixel in frame_buffer.as_chunks_mut::<4>().0 {
+            for pixel in frame_buffer.chunks_exact_mut(4) {
                 pixel[0] = 10;
                 pixel[1] = 12;
                 pixel[2] = 16;

@@ -265,7 +265,7 @@ Clone the repository and compile using Cargo:
 git clone https://github.com/athbots/Reddart.git
 cd Reddart
 
-# Run workspace unit and integration test suite (95 tests)
+# Run workspace unit and integration test suite (110 tests)
 cargo test --workspace
 
 # Build optimized release binary
@@ -307,9 +307,11 @@ Test coverage includes:
 
 - **FFmpeg & Codec Distribution Compliance:** [docs/FFMPEG_AND_CODEC_AUDIT.md](docs/FFMPEG_AND_CODEC_AUDIT.md)
 - **Creator Workflows & Closed-Alpha Plan:** [docs/CREATOR_WORKFLOWS_AND_ALPHA_PLAN.md](docs/CREATOR_WORKFLOWS_AND_ALPHA_PLAN.md)
+- **Creator Onboarding & 60-Second First Export:** [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md)
+- **Windows Distribution Validation:** [docs/WINDOWS_DISTRIBUTION_VALIDATION.md](docs/WINDOWS_DISTRIBUTION_VALIDATION.md)
 - **Public Beta Release Notes & Limitations:** [docs/RELEASE_NOTES_AND_LIMITATIONS.md](docs/RELEASE_NOTES_AND_LIMITATIONS.md)
 - **Commercial Support & Studio Services:** [docs/COMMERCIAL_SUPPORT_OFFERING.md](docs/COMMERCIAL_SUPPORT_OFFERING.md)
-- **Official Website:** [website/index.html](website/index.html)
+- **Official Website:** [https://athbots.github.io/Reddart/](https://athbots.github.io/Reddart/) (source in `website/`)
 
 ---
 

@@ -3,6 +3,9 @@ name = "rd-core"
 description = "Reddart core: project model, timeline, undo/redo, autosave"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }

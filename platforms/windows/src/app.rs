@@ -424,7 +424,7 @@ impl EditorData {
                             // Apply effective keyframed opacity
                             let eff_opacity = clip.effective_opacity(playhead_us);
                             if eff_opacity < 0.999 {
-                                for pixel in self.monitor_frame_buffer.as_chunks_mut::<4>().0 {
+                                for pixel in self.monitor_frame_buffer.chunks_exact_mut(4) {
                                     pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
                                     pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
                                     pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
@@ -626,7 +626,7 @@ impl EditorData {
         {
             let exp_mult = 2.0_f32.powf(grade.exposure);
             let contrast_mult = 1.0 + grade.contrast;
-            for chunk in dst.as_chunks_mut::<4>().0 {
+            for chunk in dst.chunks_exact_mut(4) {
                 let mut r = chunk[0] as f32 / 255.0;
                 let mut g = chunk[1] as f32 / 255.0;
                 let mut b = chunk[2] as f32 / 255.0;

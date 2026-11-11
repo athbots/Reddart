@@ -429,12 +429,7 @@ mod tests {
         render_text_overlay(&mut buffer, width, height, &params);
 
         // Verify that some pixels in buffer were turned white
-        let non_zero_pixels = buffer
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .filter(|p| p[3] > 0)
-            .count();
+        let non_zero_pixels = buffer.chunks_exact(4).filter(|p| p[3] > 0).count();
         assert!(
             non_zero_pixels > 50,
             "Text should render non-empty glyph pixels"
@@ -460,12 +455,7 @@ mod tests {
 
         render_text_overlay(&mut buffer, width, height, &params);
 
-        let non_zero_pixels = buffer
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .filter(|p| p[3] > 0)
-            .count();
+        let non_zero_pixels = buffer.chunks_exact(4).filter(|p| p[3] > 0).count();
         assert!(
             non_zero_pixels > 500,
             "Pill and text should cover significant pixel area"
@@ -488,12 +478,7 @@ mod tests {
 
         render_text_clip_overlay(&mut buffer, width, height, &tclip, 0.9);
 
-        let non_zero_pixels = buffer
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .filter(|p| p[3] > 0)
-            .count();
+        let non_zero_pixels = buffer.chunks_exact(4).filter(|p| p[3] > 0).count();
         assert!(non_zero_pixels > 200);
     }
 }

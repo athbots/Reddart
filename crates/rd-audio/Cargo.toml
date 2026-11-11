@@ -3,6 +3,9 @@ name = "rd-audio"
 description = "Reddart real-time audio mixer, PCM decode, master clock"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 rd-core = { workspace = true }

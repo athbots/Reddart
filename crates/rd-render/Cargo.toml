@@ -3,6 +3,9 @@ name = "rd-render"
 description = "Reddart render graph, GPU compositor, result cache, quality governor"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 rd-core = { workspace = true }

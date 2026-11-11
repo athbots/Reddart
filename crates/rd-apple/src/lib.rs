@@ -392,7 +392,7 @@ pub extern "C" fn reddart_engine_render_frame_to_rgba(
     let total_pixels = (width * height) as usize;
     unsafe {
         let slice = std::slice::from_raw_parts_mut(buffer_out, total_pixels * 4);
-        for pixel in slice.as_chunks_mut::<4>().0 {
+        for pixel in slice.chunks_exact_mut(4) {
             pixel[0] = r as u8;
             pixel[1] = g as u8;
             pixel[2] = b as u8;

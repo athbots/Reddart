@@ -355,6 +355,107 @@ impl Command {
             },
         }
     }
+
+    /// Convert this command into corresponding Write-Ahead Log journal mutations.
+    pub fn to_mutations(&self) -> Vec<crate::journal::JournalMutation> {
+        use crate::journal::JournalMutation;
+        match self {
+            Command::AddClip { track_id, clip } => vec![JournalMutation::AddClip {
+                track_id: *track_id,
+                clip: clip.clone(),
+            }],
+            Command::RemoveClip { track_id, clip } => vec![JournalMutation::RemoveClip {
+                track_id: *track_id,
+                clip_id: clip.id,
+            }],
+            Command::MoveClip {
+                track_id,
+                clip_id,
+                new_position_us,
+                ..
+            } => vec![JournalMutation::MoveClip {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                new_position_us: *new_position_us,
+            }],
+            Command::TrimIn {
+                track_id,
+                clip_id,
+                new_source_in_us,
+                new_position_us,
+                ..
+            } => vec![JournalMutation::TrimClip {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                new_source_in_us: *new_source_in_us,
+                new_source_out_us: -1,
+                new_position_us: *new_position_us,
+            }],
+            Command::TrimOut {
+                track_id,
+                clip_id,
+                new_source_out_us,
+                ..
+            } => vec![JournalMutation::TrimClip {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                new_source_in_us: -1,
+                new_source_out_us: *new_source_out_us,
+                new_position_us: -1,
+            }],
+            Command::SplitClip {
+                track_id,
+                original_clip_id,
+                new_clip_id,
+                split_time_us,
+                original_clip_snapshot,
+            } => vec![JournalMutation::SplitClip {
+                track_id: *track_id,
+                clip_id: *original_clip_id,
+                split_time_us: *split_time_us,
+                new_clip: crate::Clip {
+                    id: *new_clip_id,
+                    ..original_clip_snapshot.clone()
+                },
+            }],
+            Command::SetSpeed {
+                track_id,
+                clip_id,
+                new_speed,
+                ..
+            } => vec![JournalMutation::SetSpeed {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                new_speed: *new_speed,
+            }],
+            Command::SetOpacity {
+                track_id,
+                clip_id,
+                new_opacity,
+                ..
+            } => vec![JournalMutation::SetOpacity {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                new_opacity: *new_opacity,
+            }],
+            Command::AddTrack {
+                track_id,
+                kind,
+                name,
+                ..
+            } => vec![JournalMutation::AddTrack {
+                id: *track_id,
+                kind: *kind,
+                name: name.clone(),
+            }],
+            Command::RemoveTrack { track, .. } => {
+                vec![JournalMutation::RemoveTrack { id: track.id }]
+            }
+            Command::Compound { commands, .. } => {
+                commands.iter().flat_map(|c| c.to_mutations()).collect()
+            }
+        }
+    }
 }
 
 /// Command history managing undo/redo stacks.
@@ -416,6 +517,67 @@ impl CommandHistory {
             Ok(true)
         } else {
             Ok(false) // Nothing to redo
+        }
+    }
+
+    /// Execute a command, persist mutations to the WAL journal, and push to undo stack.
+    pub fn execute_with_journal(
+        &mut self,
+        command: Command,
+        project: &mut Project,
+        journal: &mut crate::journal::ProjectJournal,
+    ) -> Result<(), CommandError> {
+        command.apply(project)?;
+        for mutation in command.to_mutations() {
+            let _ = journal.append(mutation);
+        }
+        self.undo_stack.push(command);
+        self.redo_stack.clear();
+
+        if self.undo_stack.len() > self.max_depth {
+            self.undo_stack.remove(0);
+        }
+
+        project.touch();
+        Ok(())
+    }
+
+    /// Undo the last command and record inverse mutations to the WAL journal.
+    pub fn undo_with_journal(
+        &mut self,
+        project: &mut Project,
+        journal: &mut crate::journal::ProjectJournal,
+    ) -> Result<bool, CommandError> {
+        if let Some(command) = self.undo_stack.pop() {
+            let inverse = command.inverse();
+            inverse.apply(project)?;
+            for mutation in inverse.to_mutations() {
+                let _ = journal.append(mutation);
+            }
+            self.redo_stack.push(command);
+            project.touch();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Redo the last undone command and record mutations to the WAL journal.
+    pub fn redo_with_journal(
+        &mut self,
+        project: &mut Project,
+        journal: &mut crate::journal::ProjectJournal,
+    ) -> Result<bool, CommandError> {
+        if let Some(command) = self.redo_stack.pop() {
+            command.apply(project)?;
+            for mutation in command.to_mutations() {
+                let _ = journal.append(mutation);
+            }
+            self.undo_stack.push(command);
+            project.touch();
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 
@@ -547,5 +709,70 @@ mod tests {
             )
             .unwrap();
         assert!(!history.can_redo());
+    }
+
+    #[test]
+    fn test_command_journal_integration_undo_redo_recovery() {
+        let dir = std::env::temp_dir().join(format!("reddart_cmd_wal_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let proj_path = dir.join("test_command_wal.reddart");
+
+        let mut project = make_test_project();
+        project.save_atomic(&proj_path).unwrap();
+
+        let mut journal = crate::journal::ProjectJournal::open_or_create(&proj_path).unwrap();
+        let mut history = CommandHistory::new(100);
+        let track_id = project.timeline.tracks()[0].id;
+
+        let clip = make_test_clip(1_000_000);
+        let clip_id = clip.id;
+
+        // 1. Add clip with journal
+        history
+            .execute_with_journal(
+                Command::AddClip { track_id, clip },
+                &mut project,
+                &mut journal,
+            )
+            .unwrap();
+        assert_eq!(project.timeline.tracks()[0].clips().len(), 1);
+
+        // 2. Modify speed with journal
+        history
+            .execute_with_journal(
+                Command::SetSpeed {
+                    track_id,
+                    clip_id,
+                    old_speed: 1.0,
+                    new_speed: 2.0,
+                },
+                &mut project,
+                &mut journal,
+            )
+            .unwrap();
+        assert_eq!(project.timeline.tracks()[0].clips()[0].speed, 2.0);
+
+        // 3. Undo the speed change with journal
+        let undone = history
+            .undo_with_journal(&mut project, &mut journal)
+            .unwrap();
+        assert!(undone);
+        assert_eq!(project.timeline.tracks()[0].clips()[0].speed, 1.0);
+
+        // 4. Simulate crash: drop in-memory state and reload project from disk via Project::load_file_with_recovery
+        drop(project);
+        drop(journal);
+        drop(history);
+
+        let (recovered, report) = Project::load_file_with_recovery(&proj_path).unwrap();
+        assert!(report.is_some());
+        assert_eq!(recovered.timeline.tracks()[0].clips().len(), 1);
+        assert_eq!(recovered.timeline.tracks()[0].clips()[0].speed, 1.0);
+        assert_eq!(
+            recovered.timeline.tracks()[0].clips()[0].position_us,
+            1_000_000
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

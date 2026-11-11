@@ -117,6 +117,23 @@ pub enum JournalMutation {
     RemoveMarker {
         id: u64,
     },
+    TrimClip {
+        track_id: TrackId,
+        clip_id: ClipId,
+        new_source_in_us: i64,
+        new_source_out_us: i64,
+        new_position_us: i64,
+    },
+    SetSpeed {
+        track_id: TrackId,
+        clip_id: ClipId,
+        new_speed: f64,
+    },
+    SetOpacity {
+        track_id: TrackId,
+        clip_id: ClipId,
+        new_opacity: f32,
+    },
     Checkpoint {
         sequence: u64,
         snapshot_time_ms: i64,
@@ -182,11 +199,11 @@ impl JournalMutation {
                     .timeline
                     .track_mut(*track_id)
                     .ok_or("Track not found")?;
-                track
+                let new_id = track
                     .split_clip_at(*clip_id, *split_time_us)
                     .ok_or("Cannot split clip at specified timestamp")?;
-                if let Some(last_clip) = track.clips_mut().last_mut() {
-                    last_clip.id = new_clip.id;
+                if let Some(created) = track.clip_mut(new_id) {
+                    created.id = new_clip.id;
                 }
                 project.touch();
                 Ok(())
@@ -292,6 +309,58 @@ impl JournalMutation {
             }
             JournalMutation::RemoveMarker { id } => {
                 project.timeline.remove_marker(*id);
+                project.touch();
+                Ok(())
+            }
+            JournalMutation::TrimClip {
+                track_id,
+                clip_id,
+                new_source_in_us,
+                new_source_out_us,
+                new_position_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or("Track not found")?;
+                let clip = track.clip_mut(*clip_id).ok_or("Clip not found")?;
+                if *new_source_in_us >= 0 {
+                    clip.source_in_us = *new_source_in_us;
+                }
+                if *new_source_out_us >= 0 {
+                    clip.source_out_us = *new_source_out_us;
+                }
+                if *new_position_us >= 0 {
+                    clip.position_us = *new_position_us;
+                }
+                project.touch();
+                Ok(())
+            }
+            JournalMutation::SetSpeed {
+                track_id,
+                clip_id,
+                new_speed,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or("Track not found")?;
+                let clip = track.clip_mut(*clip_id).ok_or("Clip not found")?;
+                clip.speed = *new_speed;
+                project.touch();
+                Ok(())
+            }
+            JournalMutation::SetOpacity {
+                track_id,
+                clip_id,
+                new_opacity,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or("Track not found")?;
+                let clip = track.clip_mut(*clip_id).ok_or("Clip not found")?;
+                clip.opacity = *new_opacity;
                 project.touch();
                 Ok(())
             }
@@ -409,6 +478,7 @@ impl ProjectJournal {
 
         writeln!(file, "{}", line)?;
         file.flush()?;
+        file.sync_all()?;
 
         Ok(entry)
     }
@@ -465,6 +535,7 @@ impl ProjectJournal {
                     file.set_len(start_offset)?;
                     file.seek(SeekFrom::Start(start_offset))?;
                     file.flush()?;
+                    file.sync_all()?;
                     break;
                 }
             }
@@ -507,6 +578,7 @@ impl ProjectJournal {
 
         writeln!(file, "{}", line)?;
         file.flush()?;
+        file.sync_all()?;
 
         Ok(())
     }

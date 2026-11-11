@@ -81,7 +81,7 @@ impl SyntheticDecoder {
         let h = self.height as usize;
 
         // Background: dark slate gray
-        for chunk in buf.as_chunks_mut::<4>().0 {
+        for chunk in buf.chunks_exact_mut(4) {
             chunk.copy_from_slice(&[24, 28, 36, 255]);
         }
 

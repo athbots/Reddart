@@ -1,8 +1,10 @@
 //! Project: top-level container for a Reddart editing project.
 
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use uuid::Uuid;
 
+use crate::journal::{ProjectJournal, ReplayReport};
 use crate::{FrameRate, Resolution, Timeline};
 
 /// Current project file format version.
@@ -70,7 +72,7 @@ impl Project {
             .as_millis() as i64;
     }
 
-    /// Atomically save the project to disk (write to temp file then rename).
+    /// Atomically save the project to disk (write to temp file, sync to disk, then rename).
     /// This prevents corruption if the process or machine crashes mid-write.
     pub fn save_atomic(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         let path = path.as_ref();
@@ -88,8 +90,13 @@ impl Project {
         );
         let temp_path = parent.join(temp_filename);
 
-        // Write content to temporary file
-        std::fs::write(&temp_path, json.as_bytes())?;
+        // Write content to temporary file with physical disk sync
+        {
+            let mut file = std::fs::File::create(&temp_path)?;
+            file.write_all(json.as_bytes())?;
+            file.flush()?;
+            file.sync_all()?;
+        }
 
         // Atomic replace / rename
         if let Err(e) = std::fs::rename(&temp_path, path) {
@@ -106,6 +113,22 @@ impl Project {
         let content = std::fs::read_to_string(path)?;
         Self::from_json(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    /// Load a project from a file and replay any uncommitted operations from its WAL journal.
+    pub fn load_file_with_recovery(
+        path: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<(Self, Option<ReplayReport>)> {
+        let path = path.as_ref();
+        let mut project = Self::load_file(path)?;
+        let wal_path = path.with_extension("reddart.wal");
+        let report = if wal_path.exists() {
+            let mut journal = ProjectJournal::open_or_create(path)?;
+            Some(journal.replay_into(&mut project)?)
+        } else {
+            None
+        };
+        Ok((project, report))
     }
 
     /// Scan all clips and return paths of media files that do not exist on disk.

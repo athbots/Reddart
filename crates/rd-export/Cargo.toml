@@ -3,6 +3,9 @@ name = "rd-export"
 description = "Reddart export pipeline: parallel decode, render, encode stages"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 rd-core = { workspace = true }
