@@ -44,3 +44,4 @@ GitHub Actions automatically executes the clean build and runs test suites acros
 - Exact toolchain version (`rustc 1.85+`)
 - Zero Clippy warnings (`cargo clippy --all-targets --all-features -- -D warnings`)
 - 100% passing tests (`cargo test --workspace`)
+
