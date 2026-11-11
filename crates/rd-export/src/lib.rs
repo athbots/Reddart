@@ -12,8 +12,8 @@ pub mod pipeline;
 pub mod preset;
 
 pub use pipeline::{
-    BackgroundExportHandle, ColorGradeSettings, ExportJob, ExportProgress, MediaProbeResult,
-    RenderRequest, render_project_to_file, resample_and_grade_frame, select_encoder,
-    start_export_project,
+    BackgroundExportHandle, ColorGradeSettings, ExportJob, ExportProgress, HardwareEncoderReport,
+    MediaProbeResult, RenderRequest, probe_hardware_encoders, render_project_to_file,
+    resample_and_grade_frame, select_encoder, start_export_project,
 };
 pub use preset::ExportPreset;

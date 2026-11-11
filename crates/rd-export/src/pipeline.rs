@@ -410,57 +410,105 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
     Ok(temp_audio_path)
 }
 
+/// Helper to test if a specific encoder can be instantiated by FFmpeg on host hardware.
+fn test_encoder_available(encoder_name: &str) -> bool {
+    std::process::Command::new("ffmpeg")
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=0.03:size=64x64",
+            "-c:v",
+            encoder_name,
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Detailed hardware encoder diagnostics across GPU vendors (NVIDIA NVENC, AMD AMF, Intel QuickSync, Apple VideoToolbox, and CPU fallback).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareEncoderReport {
+    pub h264_nvenc: bool,
+    pub h264_amf: bool,
+    pub h264_qsv: bool,
+    pub h264_videotoolbox: bool,
+    pub libx264: bool,
+    pub hevc_nvenc: bool,
+    pub hevc_amf: bool,
+    pub hevc_qsv: bool,
+    pub hevc_videotoolbox: bool,
+    pub libx265: bool,
+    pub selected_h264: &'static str,
+    pub selected_hevc: &'static str,
+}
+
+/// Probe host environment for available hardware and software video encoders.
+pub fn probe_hardware_encoders() -> HardwareEncoderReport {
+    let h264_nvenc = test_encoder_available("h264_nvenc");
+    let h264_amf = test_encoder_available("h264_amf");
+    let h264_qsv = test_encoder_available("h264_qsv");
+    let h264_videotoolbox = test_encoder_available("h264_videotoolbox");
+    let libx264 = test_encoder_available("libx264");
+
+    let hevc_nvenc = test_encoder_available("hevc_nvenc");
+    let hevc_amf = test_encoder_available("hevc_amf");
+    let hevc_qsv = test_encoder_available("hevc_qsv");
+    let hevc_videotoolbox = test_encoder_available("hevc_videotoolbox");
+    let libx265 = test_encoder_available("libx265");
+
+    let selected_h264 = if h264_nvenc {
+        "h264_nvenc"
+    } else if h264_amf {
+        "h264_amf"
+    } else if h264_qsv {
+        "h264_qsv"
+    } else if h264_videotoolbox {
+        "h264_videotoolbox"
+    } else {
+        "libx264"
+    };
+
+    let selected_hevc = if hevc_nvenc {
+        "hevc_nvenc"
+    } else if hevc_amf {
+        "hevc_amf"
+    } else if hevc_qsv {
+        "hevc_qsv"
+    } else if hevc_videotoolbox {
+        "hevc_videotoolbox"
+    } else {
+        "libx265"
+    };
+
+    HardwareEncoderReport {
+        h264_nvenc,
+        h264_amf,
+        h264_qsv,
+        h264_videotoolbox,
+        libx264,
+        hevc_nvenc,
+        hevc_amf,
+        hevc_qsv,
+        hevc_videotoolbox,
+        libx265,
+        selected_h264,
+        selected_hevc,
+    }
+}
+
 /// Query the fastest verified hardware or software video encoder for the given codec family.
 pub fn select_encoder(video_codec: &str) -> &'static str {
-    static ENCODER_H264: OnceLock<&'static str> = OnceLock::new();
-    static ENCODER_HEVC: OnceLock<&'static str> = OnceLock::new();
+    static REPORT: OnceLock<HardwareEncoderReport> = OnceLock::new();
+    let report = REPORT.get_or_init(probe_hardware_encoders);
 
     if video_codec == "h265" || video_codec == "hevc" {
-        ENCODER_HEVC.get_or_init(|| {
-            let test = std::process::Command::new("ffmpeg")
-                .args([
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "testsrc=duration=0.03:size=64x64",
-                    "-c:v",
-                    "hevc_nvenc",
-                    "-f",
-                    "null",
-                    "-",
-                ])
-                .output();
-            if let Ok(out) = test
-                && out.status.success()
-            {
-                "hevc_nvenc"
-            } else {
-                "libx265"
-            }
-        })
+        report.selected_hevc
     } else {
-        ENCODER_H264.get_or_init(|| {
-            let test = std::process::Command::new("ffmpeg")
-                .args([
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "testsrc=duration=0.03:size=64x64",
-                    "-c:v",
-                    "h264_nvenc",
-                    "-f",
-                    "null",
-                    "-",
-                ])
-                .output();
-            if let Ok(out) = test
-                && out.status.success()
-            {
-                "h264_nvenc"
-            } else {
-                "libx264"
-            }
-        })
+        report.selected_h264
     }
 }
 

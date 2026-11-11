@@ -23,6 +23,7 @@ pub struct Timeline {
     /// All tracks, ordered from bottom to top.
     tracks: Vec<Track>,
     /// Next track ID counter.
+    #[serde(default)]
     next_track_id: u64,
     /// Playhead position in microseconds.
     #[serde(default)]

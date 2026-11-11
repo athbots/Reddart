@@ -86,3 +86,4 @@ Reddart uses standard editing shortcuts found across industry NLEs:
 - **Starter Templates:** Press `Ctrl + T` to instantiate pre-built projects configured for TikTok/Reels (9:16 vertical), YouTube (16:9 4K/1080p), or Square (1:1).
 - **Issue Tracker & Discussions:** [https://github.com/athbots/Reddart/issues](https://github.com/athbots/Reddart/issues)
 - **Website & Documentation:** [https://athbots.github.io/Reddart/](https://athbots.github.io/Reddart/)
+

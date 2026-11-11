@@ -89,3 +89,4 @@ To package and validate Windows distribution builds automatically:
 powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1
 ```
 The script runs the full Cargo release build, stages files, generates the zip archive, and updates `SHA256SUMS.txt`.
+
