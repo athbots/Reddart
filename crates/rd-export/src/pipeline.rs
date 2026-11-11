@@ -127,7 +127,8 @@ impl ExportJob {
         let b_str = format!("{}k", preset.video_bitrate_kbps);
         let ab_str = format!("{}k", preset.audio_bitrate_kbps);
 
-        let status = std::process::Command::new("ffmpeg")
+        let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        let status = std::process::Command::new(bin)
             .args([
                 "-y",
                 "-f",
@@ -164,7 +165,8 @@ impl ExportJob {
 
     /// Inspect an encoded media file using ffprobe to verify video and audio stream integrity.
     pub fn probe_file(path: &Path) -> Result<MediaProbeResult, std::io::Error> {
-        let output = std::process::Command::new("ffprobe")
+        let bin = find_ffprobe_executable().unwrap_or_else(|| PathBuf::from("ffprobe"));
+        let output = std::process::Command::new(bin)
             .args([
                 "-v",
                 "quiet",
@@ -325,6 +327,37 @@ pub fn resample_and_grade_frame(
     }
 }
 
+/// Resolve a clip source path against current working directory,
+/// environment overrides, standard sample asset directories, and parent directories.
+pub fn resolve_media_path(raw_path: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(raw_path);
+    if p.exists() {
+        return Some(p);
+    }
+    if let Ok(sample_dir) = std::env::var("REDDART_SAMPLE_DIR") {
+        let candidate = PathBuf::from(sample_dir).join(&p);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    let candidates = [
+        PathBuf::from("samples").join(&p),
+        PathBuf::from("../samples").join(&p),
+        PathBuf::from("ready_to_use/windows/samples").join(&p),
+        PathBuf::from("ready_to_use/windows").join(&p),
+        PathBuf::from("ready_to_use").join(&p),
+        PathBuf::from("../ready_to_use/windows/samples").join(&p),
+        PathBuf::from("../../ready_to_use/windows/samples").join(&p),
+        PathBuf::from("../../../ready_to_use/windows/samples").join(&p),
+    ];
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
 /// Mix audio from all enabled tracks of the project into a 48 kHz stereo 32-bit float PCM file.
 pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<PathBuf> {
     let temp_audio_path =
@@ -340,16 +373,12 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
         }
         for clip in track.clips() {
             let audio_path = match &clip.kind {
-                ClipKind::Audio(aclip) => Some(PathBuf::from(&aclip.source_path)),
-                ClipKind::Video(vclip) if vclip.has_audio => {
-                    Some(PathBuf::from(&vclip.source_path))
-                }
+                ClipKind::Audio(aclip) => resolve_media_path(&aclip.source_path),
+                ClipKind::Video(vclip) if vclip.has_audio => resolve_media_path(&vclip.source_path),
                 _ => None,
             };
 
-            if let Some(path) = audio_path
-                && path.exists()
-            {
+            if let Some(path) = audio_path {
                 let pcm = pcm_cache
                     .entry(path.clone())
                     .or_insert_with(|| rd_audio::decode_audio_to_pcm(&path).unwrap_or_default());
@@ -412,7 +441,8 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
 
 /// Helper to test if a specific encoder can be instantiated by FFmpeg on host hardware.
 fn test_encoder_available(encoder_name: &str) -> bool {
-    std::process::Command::new("ffmpeg")
+    let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    std::process::Command::new(bin)
         .args([
             "-f",
             "lavfi",
@@ -512,19 +542,95 @@ pub fn select_encoder(video_codec: &str) -> &'static str {
     }
 }
 
-/// Returns true if both `ffmpeg` and `ffprobe` executables are installed and runnable on PATH.
+/// Locate the FFmpeg executable by checking:
+/// 1. `<current_exe_dir>/bin/ffmpeg.exe` (or `ffmpeg` on Unix)
+/// 2. `<current_exe_dir>/ffmpeg.exe`
+/// 3. Local `bin/ffmpeg.exe`
+/// 4. System PATH
+pub fn find_ffmpeg_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffmpeg.exe"
+    } else {
+        "bin/ffmpeg"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let probe = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffmpeg"))
+    } else {
+        None
+    }
+}
+
+/// Locate the FFprobe executable by checking:
+/// 1. `<current_exe_dir>/bin/ffprobe.exe` (or `ffprobe` on Unix)
+/// 2. `<current_exe_dir>/ffprobe.exe`
+/// 3. Local `bin/ffprobe.exe`
+/// 4. System PATH
+pub fn find_ffprobe_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffprobe.exe"
+    } else {
+        "bin/ffprobe"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let probe = std::process::Command::new("ffprobe")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffprobe"))
+    } else {
+        None
+    }
+}
+
+/// Returns true if both `ffmpeg` and `ffprobe` executables are installed and runnable.
 pub fn is_ffmpeg_available() -> bool {
-    let ffmpeg_ok = std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let ffprobe_ok = std::process::Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    ffmpeg_ok && ffprobe_ok
+    find_ffmpeg_executable().is_some() && find_ffprobe_executable().is_some()
 }
 
 /// Rendering request specification.
@@ -561,7 +667,8 @@ pub fn render_project_to_file(
     let ab_str = format!("{}k", req.preset.audio_bitrate_kbps);
     let fps_str = format!("{:.3}", req.preset.fps);
 
-    let mut cmd = std::process::Command::new("ffmpeg");
+    let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let mut cmd = std::process::Command::new(ffmpeg_bin);
     cmd.arg("-y")
         .args([
             "-f",
@@ -640,8 +747,7 @@ pub fn render_project_to_file(
         if let Some(clip) = active_clip
             && let ClipKind::Video(ref vclip) = clip.kind
         {
-            let path = PathBuf::from(&vclip.source_path);
-            if path.exists() {
+            if let Some(path) = resolve_media_path(&vclip.source_path) {
                 let source_time_us =
                     clip.source_in_us + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
 

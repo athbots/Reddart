@@ -1,3 +1,3 @@
 # Reddart Video Editor v0.2.1 - Release Checksums
-a348b944d82016269ca4fd1c747ed35d8c5c17fd546748ee0911c1bb19b63c61  Reddart-v0.2.1-Windows-x86_64.zip
+f3f45d528d9cb15091420998a7015108f1c3c1bebf17ed028a437f9d0e5a324f  Reddart-v0.2.1-Windows-x86_64.zip
 a2321be188d3685b39573a6a93046c46d22826294a1553bf3e0d9e147f5c0163  Reddart.exe
