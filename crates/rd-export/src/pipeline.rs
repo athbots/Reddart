@@ -633,6 +633,26 @@ pub fn is_ffmpeg_available() -> bool {
     find_ffmpeg_executable().is_some() && find_ffprobe_executable().is_some()
 }
 
+/// Generate an industrial "MEDIA OFFLINE" warning graphic with diagonal hazard stripes
+/// when a referenced media file is detached or missing.
+pub fn generate_offline_graphic(dst: &mut [u8], width: u32, height: u32, _source_path: &str) {
+    for y in 0..height {
+        let row_offset = (y * width * 4) as usize;
+        for x in 0..width {
+            let stripe = ((x + y) / 48) % 2 == 0;
+            let col: [u8; 4] = if stripe {
+                [42, 24, 16, 255] // Amber dark stripe
+            } else {
+                [20, 22, 28, 255] // Graphite dark stripe
+            };
+            let pixel_idx = row_offset + (x * 4) as usize;
+            if pixel_idx + 4 <= dst.len() {
+                dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
+            }
+        }
+    }
+}
+
 /// Rendering request specification.
 pub struct RenderRequest<'a> {
     pub project: &'a Project,
@@ -832,6 +852,15 @@ pub fn render_project_to_file(
 
                     rendered = true;
                 }
+            } else {
+                // EXPLICIT OFFLINE-MEDIA PLACEHOLDER: NEVER silently substitute synthetic footage
+                generate_offline_graphic(
+                    &mut frame_buffer,
+                    req.preset.width,
+                    req.preset.height,
+                    &vclip.source_path,
+                );
+                rendered = true;
             }
         }
 

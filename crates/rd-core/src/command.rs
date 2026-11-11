@@ -79,6 +79,8 @@ pub enum Command {
     },
     /// Remove a track (stores complete track for undo).
     RemoveTrack { track: crate::Track, index: usize },
+    /// Relink media matching old_path to new_path across the project.
+    RelinkMedia { old_path: String, new_path: String },
     /// A group of commands applied atomically.
     Compound {
         label: String,
@@ -215,6 +217,10 @@ impl Command {
                 project.timeline.remove_track(track.id);
                 Ok(())
             }
+            Command::RelinkMedia { old_path, new_path } => {
+                project.relink_media(old_path, new_path);
+                Ok(())
+            }
             Command::Compound { commands, .. } => {
                 for cmd in commands {
                     cmd.apply(project)?;
@@ -349,6 +355,10 @@ impl Command {
                 name: track.name.clone(),
                 index: *index,
             },
+            Command::RelinkMedia { old_path, new_path } => Command::RelinkMedia {
+                old_path: new_path.clone(),
+                new_path: old_path.clone(),
+            },
             Command::Compound { label, commands } => Command::Compound {
                 label: format!("Undo {}", label),
                 commands: commands.iter().rev().map(|c| c.inverse()).collect(),
@@ -450,6 +460,12 @@ impl Command {
             }],
             Command::RemoveTrack { track, .. } => {
                 vec![JournalMutation::RemoveTrack { id: track.id }]
+            }
+            Command::RelinkMedia { old_path, new_path } => {
+                vec![JournalMutation::RelinkMedia {
+                    old_path: old_path.clone(),
+                    new_path: new_path.clone(),
+                }]
             }
             Command::Compound { commands, .. } => {
                 commands.iter().flat_map(|c| c.to_mutations()).collect()

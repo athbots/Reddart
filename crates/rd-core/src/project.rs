@@ -34,6 +34,14 @@ pub struct Project {
     pub modified_at: i64,
 }
 
+/// Detailed descriptor of an offline or missing media reference in a project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingMediaItem {
+    pub clip_id: crate::ClipId,
+    pub track_id: crate::TrackId,
+    pub source_path: String,
+}
+
 impl Project {
     /// Create a new empty project with default settings.
     pub fn new(name: impl Into<String>) -> Self {
@@ -134,12 +142,28 @@ impl Project {
     /// Scan all clips and return paths of media files that do not exist on disk.
     pub fn find_missing_media(&self) -> Vec<std::path::PathBuf> {
         let mut missing = Vec::new();
+        for item in self.find_missing_media_items() {
+            let path = std::path::PathBuf::from(item.source_path);
+            if !missing.contains(&path) {
+                missing.push(path);
+            }
+        }
+        missing
+    }
+
+    /// Scan all clips and return structured metadata for every media file missing on disk.
+    pub fn find_missing_media_items(&self) -> Vec<MissingMediaItem> {
+        let mut missing = Vec::new();
         for track in self.timeline.tracks() {
             for clip in track.clips() {
                 if let Some(src) = clip.source_path() {
                     let path = std::path::PathBuf::from(src);
-                    if !path.exists() && !missing.contains(&path) {
-                        missing.push(path);
+                    if !path.exists() {
+                        missing.push(MissingMediaItem {
+                            clip_id: clip.id,
+                            track_id: track.id,
+                            source_path: src.to_string(),
+                        });
                     }
                 }
             }

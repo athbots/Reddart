@@ -14,7 +14,7 @@ pub mod preset;
 pub use pipeline::{
     BackgroundExportHandle, ColorGradeSettings, ExportJob, ExportProgress, HardwareEncoderReport,
     MediaProbeResult, RenderRequest, find_ffmpeg_executable, find_ffprobe_executable,
-    is_ffmpeg_available, probe_hardware_encoders, render_project_to_file, resample_and_grade_frame,
-    resolve_media_path, select_encoder, start_export_project,
+    generate_offline_graphic, is_ffmpeg_available, probe_hardware_encoders, render_project_to_file,
+    resample_and_grade_frame, resolve_media_path, select_encoder, start_export_project,
 };
 pub use preset::ExportPreset;

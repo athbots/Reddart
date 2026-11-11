@@ -134,6 +134,10 @@ pub enum JournalMutation {
         clip_id: ClipId,
         new_opacity: f32,
     },
+    RelinkMedia {
+        old_path: String,
+        new_path: String,
+    },
     Checkpoint {
         sequence: u64,
         snapshot_time_ms: i64,
@@ -361,6 +365,11 @@ impl JournalMutation {
                     .ok_or("Track not found")?;
                 let clip = track.clip_mut(*clip_id).ok_or("Clip not found")?;
                 clip.opacity = *new_opacity;
+                project.touch();
+                Ok(())
+            }
+            JournalMutation::RelinkMedia { old_path, new_path } => {
+                project.relink_media(old_path, new_path);
                 project.touch();
                 Ok(())
             }

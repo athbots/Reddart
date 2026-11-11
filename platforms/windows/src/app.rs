@@ -94,7 +94,7 @@ pub struct EditorData {
     pub export_completed: bool,
     pub last_save_path: Option<PathBuf>,
     pub last_autosave_time: Instant,
-    pub missing_media: Vec<PathBuf>,
+    pub missing_media: Vec<rd_core::MissingMediaItem>,
     pub status_message: Option<(String, Instant)>,
     pub snapping_enabled: bool,
     pub master_volume: f32,
@@ -398,8 +398,7 @@ impl EditorData {
 
         if let Some(clip) = active_clip {
             if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
-                let path = PathBuf::from(&vclip.source_path);
-                if path.exists() {
+                if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
                     let source_time_us = clip.source_in_us
                         + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
 
@@ -1550,7 +1549,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 proj.name, report.valid_records_replayed
                             );
                         }
-                        ed.missing_media = proj.find_missing_media();
+                        ed.missing_media = proj.find_missing_media_items();
                         ed.last_save_path = Some(path.clone());
                         ed.project = proj;
                         ed.journal = journal;
@@ -3191,36 +3190,54 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
     // 4. Central Panel: Video Preview (Program Monitor)
     egui::CentralPanel::default().show(ctx, |ui| {
-        // Missing Media Alert Banner
+        // Missing Media Alert Banner with per-clip itemization and safe relinking
         if !ed.missing_media.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(format!(
-                        "[!] Offline Media: {} file(s) detached",
+                        "⚠️ OFFLINE MEDIA: {} detached clip reference(s) detected",
                         ed.missing_media.len()
                     ))
-                    .color(egui::Color32::from_rgb(245, 158, 11))
+                    .color(egui::Color32::from_rgb(239, 68, 68))
                     .strong(),
                 );
-                if studio_btn(
-                    ui,
-                    "Relink Media Files...",
-                    Some(egui::Color32::from_rgb(217, 119, 6)),
-                    false,
-                )
-                .clicked()
-                    && let Some(new_file) = rfd::FileDialog::new().pick_file()
-                    && let Some(first_missing) = ed.missing_media.first().cloned()
-                {
-                    let count = ed.project.relink_media(
-                        &first_missing.to_string_lossy(),
-                        &new_file.to_string_lossy(),
-                    );
-                    ed.status_message =
-                        Some((format!("Relinked {} clip(s)", count), Instant::now()));
-                    ed.missing_media = ed.project.find_missing_media();
-                }
             });
+            let mut relink_pair: Option<(String, PathBuf)> = None;
+            for item in &ed.missing_media {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "  • Clip {} [Track {}]: {}",
+                            item.clip_id.0, item.track_id.0, item.source_path
+                        ))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(209, 213, 219)),
+                    );
+                    if studio_btn(
+                        ui,
+                        "Relink...",
+                        Some(egui::Color32::from_rgb(217, 119, 6)),
+                        false,
+                    )
+                    .clicked()
+                    {
+                        if let Some(new_file) = rfd::FileDialog::new().pick_file() {
+                            relink_pair = Some((item.source_path.clone(), new_file));
+                        }
+                    }
+                });
+            }
+            if let Some((old_path, new_file)) = relink_pair {
+                let new_path_str = new_file.to_string_lossy().to_string();
+                let count = ed.project.relink_media(&old_path, &new_path_str);
+                ed.record_mutation(rd_core::JournalMutation::RelinkMedia {
+                    old_path,
+                    new_path: new_path_str,
+                });
+                ed.status_message = Some((format!("Relinked {} clip(s)", count), Instant::now()));
+                ed.missing_media = ed.project.find_missing_media_items();
+                ed.needs_monitor_update = true;
+            }
             ui.separator();
         }
 
@@ -4215,8 +4232,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         egui::vec2(clip_w, track_lane_height - 4.0),
                     );
 
+                    let is_missing = ed.missing_media.iter().any(|m| m.clip_id == clip.id);
                     let is_selected = ed.selected_clip == Some(clip.id);
-                    let (clip_color, top_accent) = if is_selected {
+                    let (clip_color, top_accent) = if is_missing {
+                        (
+                            egui::Color32::from_rgb(60, 24, 20),
+                            egui::Color32::from_rgb(239, 68, 68),
+                        )
+                    } else if is_selected {
                         (
                             egui::Color32::from_rgb(37, 99, 235),
                             egui::Color32::from_rgb(96, 165, 250),
@@ -4250,7 +4273,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     );
                     painter.rect_filled(accent_rect, 0.0, top_accent);
 
-                    if is_selected {
+                    if is_missing {
+                        painter.rect_stroke(
+                            clip_rect,
+                            2.0,
+                            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(239, 68, 68)),
+                            egui::StrokeKind::Inside,
+                        );
+                    } else if is_selected {
                         painter.rect_stroke(
                             clip_rect,
                             2.0,
@@ -4260,13 +4290,22 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     }
 
                     // Clip duration label formatted in SMPTE or seconds
-                    let label = format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64());
+                    let dur_smpte = format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64());
+                    let label = if is_missing {
+                        format!("⚠️ OFFLINE | {}", dur_smpte)
+                    } else {
+                        dur_smpte
+                    };
                     painter.text(
                         egui::pos2(clip_start_x + 6.0, y + track_lane_height / 2.0),
                         egui::Align2::LEFT_CENTER,
                         label,
                         egui::FontId::monospace(10.0),
-                        egui::Color32::from_rgb(220, 225, 235),
+                        if is_missing {
+                            egui::Color32::from_rgb(252, 165, 165)
+                        } else {
+                            egui::Color32::from_rgb(220, 225, 235)
+                        },
                     );
 
                     // Check click on clip based on active studio tool
