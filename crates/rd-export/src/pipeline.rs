@@ -39,6 +39,9 @@ pub struct ColorGradeSettings {
     pub exposure: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub lut_idx: usize,
 }
 
 impl Default for ColorGradeSettings {
@@ -47,6 +50,9 @@ impl Default for ColorGradeSettings {
             exposure: 0.0,
             contrast: 1.0,
             saturation: 1.0,
+            temperature: 0.0,
+            tint: 0.0,
+            lut_idx: 0,
         }
     }
 }
@@ -292,7 +298,10 @@ pub fn resample_and_grade_frame(
     // Apply color grade in-place if non-default
     let has_grade = grade.exposure.abs() > 0.001
         || (grade.contrast - 1.0).abs() > 0.001
-        || (grade.saturation - 1.0).abs() > 0.001;
+        || (grade.saturation - 1.0).abs() > 0.001
+        || grade.temperature.abs() > 0.01
+        || grade.tint.abs() > 0.01
+        || grade.lut_idx > 0;
 
     if has_grade {
         let exp_mul = (2.0_f32).powf(grade.exposure);
@@ -320,9 +329,77 @@ pub fn resample_and_grade_frame(
             g = luma + (g - luma) * sat;
             b = luma + (b - luma) * sat;
 
-            chunk[0] = (r.clamp(0.0, 1.0) * 255.0) as u8;
-            chunk[1] = (g.clamp(0.0, 1.0) * 255.0) as u8;
-            chunk[2] = (b.clamp(0.0, 1.0) * 255.0) as u8;
+            // Temperature (Kelvin Warm/Cool)
+            if grade.temperature.abs() > 0.01 {
+                let t = grade.temperature / 100.0;
+                r += t * 0.12;
+                b -= t * 0.12;
+            }
+
+            // Tint (Magenta / Green)
+            if grade.tint.abs() > 0.01 {
+                let m = grade.tint / 100.0;
+                g -= m * 0.10;
+                r += m * 0.05;
+                b += m * 0.05;
+            }
+
+            // 3D Look-Up Table profile emulations
+            match grade.lut_idx {
+                1 => {
+                    // Teal & Orange (Hollywood blockbuster)
+                    if luma < 0.5 {
+                        let w = (1.0 - luma * 2.0).clamp(0.0, 1.0);
+                        r -= 0.06 * w;
+                        g += 0.02 * w;
+                        b += 0.08 * w;
+                    } else {
+                        let w = ((luma - 0.5) * 2.0).clamp(0.0, 1.0);
+                        r += 0.08 * w;
+                        g += 0.03 * w;
+                        b -= 0.05 * w;
+                    }
+                }
+                2 => {
+                    // Golden Hour (Vintage Warm)
+                    r += 0.06;
+                    g += 0.03;
+                    b -= 0.04;
+                    if luma < 0.25 {
+                        r += 0.02;
+                        g += 0.01;
+                    }
+                }
+                3 => {
+                    // High-Contrast Noir B&W
+                    let noir = ((luma - 0.5) * 1.35 + 0.5).clamp(0.0, 1.0);
+                    r = noir;
+                    g = noir;
+                    b = noir;
+                }
+                4 => {
+                    // Kodak 2383 Print Film Emulation
+                    let s_r = if r < 0.5 {
+                        2.0 * r * r
+                    } else {
+                        1.0 - 2.0 * (1.0 - r) * (1.0 - r)
+                    };
+                    r = s_r * 1.04;
+                    g *= 0.98;
+                    b *= 0.92;
+                }
+                5 => {
+                    // Fujifilm Eterna 500T
+                    r = r * 0.96 + 0.015;
+                    g = g * 0.98 + 0.01;
+                    b = b * 1.02 + 0.01;
+                }
+                _ => {}
+            }
+
+            chunk[0] = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+            chunk[1] = (g.clamp(0.0, 1.0) * 255.0).round() as u8;
+            chunk[2] = (b.clamp(0.0, 1.0) * 255.0).round() as u8;
         }
     }
 }
@@ -1171,6 +1248,9 @@ mod tests {
                 exposure: 0.2,
                 contrast: 1.1,
                 saturation: 1.05,
+                temperature: 0.0,
+                tint: 0.0,
+                lut_idx: 0,
             },
         };
 

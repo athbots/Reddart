@@ -68,6 +68,12 @@ pub enum JournalMutation {
         clip_id: ClipId,
         new_position_us: i64,
     },
+    MoveClipTrack {
+        source_track_id: TrackId,
+        target_track_id: TrackId,
+        clip_id: ClipId,
+        new_position_us: i64,
+    },
     SplitClip {
         track_id: TrackId,
         clip_id: ClipId,
@@ -200,6 +206,29 @@ impl JournalMutation {
                 clip.position_us = *new_position_us;
                 project.touch();
                 Ok(())
+            }
+            JournalMutation::MoveClipTrack {
+                source_track_id,
+                target_track_id,
+                clip_id,
+                new_position_us,
+            } => {
+                let clip_opt = project
+                    .timeline
+                    .track_mut(*source_track_id)
+                    .and_then(|t| t.remove_clip(*clip_id));
+                if let Some(mut clip) = clip_opt {
+                    clip.position_us = *new_position_us;
+                    let target_track = project
+                        .timeline
+                        .track_mut(*target_track_id)
+                        .ok_or("Target track not found")?;
+                    target_track.add_clip(clip);
+                    project.touch();
+                    Ok(())
+                } else {
+                    Err("Clip or source track not found")
+                }
             }
             JournalMutation::SplitClip {
                 track_id,
