@@ -59,10 +59,28 @@ fn compute_audio_metrics(samples: &[f32]) -> (f64, f32) {
     (rms, peak)
 }
 
+fn require_or_skip_ffmpeg(test_name: &str) -> bool {
+    if !is_ffmpeg_available() {
+        let is_ci = std::env::var("CI").is_ok() || std::env::var("REDDART_REQUIRE_FFMPEG").is_ok();
+        if is_ci {
+            panic!(
+                "CRITICAL: FFmpeg and FFprobe are required in CI environment (test '{}'), but were not found on system PATH!",
+                test_name
+            );
+        } else {
+            eprintln!(
+                "[SKIPPED TEST] {}: FFmpeg/FFprobe not found on local PATH. Set REDDART_REQUIRE_FFMPEG=1 to enforce.",
+                test_name
+            );
+            return false;
+        }
+    }
+    true
+}
+
 #[test]
 fn test_render_sample_project_file() {
-    if !is_ffmpeg_available() {
-        eprintln!("Skipping sample project render test: ffmpeg/ffprobe not installed on host PATH");
+    if !require_or_skip_ffmpeg("test_render_sample_project_file") {
         return;
     }
 
@@ -138,10 +156,7 @@ fn test_render_sample_project_file() {
 
 #[test]
 fn test_sample_project_completeness_and_genuine_decoding() {
-    if !is_ffmpeg_available() {
-        eprintln!(
-            "Skipping sample project completeness test: ffmpeg/ffprobe not installed on host PATH"
-        );
+    if !require_or_skip_ffmpeg("test_sample_project_completeness_and_genuine_decoding") {
         return;
     }
 
@@ -347,8 +362,7 @@ fn test_sample_project_completeness_and_genuine_decoding() {
 
 #[test]
 fn test_render_all_five_starter_templates() {
-    if !is_ffmpeg_available() {
-        eprintln!("Skipping template render test: ffmpeg/ffprobe not installed on host PATH");
+    if !require_or_skip_ffmpeg("test_render_all_five_starter_templates") {
         return;
     }
 

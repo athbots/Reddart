@@ -264,9 +264,17 @@ fn test_release_export_and_probe_pipeline() {
             );
         }
     } else {
-        eprintln!(
-            "Hardware/FFmpeg encoder not available in this test environment; skipping render verification."
-        );
+        let is_ci = std::env::var("CI").is_ok() || std::env::var("REDDART_REQUIRE_FFMPEG").is_ok();
+        if is_ci {
+            panic!(
+                "CRITICAL: Hardware/FFmpeg encoder is required in CI for release_suite, but render failed: {:?}",
+                res.err()
+            );
+        } else {
+            eprintln!(
+                "[SKIPPED TEST] test_release_export_and_probe_pipeline: Hardware/FFmpeg encoder not available in local environment."
+            );
+        }
     }
 
     let _ = std::fs::remove_dir_all(&temp_dir);

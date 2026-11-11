@@ -307,6 +307,7 @@ Test coverage includes:
 
 - **Feature Implementation & Verification Matrix:** [docs/FEATURE_IMPLEMENTATION_MATRIX.md](docs/FEATURE_IMPLEMENTATION_MATRIX.md)
 - **WAL Transaction Semantics & Durability:** [docs/WAL_TRANSACTION_SEMANTICS.md](docs/WAL_TRANSACTION_SEMANTICS.md)
+- **Git Branching & CI Workflow:** [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
 - **FFmpeg & Codec Distribution Compliance:** [docs/FFMPEG_AND_CODEC_AUDIT.md](docs/FFMPEG_AND_CODEC_AUDIT.md)
 - **Hardware Compatibility Matrix (Windows 10/11 GPU):** [docs/HARDWARE_COMPATIBILITY_MATRIX.md](docs/HARDWARE_COMPATIBILITY_MATRIX.md)
 - **Reproducible Release Builds Protocol:** [docs/REPRODUCIBLE_BUILDS.md](docs/REPRODUCIBLE_BUILDS.md)
