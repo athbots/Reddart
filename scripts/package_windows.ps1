@@ -36,8 +36,9 @@ Write-Host "Authoritative Version: v$Version (from Cargo.toml)" -ForegroundColor
 Write-Host "Target Package:        $DistName" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# Ensure VERSION.txt is strictly in sync with Cargo.toml
-Set-Content -Path (Join-Path $RootDir "ready_to_use\windows\VERSION.txt") -Value "Reddart Video Editor`r`nVersion: $Version`r`n" -Encoding utf8
+# Ensure VERSION.txt is strictly in sync with Cargo.toml (UTF-8 without BOM)
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $RootDir "ready_to_use\windows\VERSION.txt"), "Reddart Video Editor`r`nVersion: $Version`r`n", $utf8NoBom)
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -217,7 +218,8 @@ $ZipHash  $DistName.zip
 $ExeHash  Reddart.exe
 "@
 
-Set-Content -Path $ShaOut -Value $ChecksumContent -Encoding utf8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ShaOut, $ChecksumContent, $utf8NoBom)
 
 # Synchronize manifest.json
 $ManifestPath = Join-Path $RootDir "ready_to_use\windows\manifest.json"
@@ -226,7 +228,7 @@ if (Test-Path $ManifestPath) {
     $Manifest | Add-Member -NotePropertyName "sha256_executable" -NotePropertyValue $ExeHash -Force
     $Manifest | Add-Member -NotePropertyName "sha256_archive" -NotePropertyValue $ZipHash -Force
     $ManifestJson = $Manifest | ConvertTo-Json -Depth 10
-    Set-Content -Path $ManifestPath -Value $ManifestJson -Encoding utf8
+    [System.IO.File]::WriteAllText($ManifestPath, $ManifestJson, $utf8NoBom)
 }
 
 # Synchronize docs/RELEASE_NOTES_AND_LIMITATIONS.md
@@ -242,7 +244,7 @@ if (Test-Path $RelNotesPath) {
     } else {
         $RelNotes = [regex]::Replace($RelNotes, '(?m)^\*\*Archive Checksum \(SHA-256\):\*\* `[a-fA-F0-9]+`', $ArcLine)
     }
-    Set-Content -Path $RelNotesPath -Value $RelNotes -Encoding utf8
+    [System.IO.File]::WriteAllText($RelNotesPath, $RelNotes, $utf8NoBom)
 }
 
 # Synchronize website/index.html
@@ -251,7 +253,7 @@ if (Test-Path $WebPath) {
     $WebContent = Get-Content $WebPath -Raw
     $HashBox = "<div class=`"hash-box`">`r`n            <code>Archive SHA-256: {0}<br>Binary SHA-256: {1}</code>`r`n          </div>" -f $ZipHash, $ExeHash
     $WebContent = [regex]::Replace($WebContent, '(?s)<div class="hash-box">.*?</div>', $HashBox)
-    Set-Content -Path $WebPath -Value $WebContent -Encoding utf8
+    [System.IO.File]::WriteAllText($WebPath, $WebContent, $utf8NoBom)
 }
 
 # Verify synchronicity across all 4 files

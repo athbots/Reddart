@@ -302,7 +302,7 @@ fn handle_export(project_path_str: &str, output_path_str: &str, preset_name: &st
     let t0 = Instant::now();
     let render_result = std::thread::scope(|s| {
         let render_thread =
-            s.spawn(|| rd_export::render_project_to_file(req, Some(&progress_tx), None));
+            s.spawn(move || rd_export::render_project_to_file(req, Some(&progress_tx), None));
 
         while let Ok(prog) = progress_rx.recv() {
             let pct = (prog.fraction * 100.0) as u32;
@@ -319,6 +319,9 @@ fn handle_export(project_path_str: &str, output_path_str: &str, preset_name: &st
                 prog.eta_seconds
             );
             let _ = std::io::Write::flush(&mut std::io::stderr());
+            if prog.fraction >= 1.0 {
+                break;
+            }
         }
         eprintln!();
 

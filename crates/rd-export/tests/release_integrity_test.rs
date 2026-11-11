@@ -141,7 +141,7 @@ fn test_release_manifest_and_file_hash_integrity() {
     let mut expected_hashes: HashMap<String, String> = HashMap::new();
 
     for line in sums_content.lines() {
-        let trimmed = line.trim();
+        let trimmed = line.trim().trim_start_matches('\u{feff}');
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
