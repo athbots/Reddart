@@ -512,6 +512,21 @@ pub fn select_encoder(video_codec: &str) -> &'static str {
     }
 }
 
+/// Returns true if both `ffmpeg` and `ffprobe` executables are installed and runnable on PATH.
+pub fn is_ffmpeg_available() -> bool {
+    let ffmpeg_ok = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let ffprobe_ok = std::process::Command::new("ffprobe")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    ffmpeg_ok && ffprobe_ok
+}
+
 /// Rendering request specification.
 pub struct RenderRequest<'a> {
     pub project: &'a Project,

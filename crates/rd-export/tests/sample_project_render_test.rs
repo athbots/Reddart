@@ -8,12 +8,18 @@
 use rd_core::Project;
 use rd_effects::TemplateSpec;
 use rd_export::{
-    ColorGradeSettings, ExportJob, ExportPreset, RenderRequest, render_project_to_file,
+    ColorGradeSettings, ExportJob, ExportPreset, RenderRequest, is_ffmpeg_available,
+    render_project_to_file,
 };
 use std::path::Path;
 
 #[test]
 fn test_render_sample_project_file() {
+    if !is_ffmpeg_available() {
+        eprintln!("Skipping sample project render test: ffmpeg/ffprobe not installed on host PATH");
+        return;
+    }
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
     let sample_path = workspace_root.join("ready_to_use/windows/samples/Demo_Project.reddart");
@@ -66,6 +72,11 @@ fn test_render_sample_project_file() {
 
 #[test]
 fn test_render_all_five_starter_templates() {
+    if !is_ffmpeg_available() {
+        eprintln!("Skipping template render test: ffmpeg/ffprobe not installed on host PATH");
+        return;
+    }
+
     let templates = TemplateSpec::starter_templates();
     assert_eq!(
         templates.len(),

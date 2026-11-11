@@ -49,9 +49,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Linux audio dependencies
+      - name: Install Linux audio and media dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg
 
       - name: Cache cargo registry
         uses: actions/cache@v4
