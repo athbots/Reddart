@@ -237,6 +237,24 @@ impl AudioEngine {
         })
     }
 
+    /// Set the consolidated timeline PCM audio buffer into the real-time mixer.
+    pub fn set_timeline_pcm(&self, pcm_data: Vec<f32>) {
+        if let Ok(mut mix) = self.mixer.lock() {
+            mix.clear();
+            mix.add_track(pcm_data, 1.0);
+        }
+    }
+
+    /// Check whether a live CPAL hardware output stream is currently attached.
+    pub fn has_hardware_stream(&self) -> bool {
+        self._stream.is_some()
+    }
+
+    /// Check whether the audio engine is actively playing.
+    pub fn is_playing(&self) -> bool {
+        self.is_playing.load(Ordering::Acquire)
+    }
+
     /// Load decoded PCM audio buffer into the real-time mixer.
     pub fn load_track_pcm(&self, pcm_data: Vec<f32>, volume: f32) {
         if let Ok(mut mix) = self.mixer.lock() {

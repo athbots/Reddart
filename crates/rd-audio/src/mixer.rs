@@ -40,6 +40,11 @@ impl AudioMixer {
         });
     }
 
+    /// Clear all loaded tracks from the mixer.
+    pub fn clear(&mut self) {
+        self.tracks.clear();
+    }
+
     /// Set master volume multiplier (0.0 to 1.0+).
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.max(0.0);

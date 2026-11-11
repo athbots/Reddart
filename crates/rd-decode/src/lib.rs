@@ -12,9 +12,11 @@ pub mod ffmpeg;
 pub mod pool;
 pub mod prefetch;
 pub mod proxy;
+pub mod service;
 pub mod synthetic;
 
-pub use ffmpeg::FfmpegDecoder;
+pub use ffmpeg::{FfmpegDecoder, find_ffmpeg_executable, find_ffprobe_executable};
+pub use service::{AsyncDecoderService, FrameCache, FrameRequest, FrameResponse};
 pub use synthetic::{PatternStyle, SyntheticDecoder};
 
 use anyhow::Result;

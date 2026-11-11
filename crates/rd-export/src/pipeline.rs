@@ -737,7 +737,7 @@ pub fn render_project_to_file(
         std::io::Error::other("Failed to capture FFmpeg stdin")
     })?;
 
-    let mut decoders: HashMap<PathBuf, FfmpegDecoder> = HashMap::new();
+    let mut decoders: HashMap<PathBuf, Option<FfmpegDecoder>> = HashMap::new();
     let mut frame_buffer = vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
     let start_time = Instant::now();
 
@@ -752,126 +752,178 @@ pub fn render_project_to_file(
 
         let time_us = ((frame_idx as f64 / req.preset.fps) * 1_000_000.0).round() as i64;
 
-        // Find active video clip on topmost enabled track
-        let active_clip = req
-            .project
-            .timeline
-            .tracks()
-            .iter()
-            .rev()
-            .filter(|t| t.kind == TrackKind::Video && t.enabled)
-            .find_map(|t| t.clip_at(time_us).cloned());
+        // Collect all active video clips across all enabled video tracks (ordered bottom to top)
+        let mut active_layers: Vec<rd_render::CompositorLayer> = Vec::new();
 
-        let mut rendered = false;
-
-        if let Some(clip) = active_clip
-            && let ClipKind::Video(ref vclip) = clip.kind
-        {
-            if let Some(path) = resolve_media_path(&vclip.source_path) {
-                let source_time_us =
-                    clip.source_in_us + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
-
-                let decoder = decoders.entry(path.clone()).or_insert_with(|| {
-                    FfmpegDecoder::open(&path).expect("Failed to initialize video decoder")
-                });
-
-                if let Ok(Some(decoded)) = decoder.decode_frame_at(source_time_us)
-                    && let Some(rgba) = decoded.rgba_data
-                {
-                    resample_and_grade_frame(
-                        &rgba,
-                        decoded.width,
-                        decoded.height,
-                        &mut frame_buffer,
-                        req.preset.width,
-                        req.preset.height,
-                        req.grade,
-                    );
-
-                    // Apply effective keyframed opacity
+        for track in req.project.timeline.tracks() {
+            if !track.enabled || track.kind != TrackKind::Video {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(time_us) {
+                if let ClipKind::Video(ref vclip) = clip.kind {
                     let eff_opacity = clip.effective_opacity(time_us);
-                    if eff_opacity < 0.999 {
-                        for pixel in frame_buffer.chunks_exact_mut(4) {
-                            pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
-                            pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
-                            pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
-                            pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
-                        }
+                    if eff_opacity <= 0.001 {
+                        continue;
                     }
 
-                    // Apply shape masking if active on clip (with keyframed mask parameters)
-                    if let Some(mask_eff) = clip
+                    let eff_trans = clip.effective_transform(time_us);
+                    let shape_mask = clip
                         .effects
                         .iter()
                         .find(|e| e.effect_id == "mask_shape" && e.enabled)
-                    {
-                        let shape_type = mask_eff
-                            .parameters
-                            .get("shape_type")
-                            .copied()
-                            .unwrap_or(0.0) as u32;
-                        let center_x = clip
-                            .evaluate_keyframe("center_x", time_us)
-                            .or_else(|| mask_eff.parameters.get("center_x").copied())
-                            .unwrap_or(0.5);
-                        let center_y = clip
-                            .evaluate_keyframe("center_y", time_us)
-                            .or_else(|| mask_eff.parameters.get("center_y").copied())
-                            .unwrap_or(0.5);
-                        let size_x = clip
-                            .evaluate_keyframe("size_x", time_us)
-                            .or_else(|| mask_eff.parameters.get("size_x").copied())
-                            .unwrap_or(0.35);
-                        let size_y = clip
-                            .evaluate_keyframe("size_y", time_us)
-                            .or_else(|| mask_eff.parameters.get("size_y").copied())
-                            .unwrap_or(0.35);
-                        let feather = clip
-                            .evaluate_keyframe("feather", time_us)
-                            .or_else(|| mask_eff.parameters.get("feather").copied())
-                            .unwrap_or(0.05);
-                        let invert =
-                            mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+                        .map(|mask_eff| {
+                            let shape_type = mask_eff
+                                .parameters
+                                .get("shape_type")
+                                .copied()
+                                .unwrap_or(0.0) as u32;
+                            let center_x = clip
+                                .evaluate_keyframe("center_x", time_us)
+                                .or_else(|| mask_eff.parameters.get("center_x").copied())
+                                .unwrap_or(0.5);
+                            let center_y = clip
+                                .evaluate_keyframe("center_y", time_us)
+                                .or_else(|| mask_eff.parameters.get("center_y").copied())
+                                .unwrap_or(0.5);
+                            let size_x = clip
+                                .evaluate_keyframe("size_x", time_us)
+                                .or_else(|| mask_eff.parameters.get("size_x").copied())
+                                .unwrap_or(0.35);
+                            let size_y = clip
+                                .evaluate_keyframe("size_y", time_us)
+                                .or_else(|| mask_eff.parameters.get("size_y").copied())
+                                .unwrap_or(0.35);
+                            let feather = clip
+                                .evaluate_keyframe("feather", time_us)
+                                .or_else(|| mask_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let invert =
+                                mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
 
-                        let mask_params = rd_effects::ShapeMaskParams {
-                            shape_type,
-                            center_x,
-                            center_y,
-                            size_x,
-                            size_y,
-                            feather,
-                            invert,
-                        };
-                        rd_effects::apply_shape_mask(
-                            &mut frame_buffer,
+                            rd_effects::ShapeMaskParams {
+                                shape_type,
+                                center_x,
+                                center_y,
+                                size_x,
+                                size_y,
+                                feather,
+                                invert,
+                            }
+                        });
+
+                    if let Some(path) = resolve_media_path(&vclip.source_path) {
+                        let source_time_us = clip.source_in_us
+                            + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
+
+                        let decoder_opt =
+                            decoders.entry(path.clone()).or_insert_with(
+                                || match FfmpegDecoder::open(&path) {
+                                    Ok(d) => Some(d),
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Failed to open video decoder for {}: {:?}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                },
+                            );
+
+                        if let Some(decoder) = decoder_opt {
+                            if let Ok(Some(decoded)) = decoder.decode_frame_at(source_time_us)
+                                && let Some(rgba) = decoded.rgba_data
+                            {
+                                let mut layer_buf =
+                                    vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                                resample_and_grade_frame(
+                                    &rgba,
+                                    decoded.width,
+                                    decoded.height,
+                                    &mut layer_buf,
+                                    req.preset.width,
+                                    req.preset.height,
+                                    req.grade,
+                                );
+
+                                active_layers.push(rd_render::CompositorLayer {
+                                    rgba: layer_buf,
+                                    width: req.preset.width,
+                                    height: req.preset.height,
+                                    opacity: eff_opacity,
+                                    pos_x: eff_trans.position.x,
+                                    pos_y: eff_trans.position.y,
+                                    scale_x: eff_trans.scale.x,
+                                    scale_y: eff_trans.scale.y,
+                                    blend_mode: 0,
+                                    shape_mask,
+                                });
+                            }
+                        } else {
+                            // Media decoder failed; use offline graphic
+                            let mut offline_buf =
+                                vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                            generate_offline_graphic(
+                                &mut offline_buf,
+                                req.preset.width,
+                                req.preset.height,
+                                &vclip.source_path,
+                            );
+                            active_layers.push(rd_render::CompositorLayer {
+                                rgba: offline_buf,
+                                width: req.preset.width,
+                                height: req.preset.height,
+                                opacity: eff_opacity,
+                                pos_x: eff_trans.position.x,
+                                pos_y: eff_trans.position.y,
+                                scale_x: eff_trans.scale.x,
+                                scale_y: eff_trans.scale.y,
+                                blend_mode: 0,
+                                shape_mask,
+                            });
+                        }
+                    } else {
+                        // Media file missing; explicit offline-media placeholder
+                        let mut offline_buf =
+                            vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                        generate_offline_graphic(
+                            &mut offline_buf,
                             req.preset.width,
                             req.preset.height,
-                            &mask_params,
+                            &vclip.source_path,
                         );
+                        active_layers.push(rd_render::CompositorLayer {
+                            rgba: offline_buf,
+                            width: req.preset.width,
+                            height: req.preset.height,
+                            opacity: eff_opacity,
+                            pos_x: eff_trans.position.x,
+                            pos_y: eff_trans.position.y,
+                            scale_x: eff_trans.scale.x,
+                            scale_y: eff_trans.scale.y,
+                            blend_mode: 0,
+                            shape_mask,
+                        });
                     }
-
-                    rendered = true;
                 }
-            } else {
-                // EXPLICIT OFFLINE-MEDIA PLACEHOLDER: NEVER silently substitute synthetic footage
-                generate_offline_graphic(
-                    &mut frame_buffer,
-                    req.preset.width,
-                    req.preset.height,
-                    &vclip.source_path,
-                );
-                rendered = true;
             }
         }
 
-        if !rendered {
-            // Timeline gap: fill with dark letterbox slate
-            for pixel in frame_buffer.chunks_exact_mut(4) {
-                pixel[0] = 10;
-                pixel[1] = 12;
-                pixel[2] = 16;
-                pixel[3] = 255;
-            }
+        // Timeline base slate
+        for pixel in frame_buffer.chunks_exact_mut(4) {
+            pixel[0] = 10;
+            pixel[1] = 12;
+            pixel[2] = 16;
+            pixel[3] = 255;
+        }
+
+        if !active_layers.is_empty() {
+            rd_render::composite_layers_over(
+                &mut frame_buffer,
+                req.preset.width,
+                req.preset.height,
+                &active_layers,
+            );
         }
 
         // Composite active text / title overlays from all enabled tracks

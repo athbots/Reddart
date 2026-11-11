@@ -18,9 +18,10 @@ use winit::{
 };
 
 use crate::gpu;
-use rd_audio::{AudioClock, AudioEngine, MeteringState, decode_audio_to_pcm};
+use rd_audio::{AudioClock, AudioEngine, MeteringState, TimelineAudioScheduler};
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
-use rd_decode::FfmpegDecoder;
+use rd_decode::{AsyncDecoderService, FfmpegDecoder, FrameResponse};
+use rd_render::{CompositorLayer, composite_layers_over};
 
 /// Studio editing workspace mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +127,8 @@ pub struct EditorData {
     pub template_project_name: String,
     pub keyframe_param_selected: String,
     pub keyframe_easing_selected: rd_core::Easing,
+    pub async_decoder: AsyncDecoderService,
+    pub audio_scheduler: TimelineAudioScheduler,
 }
 
 impl EditorData {
@@ -190,20 +193,17 @@ impl EditorData {
         // Initialize low-latency CPAL hardware audio engine
         let audio_clock = AudioClock::new();
         let audio_engine = match AudioEngine::new(audio_clock) {
-            Ok(eng) => {
-                let eng = Arc::new(eng);
-                if let Some(ref d_path) = demo_path
-                    && let Ok(pcm) = decode_audio_to_pcm(d_path)
-                {
-                    eng.load_track_pcm(pcm, 1.0);
-                }
-                Some(eng)
-            }
+            Ok(eng) => Some(Arc::new(eng)),
             Err(e) => {
                 log::warn!("AudioEngine initialization notice: {:?}", e);
                 None
             }
         };
+
+        let mut audio_scheduler = TimelineAudioScheduler::new();
+        if let Some(ref audio) = audio_engine {
+            let _ = audio_scheduler.sync_timeline(audio, &project, None);
+        }
 
         let audio_metering = MeteringState {
             peak_l_dbfs: -96.0,
@@ -277,6 +277,20 @@ impl EditorData {
             template_project_name: "New Template Project".into(),
             keyframe_param_selected: "opacity".into(),
             keyframe_easing_selected: rd_core::Easing::Linear,
+            async_decoder: AsyncDecoderService::new(64),
+            audio_scheduler,
+        }
+    }
+
+    /// Synchronize the project's audio clips into the real-time audio mixer.
+    pub fn sync_audio_timeline(&mut self) {
+        if let Some(ref audio) = self.audio_engine {
+            if let Err(e) =
+                self.audio_scheduler
+                    .sync_timeline(audio, &self.project, self.solo_track)
+            {
+                log::warn!("Audio timeline synchronization notice: {:?}", e);
+            }
         }
     }
 
@@ -318,6 +332,7 @@ impl EditorData {
                     self.selected_clip = None;
                     self.selected_track = None;
                     self.missing_media.clear();
+                    self.sync_audio_timeline();
                     self.needs_monitor_update = true;
 
                     self.status_message = Some((
@@ -346,6 +361,7 @@ impl EditorData {
                     Some((format!("WAL persistence error: {}", e), Instant::now()));
                 return false;
             }
+            self.sync_audio_timeline();
             true
         } else {
             false
@@ -368,6 +384,7 @@ impl EditorData {
             Ok(()) => {
                 self.needs_monitor_update = true;
                 self.missing_media = self.project.find_missing_media_items();
+                self.sync_audio_timeline();
             }
             Err(e) => {
                 log::error!("Command execution failed: {}", e);
@@ -387,6 +404,7 @@ impl EditorData {
         if let Ok(true) = res {
             self.needs_monitor_update = true;
             self.missing_media = self.project.find_missing_media_items();
+            self.sync_audio_timeline();
         }
         res
     }
@@ -401,6 +419,7 @@ impl EditorData {
         if let Ok(true) = res {
             self.needs_monitor_update = true;
             self.missing_media = self.project.find_missing_media_items();
+            self.sync_audio_timeline();
         }
         res
     }
@@ -428,6 +447,8 @@ impl EditorData {
     /// Seek to a specific timestamp in microseconds and synchronize audio position.
     pub fn seek_to_time_us(&mut self, time_us: i64) {
         self.project.timeline.playhead_us = time_us.max(0);
+        self.async_decoder.bump_generation();
+        self.needs_monitor_update = true;
         if let Some(ref audio) = self.audio_engine {
             audio.seek_to_time_us(time_us);
         }
@@ -445,37 +466,121 @@ impl EditorData {
     pub fn update_monitor_frame(&mut self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
         let playhead_us = self.project.timeline.playhead_us;
 
-        // Find active video clip on topmost enabled video track
-        let active_clip = self
-            .project
-            .timeline
-            .tracks()
-            .iter()
-            .rev()
-            .filter(|t| t.kind == TrackKind::Video && t.enabled)
-            .find_map(|t| t.clip_at(playhead_us).cloned());
+        // Skip re-composite if playhead hasn't changed and no update is flagged
+        if playhead_us == self.last_rendered_pts_us && !self.needs_monitor_update {
+            return;
+        }
 
-        let mut updated = false;
+        // Collect all active video clips across all enabled video tracks (ordered bottom to top)
+        let mut layers: Vec<CompositorLayer> = Vec::new();
 
-        if let Some(clip) = active_clip {
-            if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
-                if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
-                    let source_time_us = clip.source_in_us
-                        + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
+        for track in self.project.timeline.tracks() {
+            if !track.enabled || track.kind != TrackKind::Video {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(playhead_us) {
+                if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
+                    let eff_opacity = clip.effective_opacity(playhead_us);
+                    if eff_opacity <= 0.001 {
+                        continue;
+                    }
 
-                    if source_time_us != self.last_rendered_pts_us || self.needs_monitor_update {
-                        let decoder = self.decoders.entry(path.clone()).or_insert_with(|| {
-                            FfmpegDecoder::open(&path).expect("Failed to initialize video decoder")
+                    let eff_trans = clip.effective_transform(playhead_us);
+                    let shape_mask = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "mask_shape" && e.enabled)
+                        .map(|mask_eff| {
+                            let shape_type = mask_eff
+                                .parameters
+                                .get("shape_type")
+                                .copied()
+                                .unwrap_or(0.0) as u32;
+                            let center_x = clip
+                                .evaluate_keyframe("center_x", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("center_x").copied())
+                                .unwrap_or(0.5);
+                            let center_y = clip
+                                .evaluate_keyframe("center_y", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("center_y").copied())
+                                .unwrap_or(0.5);
+                            let size_x = clip
+                                .evaluate_keyframe("size_x", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("size_x").copied())
+                                .unwrap_or(0.35);
+                            let size_y = clip
+                                .evaluate_keyframe("size_y", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("size_y").copied())
+                                .unwrap_or(0.35);
+                            let feather = clip
+                                .evaluate_keyframe("feather", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let invert =
+                                mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+
+                            rd_effects::ShapeMaskParams {
+                                shape_type,
+                                center_x,
+                                center_y,
+                                size_x,
+                                size_y,
+                                feather,
+                                invert,
+                            }
                         });
 
-                        if let Ok(Some(frame)) = decoder.decode_frame_at(source_time_us)
-                            && let Some(rgba) = frame.rgba_data
-                        {
+                    if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
+                        let source_time_us = clip.source_in_us
+                            + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
+
+                        // Check async decoder cache first for non-blocking instantaneous retrieval
+                        let maybe_frame =
+                            self.async_decoder.get_cached(&path, source_time_us, 33_333);
+
+                        let rgba_opt = if let Some(frame) = maybe_frame {
+                            frame.rgba_data.clone()
+                        } else {
+                            // Queue background async decode
+                            self.async_decoder
+                                .request_frame(clip.id, path.clone(), source_time_us);
+
+                            // Fallback to warm decoder or synchronous decode without panics
+                            if let Some(dec) = self.decoders.get_mut(&path) {
+                                dec.decode_frame_at(source_time_us)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|f| f.rgba_data)
+                            } else {
+                                match FfmpegDecoder::open(&path) {
+                                    Ok(mut dec) => {
+                                        let f = dec
+                                            .decode_frame_at(source_time_us)
+                                            .ok()
+                                            .flatten()
+                                            .and_then(|f| f.rgba_data);
+                                        self.decoders.insert(path.clone(), dec);
+                                        f
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Could not open video {}: {:?}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                        };
+
+                        if let Some(rgba) = rgba_opt {
+                            let mut layer_buf = vec![0u8; 1920 * 1080 * 4];
                             Self::resample_and_grade_frame(
                                 &rgba,
-                                frame.width,
-                                frame.height,
-                                &mut self.monitor_frame_buffer,
+                                1920,
+                                1080,
+                                &mut layer_buf,
                                 1920,
                                 1080,
                                 ColorGradeSettings {
@@ -485,91 +590,50 @@ impl EditorData {
                                 },
                             );
 
-                            // Apply effective keyframed opacity
-                            let eff_opacity = clip.effective_opacity(playhead_us);
-                            if eff_opacity < 0.999 {
-                                for pixel in self.monitor_frame_buffer.chunks_exact_mut(4) {
-                                    pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
-                                    pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
-                                    pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
-                                    pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
-                                }
-                            }
-
-                            // Apply shape mask if present on clip (with keyframed mask parameters)
-                            if let Some(mask_eff) = clip
-                                .effects
-                                .iter()
-                                .find(|e| e.effect_id == "mask_shape" && e.enabled)
-                            {
-                                let shape_type = mask_eff
-                                    .parameters
-                                    .get("shape_type")
-                                    .copied()
-                                    .unwrap_or(0.0)
-                                    as u32;
-                                let center_x = clip
-                                    .evaluate_keyframe("center_x", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("center_x").copied())
-                                    .unwrap_or(0.5);
-                                let center_y = clip
-                                    .evaluate_keyframe("center_y", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("center_y").copied())
-                                    .unwrap_or(0.5);
-                                let size_x = clip
-                                    .evaluate_keyframe("size_x", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("size_x").copied())
-                                    .unwrap_or(0.35);
-                                let size_y = clip
-                                    .evaluate_keyframe("size_y", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("size_y").copied())
-                                    .unwrap_or(0.35);
-                                let feather = clip
-                                    .evaluate_keyframe("feather", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("feather").copied())
-                                    .unwrap_or(0.05);
-                                let invert =
-                                    mask_eff.parameters.get("invert").copied().unwrap_or(0.0)
-                                        >= 0.5;
-
-                                let mask_params = rd_effects::ShapeMaskParams {
-                                    shape_type,
-                                    center_x,
-                                    center_y,
-                                    size_x,
-                                    size_y,
-                                    feather,
-                                    invert,
-                                };
-                                rd_effects::apply_shape_mask(
-                                    &mut self.monitor_frame_buffer,
-                                    1920,
-                                    1080,
-                                    &mask_params,
-                                );
-                            }
-
-                            updated = true;
-                            self.last_rendered_pts_us = source_time_us;
-                            self.needs_monitor_update = false;
+                            layers.push(CompositorLayer {
+                                rgba: layer_buf,
+                                width: 1920,
+                                height: 1080,
+                                opacity: eff_opacity,
+                                pos_x: eff_trans.position.x,
+                                pos_y: eff_trans.position.y,
+                                scale_x: eff_trans.scale.x,
+                                scale_y: eff_trans.scale.y,
+                                blend_mode: 0,
+                                shape_mask,
+                            });
                         }
+                    } else {
+                        // Explicit offline media placeholder
+                        let mut offline_buf = vec![0u8; 1920 * 1080 * 4];
+                        Self::generate_offline_graphic(
+                            &mut offline_buf,
+                            1920,
+                            1080,
+                            &vclip.source_path,
+                        );
+                        layers.push(CompositorLayer {
+                            rgba: offline_buf,
+                            width: 1920,
+                            height: 1080,
+                            opacity: eff_opacity,
+                            pos_x: eff_trans.position.x,
+                            pos_y: eff_trans.position.y,
+                            scale_x: eff_trans.scale.x,
+                            scale_y: eff_trans.scale.y,
+                            blend_mode: 0,
+                            shape_mask,
+                        });
                     }
-                } else if self.last_rendered_pts_us != -2 {
-                    Self::generate_offline_graphic(
-                        &mut self.monitor_frame_buffer,
-                        1920,
-                        1080,
-                        &vclip.source_path,
-                    );
-                    updated = true;
-                    self.last_rendered_pts_us = -2;
                 }
             }
-        } else if self.last_rendered_pts_us != playhead_us || self.needs_monitor_update {
+        }
+
+        if layers.is_empty() {
             Self::generate_smpte_pattern(&mut self.monitor_frame_buffer, 1920, 1080, playhead_us);
-            updated = true;
-            self.last_rendered_pts_us = playhead_us;
-            self.needs_monitor_update = false;
+        } else {
+            self.monitor_frame_buffer.fill(0);
+            composite_layers_over(&mut self.monitor_frame_buffer, 1920, 1080, &layers);
         }
 
         // Composite active text / title overlays from all enabled tracks
@@ -607,32 +671,32 @@ impl EditorData {
                         1080,
                         &params,
                     );
-                    updated = true;
                 }
             }
         }
 
-        if updated {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &self.monitor_frame_buffer,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(1920 * 4),
-                    rows_per_image: Some(1080),
-                },
-                wgpu::Extent3d {
-                    width: 1920,
-                    height: 1080,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+        self.last_rendered_pts_us = playhead_us;
+        self.needs_monitor_update = false;
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.monitor_frame_buffer,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(1920 * 4),
+                rows_per_image: Some(1080),
+            },
+            wgpu::Extent3d {
+                width: 1920,
+                height: 1080,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     /// High-performance aspect-fit letterboxing and real-time color grading.
@@ -1050,6 +1114,8 @@ impl ApplicationHandler for ReddartApp {
                         ed.last_save_path = Some(path.clone());
                         ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
                         ed.missing_media = ed.project.find_missing_media_items();
+                        ed.sync_audio_timeline();
+                        ed.needs_monitor_update = true;
                         let rec_count = report.map(|r| r.valid_records_replayed).unwrap_or(0);
                         if rec_count > 0 {
                             log::info!(
@@ -1153,35 +1219,69 @@ impl ApplicationHandler for ReddartApp {
 
 /// Render a frame: handle playback time advancement, run egui UI, then submit GPU commands.
 fn render_frame(state: &mut AppState) {
-    // 1. Playback time advancement (supports forward & reverse J/K/L shuttle)
+    // 1. Playback time advancement (slaved to hardware audio clock at 1x; fallback to high-res timer)
     if state.editor.is_playing {
-        let now = Instant::now();
-        let dt = now.duration_since(state.editor.last_frame_time);
-        state.editor.last_frame_time = now;
-        let delta_us = (dt.as_micros() as f32 * state.editor.shuttle_speed) as i64;
         let total_us = state.editor.project.timeline.duration_us();
+        let mut synced_to_audio = false;
 
-        if delta_us >= 0 {
-            state.editor.project.timeline.playhead_us += delta_us;
-            if total_us > 0 && state.editor.project.timeline.playhead_us >= total_us {
-                // Loop back to start
-                state.editor.project.timeline.playhead_us = 0;
+        if (state.editor.shuttle_speed - 1.0).abs() < 0.05 {
+            if let Some(ref audio) = state.editor.audio_engine {
+                if audio.has_hardware_stream() && audio.is_playing() {
+                    let audio_time_us = audio.clock().now_us();
+                    if total_us > 0 && audio_time_us >= total_us {
+                        state.editor.seek_to_time_us(0);
+                    } else {
+                        state.editor.project.timeline.playhead_us = audio_time_us;
+                    }
+                    synced_to_audio = true;
+                    state.editor.last_frame_time = Instant::now();
+                }
             }
-        } else {
-            let abs_delta = delta_us.unsigned_abs() as i64;
-            state.editor.project.timeline.playhead_us = state
-                .editor
-                .project
-                .timeline
-                .playhead_us
-                .saturating_sub(abs_delta);
-            if state.editor.project.timeline.playhead_us == 0 {
-                state.editor.is_playing = false;
-                state.editor.shuttle_speed = 1.0;
+        }
+
+        if !synced_to_audio {
+            let now = Instant::now();
+            let dt = now.duration_since(state.editor.last_frame_time);
+            state.editor.last_frame_time = now;
+            let delta_us = (dt.as_micros() as f32 * state.editor.shuttle_speed) as i64;
+
+            if delta_us >= 0 {
+                state.editor.project.timeline.playhead_us += delta_us;
+                if total_us > 0 && state.editor.project.timeline.playhead_us >= total_us {
+                    // Loop back to start
+                    state.editor.project.timeline.playhead_us = 0;
+                }
+            } else {
+                let abs_delta = delta_us.unsigned_abs() as i64;
+                state.editor.project.timeline.playhead_us = state
+                    .editor
+                    .project
+                    .timeline
+                    .playhead_us
+                    .saturating_sub(abs_delta);
+                if state.editor.project.timeline.playhead_us == 0 {
+                    state.editor.is_playing = false;
+                    state.editor.shuttle_speed = 1.0;
+                }
             }
         }
     } else {
         state.editor.last_frame_time = Instant::now();
+    }
+
+    // Drain async decoder responses
+    let cur_gen = state.editor.async_decoder.current_generation();
+    for resp in state.editor.async_decoder.drain_responses() {
+        match resp {
+            FrameResponse::Ready { generation, .. } => {
+                if generation == cur_gen {
+                    state.editor.needs_monitor_update = true;
+                }
+            }
+            FrameResponse::Error { error, .. } => {
+                log::debug!("Async decoder notice: {}", error);
+            }
+        }
     }
 
     // 2. Periodic autosave with WAL checkpointing (every 30 seconds)
@@ -1642,6 +1742,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         ed.journal = journal;
                         ed.history.clear();
                         ed.selected_clip = None;
+                        ed.sync_audio_timeline();
+                        ed.needs_monitor_update = true;
                         ed.status_message = Some((msg, Instant::now()));
                         log::info!("Loaded project: {}", ed.project.name);
                     }
@@ -4452,6 +4554,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 t.enabled = !t.enabled;
                 let st = if t.enabled { "Unmuted" } else { "Muted" };
                 ed.status_message = Some((format!("{} {}", t.name, st), Instant::now()));
+                ed.sync_audio_timeline();
+                ed.needs_monitor_update = true;
             }
             if let Some(tid) = toggled_solo_track {
                 if ed.solo_track == Some(tid) {
@@ -4461,6 +4565,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.solo_track = Some(tid);
                     ed.status_message = Some(("Track solo activated".into(), Instant::now()));
                 }
+                ed.sync_audio_timeline();
+                ed.needs_monitor_update = true;
             }
             if let Some(tid) = toggled_lock_track
                 && let Some(t) = ed.project.timeline.track_mut(tid)

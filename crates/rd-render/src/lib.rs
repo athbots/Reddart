@@ -4,11 +4,13 @@
 //! dirty-node invalidation, and the adaptive quality governor.
 
 pub mod cache;
+pub mod composite;
 pub mod compositor;
 pub mod graph;
 pub mod interpolate;
 pub mod quality;
 
+pub use composite::{CompositorLayer, composite_layers_over};
 pub use interpolate::blend_rgba_frames;
 
 /// Render graph node identifier.
