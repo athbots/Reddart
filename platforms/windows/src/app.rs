@@ -239,8 +239,12 @@ impl EditorData {
             missing_media: Vec::new(),
             status_message: Some((
                 wal_msg.unwrap_or_else(|| {
-                    "Reddart Studio v0.2.1 | Press Space to preview, Ctrl+T for templates, Ctrl+E to export"
-                        .into()
+                    concat!(
+                        "Reddart Studio v",
+                        env!("CARGO_PKG_VERSION"),
+                        " | Press Space to preview, Ctrl+T for templates, Ctrl+E to export"
+                    )
+                    .into()
                 }),
                 Instant::now(),
             )),

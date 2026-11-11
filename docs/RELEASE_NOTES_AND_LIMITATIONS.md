@@ -2,8 +2,8 @@
 
 **Release Tag:** `v0.2.1`  
 **Distribution Archive:** `Reddart-v0.2.1-Windows-x86_64.zip`  
-**Binary Checksum (SHA-256):** `914cbf52df15a921e7e6f2e0a1d20277ecd369c786cadd4615fc928b3319d16c`  
-**Archive Checksum (SHA-256):** `879055a466d700c1a96c3b53fd8e3f4d62f1423b555d2862aa973f2df546f1ac`
+**Binary Checksum (SHA-256):** `a2321be188d3685b39573a6a93046c46d22826294a1553bf3e0d9e147f5c0163`  
+**Archive Checksum (SHA-256):** `a348b944d82016269ca4fd1c747ed35d8c5c17fd546748ee0911c1bb19b63c61`
 **MSRV:** Rust 1.85.0 (2024 Edition)  
 
 ---
@@ -64,6 +64,9 @@ As a public beta release, creators should be aware of the following known archit
 To report bugs or regressions without compromising your media privacy:
 - **GitHub Issues:** [github.com/athbots/Reddart/issues](https://github.com/athbots/Reddart/issues)
 - Include your GPU model, Windows version, and stdout from `reddart --version`.
+
+
+
 
 
 
