@@ -536,7 +536,14 @@ impl CommandHistory {
         }
     }
 
-    /// Execute a command, persist mutations to the WAL journal, and push to undo stack.
+    /// Execute a command, persist mutations to the WAL journal with durability,
+    /// and push to the undo stack.
+    ///
+    /// Transaction semantics:
+    /// 1. Command is applied to the in-memory project.
+    /// 2. Corresponding mutations are appended and synced to the durable WAL journal.
+    /// 3. If journal append fails, the in-memory mutation is rolled back via the inverse command,
+    ///    no entry is pushed to the undo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn execute_with_journal(
         &mut self,
         command: Command,
@@ -544,9 +551,17 @@ impl CommandHistory {
         journal: &mut crate::journal::ProjectJournal,
     ) -> Result<(), CommandError> {
         command.apply(project)?;
-        for mutation in command.to_mutations() {
-            let _ = journal.append(mutation);
+
+        let mutations = command.to_mutations();
+        for mutation in &mutations {
+            if let Err(e) = journal.append(mutation.clone()) {
+                // WAL failed: Roll back in-memory application so project state is preserved
+                let _ = command.inverse().apply(project);
+                log::error!("WAL append failed during execute_with_journal: {}", e);
+                return Err(CommandError::JournalError(e));
+            }
         }
+
         self.undo_stack.push(command);
         self.redo_stack.clear();
 
@@ -559,6 +574,10 @@ impl CommandHistory {
     }
 
     /// Undo the last command and record inverse mutations to the WAL journal.
+    ///
+    /// Transaction semantics:
+    /// If journal persistence fails, the in-memory undo is rolled back by reapplying the command,
+    /// the command remains on the undo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn undo_with_journal(
         &mut self,
         project: &mut Project,
@@ -566,10 +585,21 @@ impl CommandHistory {
     ) -> Result<bool, CommandError> {
         if let Some(command) = self.undo_stack.pop() {
             let inverse = command.inverse();
-            inverse.apply(project)?;
-            for mutation in inverse.to_mutations() {
-                let _ = journal.append(mutation);
+            if let Err(e) = inverse.apply(project) {
+                self.undo_stack.push(command);
+                return Err(e);
             }
+
+            for mutation in inverse.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back in-memory inverse by reapplying original command
+                    let _ = command.apply(project);
+                    self.undo_stack.push(command);
+                    log::error!("WAL append failed during undo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
+            }
+
             self.redo_stack.push(command);
             project.touch();
             Ok(true)
@@ -579,16 +609,31 @@ impl CommandHistory {
     }
 
     /// Redo the last undone command and record mutations to the WAL journal.
+    ///
+    /// Transaction semantics:
+    /// If journal persistence fails, the in-memory redo is rolled back by applying the inverse,
+    /// the command remains on the redo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn redo_with_journal(
         &mut self,
         project: &mut Project,
         journal: &mut crate::journal::ProjectJournal,
     ) -> Result<bool, CommandError> {
         if let Some(command) = self.redo_stack.pop() {
-            command.apply(project)?;
-            for mutation in command.to_mutations() {
-                let _ = journal.append(mutation);
+            if let Err(e) = command.apply(project) {
+                self.redo_stack.push(command);
+                return Err(e);
             }
+
+            for mutation in command.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back by applying inverse
+                    let _ = command.inverse().apply(project);
+                    self.redo_stack.push(command);
+                    log::error!("WAL append failed during redo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
+            }
+
             self.undo_stack.push(command);
             project.touch();
             Ok(true)
@@ -633,6 +678,8 @@ pub enum CommandError {
     ClipNotFound(crate::ClipId),
     #[error("Split failed: split point is outside clip range")]
     SplitFailed,
+    #[error("WAL journal persistence failure: {0}")]
+    JournalError(#[from] std::io::Error),
 }
 
 #[cfg(test)]

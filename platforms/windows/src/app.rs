@@ -338,10 +338,71 @@ impl EditorData {
     }
 
     /// Record an atomic timeline mutation into the durable write-ahead log.
-    pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) {
+    pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) -> bool {
         if let Some(ref mut j) = self.journal {
-            let _ = j.append(mutation);
+            if let Err(e) = j.append(mutation) {
+                log::error!("Failed to append mutation to WAL journal: {}", e);
+                self.status_message =
+                    Some((format!("WAL persistence error: {}", e), Instant::now()));
+                return false;
+            }
+            true
+        } else {
+            false
         }
+    }
+
+    /// Execute a command with full WAL persistence and undo stack recording.
+    #[allow(dead_code)]
+    pub fn execute_command(
+        &mut self,
+        command: rd_core::Command,
+    ) -> Result<(), rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history
+                .execute_with_journal(command, &mut self.project, j)
+        } else {
+            self.history.execute(command, &mut self.project)
+        };
+        match &res {
+            Ok(()) => {
+                self.needs_monitor_update = true;
+                self.missing_media = self.project.find_missing_media_items();
+            }
+            Err(e) => {
+                log::error!("Command execution failed: {}", e);
+                self.status_message = Some((format!("Operation failed: {}", e), Instant::now()));
+            }
+        }
+        res
+    }
+
+    /// Undo last operation with journal recording.
+    pub fn undo(&mut self) -> Result<bool, rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history.undo_with_journal(&mut self.project, j)
+        } else {
+            self.history.undo(&mut self.project)
+        };
+        if let Ok(true) = res {
+            self.needs_monitor_update = true;
+            self.missing_media = self.project.find_missing_media_items();
+        }
+        res
+    }
+
+    /// Redo last undone operation with journal recording.
+    pub fn redo(&mut self) -> Result<bool, rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history.redo_with_journal(&mut self.project, j)
+        } else {
+            self.history.redo(&mut self.project)
+        };
+        if let Ok(true) = res {
+            self.needs_monitor_update = true;
+            self.missing_media = self.project.find_missing_media_items();
+        }
+        res
     }
 
     /// Set playback state and synchronize hardware audio engine.
@@ -983,11 +1044,30 @@ impl ApplicationHandler for ReddartApp {
         let mut editor = if let Some(ref path) = self.initial_project {
             let mut ed = EditorData::new();
             if path.exists() {
-                if let Ok(proj) = rd_core::Project::load_file(path) {
-                    ed.project = proj;
-                    ed.last_save_path = Some(path.clone());
-                    ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
-                    log::info!("Loaded project from CLI: {}", path.display());
+                match rd_core::Project::load_file_with_recovery(path) {
+                    Ok((proj, report)) => {
+                        ed.project = proj;
+                        ed.last_save_path = Some(path.clone());
+                        ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
+                        ed.missing_media = ed.project.find_missing_media_items();
+                        let rec_count = report.map(|r| r.valid_records_replayed).unwrap_or(0);
+                        if rec_count > 0 {
+                            log::info!(
+                                "Loaded project from CLI with {} recovered journal edits: {}",
+                                rec_count,
+                                path.display()
+                            );
+                        } else {
+                            log::info!("Loaded project from CLI: {}", path.display());
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to load project from CLI path {}: {}",
+                            path.display(),
+                            e
+                        );
+                    }
                 }
             } else {
                 ed.project.name = path
@@ -1461,10 +1541,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) {
-            let _ = ed.history.undo(&mut ed.project);
+            let _ = ed.undo();
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::Y) {
-            let _ = ed.history.redo(&mut ed.project);
+            let _ = ed.redo();
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::S) {
             let target = ed.last_save_path.clone().unwrap_or_else(|| {
@@ -1475,12 +1555,19 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             } else {
                 ed.project.save_atomic(&target)
             };
-            if let Ok(()) = save_res {
-                ed.last_save_path = Some(target.clone());
-                ed.status_message = Some((
-                    format!("Saved & Checkpointed to {}", target.display()),
-                    Instant::now(),
-                ));
+            match save_res {
+                Ok(()) => {
+                    ed.last_save_path = Some(target.clone());
+                    ed.status_message = Some((
+                        format!("Saved & Checkpointed to {}", target.display()),
+                        Instant::now(),
+                    ));
+                }
+                Err(e) => {
+                    ed.status_message =
+                        Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                    log::error!("Checkpoint save failed: {}", e);
+                }
             }
         }
         if (i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::N))
@@ -1570,13 +1657,20 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     } else {
                         ed.project.save_atomic(&target)
                     };
-                    if let Ok(()) = save_res {
-                        ed.last_save_path = Some(target.clone());
-                        ed.status_message = Some((
-                            format!("Checkpoint Saved: {}", target.display()),
-                            Instant::now(),
-                        ));
-                        log::info!("Checkpoint saved project to {}", target.display());
+                    match save_res {
+                        Ok(()) => {
+                            ed.last_save_path = Some(target.clone());
+                            ed.status_message = Some((
+                                format!("Checkpoint Saved: {}", target.display()),
+                                Instant::now(),
+                            ));
+                            log::info!("Checkpoint saved project to {}", target.display());
+                        }
+                        Err(e) => {
+                            ed.status_message =
+                                Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                            log::error!("Checkpoint save failed: {}", e);
+                        }
                     }
                     ui.close_menu();
                 }
@@ -1592,14 +1686,21 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         } else {
                             ed.project.save_atomic(&path)
                         };
-                        if let Ok(()) = save_res {
-                            ed.last_save_path = Some(path.clone());
-                            ed.journal = journal;
-                            ed.status_message = Some((
-                                format!("Saved As & Checkpointed: {}", path.display()),
-                                Instant::now(),
-                            ));
-                            log::info!("Saved project as {}", path.display());
+                        match save_res {
+                            Ok(()) => {
+                                ed.last_save_path = Some(path.clone());
+                                ed.journal = journal;
+                                ed.status_message = Some((
+                                    format!("Saved As & Checkpointed: {}", path.display()),
+                                    Instant::now(),
+                                ));
+                                log::info!("Saved project as {}", path.display());
+                            }
+                            Err(e) => {
+                                ed.status_message =
+                                    Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                                log::error!("Checkpoint save failed: {}", e);
+                            }
                         }
                     }
                     ui.close_menu();
@@ -1613,11 +1714,11 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
             ui.menu_button("Edit", |ui| {
                 if ui.button("Undo (Ctrl+Z)").clicked() {
-                    let _ = ed.history.undo(&mut ed.project);
+                    let _ = ed.undo();
                     ui.close_menu();
                 }
                 if ui.button("Redo (Ctrl+Y)").clicked() {
-                    let _ = ed.history.redo(&mut ed.project);
+                    let _ = ed.redo();
                     ui.close_menu();
                 }
                 ui.separator();
