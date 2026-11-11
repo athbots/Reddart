@@ -235,7 +235,7 @@ Reddart/
 │   ├── rd-audio/        # 48 kHz WASAPI audio mixer, clip resampling, 3-band EQ, soft limiter
 │   ├── rd-decode/       # Video decoding abstractions, software frame generator, seek cache
 │   ├── rd-export/       # NVENC/AMF/QSV/libx264 hardware export pipeline, progress events
-│   ├── rd-ml/           # On-device ML pipeline interfaces (scene change, speech-to-text)
+│   ├── rd-ml/           # Experimental on-device ML interfaces (deferred post-v1)
 │   ├── rd-android/      # Android JNI bindings and surface rendering bridge
 │   └── rd-apple/        # Apple macOS/iOS Metal rendering and platform bindings
 ├── platforms/
@@ -305,6 +305,8 @@ Test coverage includes:
 
 ## Documentation & Beta Resources
 
+- **Feature Implementation & Verification Matrix:** [docs/FEATURE_IMPLEMENTATION_MATRIX.md](docs/FEATURE_IMPLEMENTATION_MATRIX.md)
+- **WAL Transaction Semantics & Durability:** [docs/WAL_TRANSACTION_SEMANTICS.md](docs/WAL_TRANSACTION_SEMANTICS.md)
 - **FFmpeg & Codec Distribution Compliance:** [docs/FFMPEG_AND_CODEC_AUDIT.md](docs/FFMPEG_AND_CODEC_AUDIT.md)
 - **Hardware Compatibility Matrix (Windows 10/11 GPU):** [docs/HARDWARE_COMPATIBILITY_MATRIX.md](docs/HARDWARE_COMPATIBILITY_MATRIX.md)
 - **Reproducible Release Builds Protocol:** [docs/REPRODUCIBLE_BUILDS.md](docs/REPRODUCIBLE_BUILDS.md)
