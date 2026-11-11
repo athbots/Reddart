@@ -46,7 +46,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install FFmpeg on Windows
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Verify FFmpeg availability
+        shell: pwsh
         run: |
           ffmpeg -version
           ffprobe -version
