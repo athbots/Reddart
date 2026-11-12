@@ -19,7 +19,8 @@ pub mod track;
 
 // Re-export key types at crate root
 pub use clip::{
-    AudioClip, Clip, ClipEffect, ClipId, ClipKind, TextClip, Transform2D, Vec2, VideoClip,
+    AudioClip, Clip, ClipEffect, ClipId, ClipKind, CompoundClip, TextClip, Transform2D, Vec2,
+    VideoClip,
 };
 pub use command::{Command, CommandError, CommandHistory};
 pub use journal::{JournalEntry, JournalMutation, ProjectJournal, ReplayReport, crc32_checksum};

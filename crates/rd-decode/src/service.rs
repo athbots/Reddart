@@ -10,7 +10,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -56,6 +56,24 @@ pub enum FrameResponse {
         source_time_us: TimestampUs,
         error: String,
     },
+}
+
+impl FrameResponse {
+    /// Retrieve the generation associated with this frame response.
+    pub fn generation(&self) -> u64 {
+        match self {
+            FrameResponse::Ready { generation, .. } => *generation,
+            FrameResponse::Error { generation, .. } => *generation,
+        }
+    }
+
+    /// Retrieve the request ID.
+    pub fn request_id(&self) -> u64 {
+        match self {
+            FrameResponse::Ready { request_id, .. } => *request_id,
+            FrameResponse::Error { request_id, .. } => *request_id,
+        }
+    }
 }
 
 /// An entry in the decoded frame ring cache.
@@ -178,6 +196,10 @@ impl AsyncDecoderService {
                         if let Some(cached_frame) =
                             c.get(&req.source_path, req.source_time_us, 33_333)
                         {
+                            let cur_gen_post = worker_generation.load(Ordering::Acquire);
+                            if req.generation < cur_gen_post {
+                                continue;
+                            }
                             let _ = resp_tx.send(FrameResponse::Ready {
                                 request_id: req.request_id,
                                 generation: req.generation,
@@ -228,6 +250,10 @@ impl AsyncDecoderService {
                                     });
                                 }
                                 Ok(None) => {
+                                    let cur_gen_post = worker_generation.load(Ordering::Acquire);
+                                    if req.generation < cur_gen_post {
+                                        continue;
+                                    }
                                     let _ = resp_tx.send(FrameResponse::Error {
                                         request_id: req.request_id,
                                         generation: req.generation,
@@ -238,6 +264,10 @@ impl AsyncDecoderService {
                                     });
                                 }
                                 Err(e) => {
+                                    let cur_gen_post = worker_generation.load(Ordering::Acquire);
+                                    if req.generation < cur_gen_post {
+                                        continue;
+                                    }
                                     let _ = resp_tx.send(FrameResponse::Error {
                                         request_id: req.request_id,
                                         generation: req.generation,
@@ -250,6 +280,10 @@ impl AsyncDecoderService {
                             }
                         }
                         Err(e) => {
+                            let cur_gen_post = worker_generation.load(Ordering::Acquire);
+                            if req.generation < cur_gen_post {
+                                continue;
+                            }
                             let _ = resp_tx.send(FrameResponse::Error {
                                 request_id: req.request_id,
                                 generation: req.generation,
@@ -326,18 +360,26 @@ impl AsyncDecoderService {
     }
 
     /// Non-blocking check for the next available decoded frame response.
+    /// Obsolete responses from superseded generations are purged.
     pub fn try_recv(&self) -> Option<FrameResponse> {
-        match self.resp_rx.try_recv() {
-            Ok(resp) => Some(resp),
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
+        let cur_gen = self.current_generation();
+        while let Ok(resp) = self.resp_rx.try_recv() {
+            if resp.generation() >= cur_gen {
+                return Some(resp);
+            }
         }
+        None
     }
 
-    /// Drain all currently pending responses.
+    /// Drain all currently pending responses belonging to the current generation.
+    /// Obsolete responses from superseded generations are purged.
     pub fn drain_responses(&self) -> Vec<FrameResponse> {
+        let cur_gen = self.current_generation();
         let mut responses = Vec::new();
         while let Ok(resp) = self.resp_rx.try_recv() {
-            responses.push(resp);
+            if resp.generation() >= cur_gen {
+                responses.push(resp);
+            }
         }
         responses
     }

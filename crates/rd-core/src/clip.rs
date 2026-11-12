@@ -66,6 +66,8 @@ pub enum ClipKind {
     Text(TextClip),
     /// An image/sticker overlay.
     Image(ImageClip),
+    /// A nested sequence / compound clip.
+    Compound(CompoundClip),
 }
 
 /// Video-specific clip data.
@@ -112,6 +114,15 @@ pub struct ImageClip {
     pub position: [f32; 2],
     /// Scale factor.
     pub scale: f32,
+}
+
+/// Nested sequence / compound clip data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompoundClip {
+    /// Name of the compound sequence (e.g. "Scene 1 Compound").
+    pub name: String,
+    /// Inner timeline containing the nested tracks and clips.
+    pub timeline: Box<crate::timeline::Timeline>,
 }
 
 /// An effect applied to a clip.
@@ -243,6 +254,55 @@ impl Clip {
             volume: 1.0,
             pan: 0.0,
             keyframes: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new compound clip nesting a timeline sequence.
+    pub fn new_compound(
+        name: impl Into<String>,
+        inner_timeline: crate::timeline::Timeline,
+        position_us: crate::TimestampUs,
+    ) -> Self {
+        let duration_us = inner_timeline.duration_us();
+        Self {
+            id: ClipId::new(),
+            kind: ClipKind::Compound(CompoundClip {
+                name: name.into(),
+                timeline: Box::new(inner_timeline),
+            }),
+            position_us,
+            source_in_us: 0,
+            source_out_us: duration_us,
+            speed: 1.0,
+            opacity: 1.0,
+            transform: Transform2D::default(),
+            effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Return true if this clip is a nested sequence / compound clip.
+    pub fn is_compound(&self) -> bool {
+        matches!(self.kind, ClipKind::Compound(_))
+    }
+
+    /// Retrieve a reference to the nested timeline if this is a compound clip.
+    pub fn nested_timeline(&self) -> Option<&crate::timeline::Timeline> {
+        if let ClipKind::Compound(ref c) = self.kind {
+            Some(&c.timeline)
+        } else {
+            None
+        }
+    }
+
+    /// Retrieve a mutable reference to the nested timeline if this is a compound clip.
+    pub fn nested_timeline_mut(&mut self) -> Option<&mut crate::timeline::Timeline> {
+        if let ClipKind::Compound(ref mut c) = self.kind {
+            Some(&mut c.timeline)
+        } else {
+            None
         }
     }
 
@@ -392,7 +452,7 @@ impl Clip {
             ClipKind::Video(v) => Some(&v.source_path),
             ClipKind::Audio(a) => Some(&a.source_path),
             ClipKind::Image(i) => Some(&i.source_path),
-            ClipKind::Text(_) => None,
+            ClipKind::Text(_) | ClipKind::Compound(_) => None,
         }
     }
 
@@ -412,7 +472,7 @@ impl Clip {
                 i.source_path = path;
                 true
             }
-            ClipKind::Text(_) => false,
+            ClipKind::Text(_) | ClipKind::Compound(_) => false,
         }
     }
 }
@@ -516,5 +576,43 @@ mod tests {
 
         let v_mid = clip.effective_volume(1_500_000);
         assert!((v_mid - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_compound_clip_duration_and_speed() {
+        let mut inner_timeline = crate::timeline::Timeline::new();
+        let track_id = inner_timeline.add_track(crate::track::TrackKind::Video, "V1");
+        let track = inner_timeline.track_mut(track_id).unwrap();
+        // Inner clip from 0 to 4s
+        track.add_clip(Clip::new_video("inner1.mp4", 0, 0, 4_000_000));
+        assert_eq!(inner_timeline.duration_us(), 4_000_000);
+
+        let mut compound = Clip::new_compound("Intro Sequence", inner_timeline, 2_000_000);
+        assert!(compound.is_compound());
+        assert_eq!(compound.position_us, 2_000_000);
+        assert_eq!(compound.duration_us(), 4_000_000);
+        assert_eq!(compound.end_us(), 6_000_000);
+
+        // Speed 2x on compound clip halves timeline duration to 2s
+        compound.speed = 2.0;
+        assert_eq!(compound.duration_us(), 2_000_000);
+        assert_eq!(compound.end_us(), 4_000_000);
+    }
+
+    #[test]
+    fn test_compound_clip_timeline_to_source() {
+        let mut inner_timeline = crate::timeline::Timeline::new();
+        let track_id = inner_timeline.add_track(crate::track::TrackKind::Video, "V1");
+        let track = inner_timeline.track_mut(track_id).unwrap();
+        track.add_clip(Clip::new_video("inner1.mp4", 0, 0, 6_000_000));
+
+        let compound = Clip::new_compound("InnerSeq", inner_timeline, 3_000_000);
+        // At parent timeline 3s (start of compound) -> inner source time 0s
+        assert_eq!(compound.timeline_to_source_us(3_000_000), Some(0));
+        // At parent timeline 4.5s -> inner source time 1.5s
+        assert_eq!(compound.timeline_to_source_us(4_500_000), Some(1_500_000));
+        // Outside compound clip boundary
+        assert_eq!(compound.timeline_to_source_us(2_500_000), None);
+        assert_eq!(compound.timeline_to_source_us(9_500_000), None);
     }
 }

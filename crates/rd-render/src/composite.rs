@@ -48,6 +48,33 @@ impl CompositorLayer {
             shape_mask: None,
         }
     }
+
+    /// Create a layer from an existing RGBA buffer with custom transform and blend parameters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_transform(
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        opacity: f32,
+        pos_x: f32,
+        pos_y: f32,
+        scale_x: f32,
+        scale_y: f32,
+        blend_mode: u32,
+    ) -> Self {
+        Self {
+            rgba,
+            width,
+            height,
+            opacity,
+            pos_x,
+            pos_y,
+            scale_x,
+            scale_y,
+            blend_mode,
+            shape_mask: None,
+        }
+    }
 }
 
 /// Composite a slice of `CompositorLayer`s from bottom to top onto `target_buffer`.
