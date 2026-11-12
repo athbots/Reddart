@@ -18,7 +18,9 @@ use winit::{
 };
 
 use crate::gpu;
-use rd_audio::{AudioClock, AudioEngine, MeteringState, TimelineAudioScheduler};
+use rd_audio::{
+    AudioClock, AudioEngine, MeteringState, ParametricEqualizer, TimelineAudioScheduler,
+};
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
 use rd_decode::{AsyncDecoderService, FfmpegDecoder, FrameResponse};
 use rd_render::{CompositorLayer, composite_layers_over};
@@ -175,6 +177,10 @@ pub struct EditorData {
     pub needs_monitor_update: bool,
     pub audio_engine: Option<Arc<AudioEngine>>,
     pub audio_metering: MeteringState,
+    pub audio_spectrum_bands: [f32; 31],
+    pub audio_spectrum_curve: Vec<f32>,
+    pub audio_parametric_eq: ParametricEqualizer,
+    pub audio_eq_selected_band: Option<usize>,
     pub active_tool: EditTool,
     pub journal: Option<rd_core::ProjectJournal>,
     pub show_template_modal: bool,
@@ -327,6 +333,10 @@ impl EditorData {
             needs_monitor_update: true,
             audio_engine,
             audio_metering,
+            audio_spectrum_bands: [-120.0; 31],
+            audio_spectrum_curve: vec![-120.0; 128],
+            audio_parametric_eq: ParametricEqualizer::new(48000.0),
+            audio_eq_selected_band: Some(2),
             journal,
             show_template_modal: false,
             selected_template_idx: 0,
@@ -1562,9 +1572,18 @@ fn render_frame(state: &mut AppState) {
         .editor
         .update_monitor_frame(&state.queue, &state.monitor_texture);
 
-    // 4. Update Audio Telemetry & dBFS Metering
+    // 4. Update Audio Telemetry, dBFS Metering & Spectrum Analysis
     if let Some(ref audio) = state.editor.audio_engine {
         state.editor.audio_metering = audio.read_metering();
+        let dt_s = state
+            .editor
+            .last_frame_time
+            .elapsed()
+            .as_secs_f32()
+            .clamp(0.001, 0.1);
+        let (bands, curve) = audio.read_spectrum(dt_s);
+        state.editor.audio_spectrum_bands = bands;
+        state.editor.audio_spectrum_curve = curve;
     }
 
     // Run egui
@@ -3501,42 +3520,142 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.label(
-                        egui::RichText::new("3-BAND PARAMETRIC EQUALIZER")
-                            .strong()
-                            .size(11.0)
-                            .color(egui::Color32::from_rgb(180, 185, 200)),
-                    );
                     ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut ed.audio_eq_low, -12.0..=12.0)
-                                .text("Low (100 Hz)")
-                                .suffix(" dB"),
+                        ui.label(
+                            egui::RichText::new("REAL-TIME SPECTRUM & 5-BAND PARAMETRIC EQ")
+                                .strong()
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(180, 185, 200)),
                         );
-                        if studio_reset_btn(ui).clicked() {
+                        let bypass_text =
+                            if ed.audio_parametric_eq.enabled { "Active" } else { "Bypassed" };
+                        let bypass_color = if ed.audio_parametric_eq.enabled {
+                            egui::Color32::from_rgb(16, 185, 129)
+                        } else {
+                            egui::Color32::from_rgb(156, 163, 175)
+                        };
+                        if studio_btn(
+                            ui,
+                            bypass_text,
+                            Some(bypass_color),
+                            !ed.audio_parametric_eq.enabled,
+                        )
+                        .clicked()
+                        {
+                            ed.audio_parametric_eq.enabled = !ed.audio_parametric_eq.enabled;
+                        }
+                        if studio_btn(ui, "Zero All", None, false).clicked() {
+                            for b in &mut ed.audio_parametric_eq.bands {
+                                b.gain_db = 0.0;
+                                b.recompute(ed.audio_parametric_eq.sample_rate);
+                            }
                             ed.audio_eq_low = 0.0;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut ed.audio_eq_mid, -12.0..=12.0)
-                                .text("Mid (1 kHz)")
-                                .suffix(" dB"),
-                        );
-                        if studio_reset_btn(ui).clicked() {
                             ed.audio_eq_mid = 0.0;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut ed.audio_eq_high, -12.0..=12.0)
-                                .text("High (10 kHz)")
-                                .suffix(" dB"),
-                        );
-                        if studio_reset_btn(ui).clicked() {
                             ed.audio_eq_high = 0.0;
                         }
                     });
+
+                    ui.add_space(4.0);
+                    // Spectrum & Parametric EQ Interactive Visualizer Graph
+                    ui.add(
+                        crate::ui::widgets::SpectrumEqVisualizer::new(
+                            &mut ed.audio_parametric_eq,
+                            &ed.audio_spectrum_bands,
+                            &ed.audio_spectrum_curve,
+                            &mut ed.audio_eq_selected_band,
+                        )
+                        .height(160.0),
+                    );
+
+                    // Band Selector Tabs
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        for b_idx in 0..ed.audio_parametric_eq.bands.len() {
+                            let is_sel = ed.audio_eq_selected_band == Some(b_idx);
+                            let band_label = format!("Band {}", b_idx + 1);
+                            let band_col =
+                                crate::ui::widgets::SpectrumEqVisualizer::band_color(b_idx);
+                            if studio_btn(ui, &band_label, Some(band_col), is_sel).clicked() {
+                                ed.audio_eq_selected_band = Some(b_idx);
+                            }
+                        }
+                    });
+
+                    // Detailed Controls for Active Band
+                    if let Some(sel_idx) = ed.audio_eq_selected_band {
+                        if let Some(band) = ed.audio_parametric_eq.bands.get_mut(sel_idx) {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut band.enabled, "Enabled");
+                                    ui.label(
+                                        egui::RichText::new(format!("{:?}", band.filter_type))
+                                            .color(
+                                                crate::ui::widgets::SpectrumEqVisualizer::band_color(
+                                                    sel_idx,
+                                                ),
+                                            )
+                                            .strong(),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::Slider::new(&mut band.frequency_hz, 20.0..=20000.0)
+                                            .logarithmic(true)
+                                            .text("Freq")
+                                            .suffix(" Hz"),
+                                    );
+                                    if studio_reset_btn(ui).clicked() {
+                                        band.frequency_hz = match sel_idx {
+                                            0 => 40.0,
+                                            1 => 100.0,
+                                            2 => 1000.0,
+                                            3 => 8000.0,
+                                            4 => 18000.0,
+                                            _ => 1000.0,
+                                        };
+                                    }
+                                });
+                                if band.filter_type != rd_audio::FilterType::LowCut
+                                    && band.filter_type != rd_audio::FilterType::HighCut
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.add(
+                                            egui::Slider::new(&mut band.gain_db, -18.0..=18.0)
+                                                .text("Gain")
+                                                .suffix(" dB"),
+                                        );
+                                        if studio_reset_btn(ui).clicked() {
+                                            band.gain_db = 0.0;
+                                        }
+                                    });
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::Slider::new(&mut band.q, 0.1..=10.0)
+                                            .text("Q / Bandwidth"),
+                                    );
+                                    if studio_reset_btn(ui).clicked() {
+                                        band.q = if sel_idx == 2 { 1.414 } else { 0.707 };
+                                    }
+                                });
+                                band.recompute(ed.audio_parametric_eq.sample_rate);
+                            });
+                        }
+                    }
+
+                    // Sync legacy sliders with parametric EQ bands
+                    if ed.audio_parametric_eq.bands.len() >= 4 {
+                        ed.audio_eq_low = ed.audio_parametric_eq.bands[1].gain_db;
+                        ed.audio_eq_mid = ed.audio_parametric_eq.bands[2].gain_db;
+                        ed.audio_eq_high = ed.audio_parametric_eq.bands[3].gain_db;
+                    }
+
+                    // Propagate modified EQ parameters to running audio engine
+                    if let Some(ref audio) = ed.audio_engine {
+                        if let Ok(mut engine_eq) = audio.eq.lock() {
+                            *engine_eq = ed.audio_parametric_eq.clone();
+                        }
+                    }
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -6350,5 +6469,26 @@ mod tests {
         playhead -= 2_000_000;
         let clamped = playhead.max(0);
         assert_eq!(clamped, 0);
+    }
+
+    #[test]
+    fn test_editor_spectrum_and_parametric_eq_defaults() {
+        let mut ed = EditorData::new();
+        assert_eq!(ed.audio_spectrum_bands.len(), 31);
+        assert_eq!(ed.audio_spectrum_curve.len(), 128);
+        assert!(ed.audio_parametric_eq.enabled);
+        assert_eq!(ed.audio_parametric_eq.bands.len(), 5);
+        assert_eq!(ed.audio_eq_selected_band, Some(2));
+
+        // Test EQ modification and composite response calculation
+        ed.audio_parametric_eq
+            .set_band_params(2, 1000.0, 6.0, 1.414, true);
+        let curve = ed.audio_parametric_eq.compute_composite_curve(128);
+        assert_eq!(curve.len(), 128);
+
+        // Verify response at 1 kHz matches +6 dB boost
+        let f_frac = rd_audio::SpectrumAnalyzer::freq_to_fraction(1000.0);
+        let idx = (f_frac * 127.0).round() as usize;
+        assert!((curve[idx] - 6.0).abs() < 0.5);
     }
 }
