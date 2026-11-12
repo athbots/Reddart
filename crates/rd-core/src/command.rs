@@ -959,6 +959,7 @@ mod tests {
             source_in_us: 0,
             source_out_us: 2_000_000,
             speed: 1.0,
+            retime_mode: crate::clip::RetimeMode::default(),
             opacity: 1.0,
             transform: crate::clip::Transform2D::default(),
             effects: Vec::new(),

@@ -55,6 +55,7 @@ pub const LUT_3D_WGSL: &str = include_str!("../../../effects/lut_3d/shader.wgsl"
 pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shader.wgsl");
 pub const NEURAL_MATTE_WGSL: &str = include_str!("../../../effects/neural_matte/shader.wgsl");
 pub const AUTO_REFRAME_WGSL: &str = include_str!("../../../effects/auto_reframe/shader.wgsl");
+pub const OPTICAL_FLOW_WGSL: &str = include_str!("../../../effects/optical_flow/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -576,6 +577,61 @@ impl EffectRegistry {
             },
             AUTO_REFRAME_WGSL.into(),
         );
+
+        self.register(
+            EffectManifest {
+                id: "optical_flow".into(),
+                name: "Optical Flow Retiming".into(),
+                version: 1,
+                cost_class: CostClass::High,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "retime_speed".into(),
+                        name: "Playback Speed".into(),
+                        param_type: ParamType::Float,
+                        default: 0.5,
+                        min: 0.01,
+                        max: 10.0,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "blend_time".into(),
+                        name: "Interpolation Phase".into(),
+                        param_type: ParamType::Float,
+                        default: 0.5,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "flow_smoothness".into(),
+                        name: "Motion Regularization".into(),
+                        param_type: ParamType::Float,
+                        default: 0.5,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "occlusion_suppression".into(),
+                        name: "Occlusion Suppression".into(),
+                        param_type: ParamType::Float,
+                        default: 0.8,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            OPTICAL_FLOW_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -624,6 +680,12 @@ mod tests {
         assert!(registry.get("mask_shape").is_some());
         assert!(registry.get("neural_matte").is_some());
         assert!(registry.get("auto_reframe").is_some());
+        assert!(registry.get("optical_flow").is_some());
+
+        let of = registry.get("optical_flow").unwrap();
+        assert_eq!(of.manifest.cost_class, CostClass::High);
+        assert_eq!(of.manifest.parameters.len(), 4);
+        assert!(of.wgsl_source.contains("fn fs_main"));
 
         let ar = registry.get("auto_reframe").unwrap();
         assert_eq!(ar.manifest.cost_class, CostClass::Low);

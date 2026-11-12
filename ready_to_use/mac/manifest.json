@@ -2,14 +2,14 @@
     "product":  "Reddart Video Editor",
     "version":  "1.0.0",
     "platform":  "macos-universal",
-    "generated_at":  "2026-11-12T14:35:48Z",
+    "generated_at":  "2026-11-12T15:16:52Z",
     "archive":  {
                     "filename":  "Reddart-v1.0.0-macOS-Universal.zip",
-                    "sha256":  "ac9b95c9339e95d72fbf1356a8935857a347a9ec30aa3edb682bb237b2921113",
-                    "bytes":  1483430
+                    "sha256":  "718c58f16b0c709ff715258f5458f192bf38756a8d982ccbd2ac184df4f39b27",
+                    "bytes":  1485216
                 },
     "bundle":  "Reddart.app",
     "bundle_identifier":  "app.reddart.mac",
     "minimum_system_version":  "12.0",
-    "effects_count":  10
+    "effects_count":  11
 }
