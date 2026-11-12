@@ -243,7 +243,7 @@ Reddart/
 ├── ready_to_use/
 │   └── windows/         # Pre-compiled Windows x86_64 binary and version manifest
 ├── tests/               # Workspace integration tests, timeline fuzzing, gate verification
-├── Cargo.toml           # Workspace manifest (v0.3.0)
+├── Cargo.toml           # Workspace manifest (v1.0.0)
 └── README.md            # Technical documentation
 ```
 
