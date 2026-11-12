@@ -120,6 +120,32 @@ pub enum Command {
     RemoveTrack { track: crate::Track, index: usize },
     /// Relink media matching old_path to new_path across the project.
     RelinkMedia { old_path: String, new_path: String },
+    /// Ripple delete a clip and close the gap.
+    RippleDelete {
+        track_id: crate::TrackId,
+        clip: crate::Clip,
+        original_index: usize,
+    },
+    /// Undo for RippleDelete: inserts clip and shifts downstream clips forward.
+    RippleInsert {
+        track_id: crate::TrackId,
+        clip: crate::Clip,
+        index: usize,
+    },
+    /// Set work area In/Out markers.
+    SetMarkInOut {
+        old_mark_in_us: Option<crate::TimestampUs>,
+        old_mark_out_us: Option<crate::TimestampUs>,
+        new_mark_in_us: Option<crate::TimestampUs>,
+        new_mark_out_us: Option<crate::TimestampUs>,
+    },
+    /// Add timeline marker.
+    AddMarker { marker: crate::TimelineMarker },
+    /// Remove timeline marker.
+    RemoveMarker {
+        marker_id: u64,
+        snapshot: Option<crate::TimelineMarker>,
+    },
     /// A group of commands applied atomically.
     Compound {
         label: String,
@@ -295,6 +321,7 @@ impl Command {
             Command::SplitClip {
                 track_id,
                 original_clip_id,
+                new_clip_id,
                 split_time_us,
                 ..
             } => {
@@ -303,7 +330,7 @@ impl Command {
                     .track_mut(*track_id)
                     .ok_or(CommandError::TrackNotFound(*track_id))?;
                 track
-                    .split_clip_at(*original_clip_id, *split_time_us)
+                    .split_clip_at_with_id(*original_clip_id, *split_time_us, *new_clip_id)
                     .ok_or(CommandError::SplitFailed)?;
                 Ok(())
             }
@@ -352,6 +379,48 @@ impl Command {
             Command::RelinkMedia { old_path, new_path } => {
                 project.relink_media(old_path, new_path);
                 Ok(())
+            }
+            Command::RippleDelete { track_id, clip, .. } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .ripple_delete(clip.id)
+                    .ok_or(CommandError::ClipNotFound(clip.id))?;
+                Ok(())
+            }
+            Command::RippleInsert {
+                track_id,
+                clip,
+                index,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track.ripple_insert(clip.clone(), *index);
+                Ok(())
+            }
+            Command::SetMarkInOut {
+                new_mark_in_us,
+                new_mark_out_us,
+                ..
+            } => {
+                project.timeline.mark_in_us = *new_mark_in_us;
+                project.timeline.mark_out_us = *new_mark_out_us;
+                Ok(())
+            }
+            Command::AddMarker { marker } => {
+                project.timeline.insert_marker(marker.clone());
+                Ok(())
+            }
+            Command::RemoveMarker { marker_id, .. } => {
+                if project.timeline.remove_marker(*marker_id) {
+                    Ok(())
+                } else {
+                    Err(CommandError::MarkerNotFound(*marker_id))
+                }
             }
             Command::Compound { commands, .. } => {
                 for cmd in commands {
@@ -474,7 +543,7 @@ impl Command {
                 track_id,
                 original_clip_id,
                 new_clip_id,
-                split_time_us,
+                split_time_us: _,
                 original_clip_snapshot,
             } => {
                 // Undo split: remove the new clip, restore the original
@@ -489,7 +558,7 @@ impl Command {
                             },
                         },
                         // The original clip needs to be restored to its pre-split state.
-                        // This is handled by removing both halves and re-adding the original.
+                        // This is handled by removing the trimmed original and re-adding the snapshot.
                         Command::RemoveClip {
                             track_id: *track_id,
                             clip: crate::Clip {
@@ -499,13 +568,7 @@ impl Command {
                         },
                         Command::AddClip {
                             track_id: *track_id,
-                            clip: crate::Clip {
-                                id: *original_clip_id,
-                                source_in_us: original_clip_snapshot.source_in_us,
-                                source_out_us: original_clip_snapshot.source_out_us
-                                    + (*split_time_us - original_clip_snapshot.position_us),
-                                ..original_clip_snapshot.clone()
-                            },
+                            clip: original_clip_snapshot.clone(),
                         },
                     ],
                 }
@@ -550,6 +613,50 @@ impl Command {
             Command::RelinkMedia { old_path, new_path } => Command::RelinkMedia {
                 old_path: new_path.clone(),
                 new_path: old_path.clone(),
+            },
+            Command::RippleDelete {
+                track_id,
+                clip,
+                original_index,
+            } => Command::RippleInsert {
+                track_id: *track_id,
+                clip: clip.clone(),
+                index: *original_index,
+            },
+            Command::RippleInsert {
+                track_id,
+                clip,
+                index,
+            } => Command::RippleDelete {
+                track_id: *track_id,
+                clip: clip.clone(),
+                original_index: *index,
+            },
+            Command::SetMarkInOut {
+                old_mark_in_us,
+                old_mark_out_us,
+                new_mark_in_us,
+                new_mark_out_us,
+            } => Command::SetMarkInOut {
+                old_mark_in_us: *new_mark_in_us,
+                old_mark_out_us: *new_mark_out_us,
+                new_mark_in_us: *old_mark_in_us,
+                new_mark_out_us: *old_mark_out_us,
+            },
+            Command::AddMarker { marker } => Command::RemoveMarker {
+                marker_id: marker.id,
+                snapshot: Some(marker.clone()),
+            },
+            Command::RemoveMarker {
+                marker_id,
+                snapshot,
+            } => Command::AddMarker {
+                marker: snapshot.clone().unwrap_or(crate::TimelineMarker {
+                    id: *marker_id,
+                    time_us: 0,
+                    name: "Marker".into(),
+                    color_rgb: [59, 130, 246],
+                }),
             },
             Command::Compound { label, commands } => Command::Compound {
                 label: format!("Undo {}", label),
@@ -717,6 +824,39 @@ impl Command {
                     old_path: old_path.clone(),
                     new_path: new_path.clone(),
                 }]
+            }
+            Command::RippleDelete { track_id, clip, .. } => {
+                vec![JournalMutation::RippleDelete {
+                    track_id: *track_id,
+                    clip_id: clip.id,
+                }]
+            }
+            Command::RippleInsert { track_id, clip, .. } => {
+                vec![JournalMutation::AddClip {
+                    track_id: *track_id,
+                    clip: clip.clone(),
+                }]
+            }
+            Command::SetMarkInOut {
+                new_mark_in_us,
+                new_mark_out_us,
+                ..
+            } => {
+                vec![JournalMutation::SetMarkInOut {
+                    mark_in_us: *new_mark_in_us,
+                    mark_out_us: *new_mark_out_us,
+                }]
+            }
+            Command::AddMarker { marker } => {
+                vec![JournalMutation::AddMarker {
+                    id: marker.id,
+                    time_us: marker.time_us,
+                    name: marker.name.clone(),
+                    color_rgb: marker.color_rgb,
+                }]
+            }
+            Command::RemoveMarker { marker_id, .. } => {
+                vec![JournalMutation::RemoveMarker { id: *marker_id }]
             }
             Command::Compound { commands, .. } => {
                 commands.iter().flat_map(|c| c.to_mutations()).collect()
@@ -931,6 +1071,8 @@ pub enum CommandError {
     SplitFailed,
     #[error("Edit operation failed: {0}")]
     EditFailed(&'static str),
+    #[error("Marker not found: {0}")]
+    MarkerNotFound(u64),
     #[error("WAL journal persistence failure: {0}")]
     JournalError(#[from] std::io::Error),
 }

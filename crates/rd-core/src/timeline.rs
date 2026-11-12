@@ -91,6 +91,14 @@ impl Timeline {
         id
     }
 
+    /// Insert a marker (for undo / restoration).
+    pub fn insert_marker(&mut self, marker: TimelineMarker) {
+        self.next_marker_id = self.next_marker_id.max(marker.id + 1);
+        self.markers.retain(|m| m.id != marker.id);
+        self.markers.push(marker);
+        self.markers.sort_by_key(|m| m.time_us);
+    }
+
     /// Remove marker by ID.
     pub fn remove_marker(&mut self, id: u64) -> bool {
         if let Some(pos) = self.markers.iter().position(|m| m.id == id) {
