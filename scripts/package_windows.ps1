@@ -225,6 +225,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $ManifestPath = Join-Path $RootDir "ready_to_use\windows\manifest.json"
 if (Test-Path $ManifestPath) {
     $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+    $Manifest | Add-Member -NotePropertyName "version" -NotePropertyValue $Version -Force
     $Manifest | Add-Member -NotePropertyName "sha256_executable" -NotePropertyValue $ExeHash -Force
     $Manifest | Add-Member -NotePropertyName "sha256_archive" -NotePropertyValue $ZipHash -Force
     $ManifestJson = $Manifest | ConvertTo-Json -Depth 10
@@ -239,6 +240,8 @@ if (Test-Path $RelNotesPath) {
     $ArcLine = '**Archive Checksum (SHA-256):** `{0}`' -f $ZipHash
 
     $RelNotes = [regex]::Replace($RelNotes, '(?m)^\*\*Binary Checksum \(SHA-256\):\*\* `[a-fA-F0-9]+`', $BinLine)
+    $RelNotes = [regex]::Replace($RelNotes, '(?m)^\*\*Distribution Archive:\*\* `[^`]+`', "**Distribution Archive:** ``$DistName.zip``")
+    $RelNotes = [regex]::Replace($RelNotes, '(?m)^\*\*Release Tag:\*\* `[^`]+`', "**Release Tag:** ``v$Version``")
     if ($RelNotes -notmatch '\*\*Archive Checksum \(SHA-256\):\*\*') {
         $RelNotes = $RelNotes -replace '(?m)(\*\*Binary Checksum \(SHA-256\):\*\* .*\r?\n)', "`$1$ArcLine`r`n"
     } else {

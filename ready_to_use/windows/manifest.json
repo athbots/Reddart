@@ -1,6 +1,5 @@
 {
     "name":  "Reddart Video Editor",
-    "version":  "0.2.1",
     "build_profile":  "release-optimized",
     "target_os":  "windows-x86_64",
     "executable":  "Reddart.exe",
@@ -26,6 +25,7 @@
                      "headless_cli_environment"
                  ],
     "sample_project":  "samples/Demo_Project.reddart",
-    "sha256_executable":  "c2bf4ba450f0bacf14f605960d8228b8060ddede06d640bc2b94d06fc03977f2",
-    "sha256_archive":  "633ccfc0105d0913bbe8336f04c2b49a6a4ea87ef3303b4b64da8ef10ce351fe"
+    "version":  "0.3.0",
+    "sha256_executable":  "05cf222e69b3628d510136fa5d7f56f18b91c81203aea0fdb7c7e0d2bc635f9a",
+    "sha256_archive":  "e3bf1328b2278ad2640061d0bd344025bcaeec4afc3cf910472e69933c87e77d"
 }

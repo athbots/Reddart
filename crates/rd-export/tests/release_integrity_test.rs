@@ -155,13 +155,22 @@ fn test_release_manifest_and_file_hash_integrity() {
         expected_hashes.insert(parts[1].to_string(), parts[0].to_lowercase());
     }
 
+    let cargo_toml_str = fs::read_to_string(root.join("Cargo.toml")).expect("Read Cargo.toml");
+    let version = cargo_toml_str
+        .lines()
+        .find(|l| l.trim().starts_with("version = "))
+        .and_then(|l| l.split('"').nth(1))
+        .unwrap_or("0.2.1");
+    let zip_name = format!("Reddart-v{}-Windows-x86_64.zip", version);
+
     assert!(
         expected_hashes.contains_key("Reddart.exe"),
         "Must contain hash for Reddart.exe"
     );
     assert!(
-        expected_hashes.contains_key("Reddart-v0.2.1-Windows-x86_64.zip"),
-        "Must contain hash for release archive"
+        expected_hashes.contains_key(&zip_name),
+        "Must contain hash for release archive: {}",
+        zip_name
     );
 
     // 1. Verify on-disk file checksums
@@ -190,8 +199,8 @@ fn test_release_manifest_and_file_hash_integrity() {
 
     let exe_hash = expected_hashes.get("Reddart.exe").unwrap();
     let zip_hash = expected_hashes
-        .get("Reddart-v0.2.1-Windows-x86_64.zip")
-        .unwrap();
+        .get(&zip_name)
+        .unwrap_or_else(|| panic!("Missing hash for {}", zip_name));
 
     assert_eq!(
         manifest_json["sha256_executable"].as_str().unwrap(),

@@ -1,5 +1,5 @@
 ========================================================================
-🎬 REDDART — ZERO-LAG NATIVE VIDEO EDITOR (WINDOWS v0.2.1)
+🎬 REDDART — ZERO-LAG NATIVE VIDEO EDITOR (WINDOWS v0.3.0)
 ========================================================================
 
 Reddart is a high-performance, subscription-free, on-device video editor

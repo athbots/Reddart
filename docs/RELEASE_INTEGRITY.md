@@ -33,8 +33,8 @@ An audit of repository history identified why a checksum difference existed betw
 | :--- | :--- | :--- | :--- | :--- |
 | **`v0.2.1` Release Asset** (`Reddart.exe`) | `a4f576d` | Published `2026-11-07` | `377aaad62dc52f261003fd749ce398c30c11b2d97910b10e748f9086bdcd90d0` | Historical release binary published on GitHub Releases. |
 | **`v0.2.1` Release Asset** (`Reddart-v0.2.1-Windows-x86_64.zip`) | `a4f576d` | Published `2026-11-07` | `40bcfbe045c48facb4294b2de037c98028897d309ad2f0e5d508d6ec9fe8a8b4` | Historical release ZIP archive published on GitHub Releases. |
-| **Current Local Staging** (`Reddart.exe`) | `67f089d` | Local Staged | `914cbf52df15a921e7e6f2e0a1d20277ecd369c786cadd4615fc928b3319d16c` | Rebuilt post-v0.2.1 incorporating WAL durability flushes (`sync_all`) and MSRV 1.85 compliance. |
-| **Current Local Staging** (`Reddart-v0.2.1-Windows-x86_64.zip`) | `67f089d` | Local Staged | `879055a466d700c1a96c3b53fd8e3f4d62f1423b555d2862aa973f2df546f1ac` | Rebuilt post-v0.2.1 with deterministic zip entry timestamps (`2026-01-01T00:00:00Z`). |
+| **`v0.3.0` Release Asset** (`Reddart.exe`) | `master` | Release Candidate | `05cf222e69b3628d510136fa5d7f56f18b91c81203aea0fdb7c7e0d2bc635f9a` | Integrated Editing Workflow, multi-layer compositing, async decoder, timeline audio mixer. |
+| **`v0.3.0` Release Asset** (`Reddart-v0.3.0-Windows-x86_64.zip`) | `master` | Release Candidate | `e3bf1328b2278ad2640061d0bd344025bcaeec4afc3cf910472e69933c87e77d` | Standalone release distribution archive with sample media and SHA-256 integrity verification. |
 
 ### Resolution Contract
 - The historical release assets attached to GitHub tag `v0.2.1` remain unchanged as the published archive of that commit.

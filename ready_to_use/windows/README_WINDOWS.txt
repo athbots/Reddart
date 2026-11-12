@@ -1,5 +1,5 @@
 ================================================================================
-REDDART VIDEO EDITOR FOR WINDOWS — PRODUCTION RELEASE v0.2.1
+REDDART VIDEO EDITOR FOR WINDOWS — PRODUCTION RELEASE v0.3.0
 ================================================================================
 
 1. OVERVIEW

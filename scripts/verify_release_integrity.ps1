@@ -47,7 +47,8 @@ foreach ($filename in $ExpectedHashes.Keys) {
 Write-Host "2. Verifying manifest.json..."
 $manifest = Get-Content $ManifestFile -Raw | ConvertFrom-Json
 $exeHash = $ExpectedHashes["Reddart.exe"]
-$zipHash = $ExpectedHashes["Reddart-v0.2.1-Windows-x86_64.zip"]
+$zipEntry = $ExpectedHashes.Keys | Where-Object { $_ -like "Reddart-v*-Windows-x86_64.zip" } | Select-Object -First 1
+$zipHash = $ExpectedHashes[$zipEntry]
 
 if ($manifest.sha256_executable.ToLower() -ne $exeHash) {
     throw "manifest.json sha256_executable mismatch!"
