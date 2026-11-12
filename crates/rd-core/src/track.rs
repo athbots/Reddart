@@ -125,6 +125,16 @@ impl Track {
 
     /// Split a clip at a given timestamp. Returns the new clip ID if split occurred.
     pub fn split_clip_at(&mut self, clip_id: ClipId, split_time_us: TimestampUs) -> Option<ClipId> {
+        self.split_clip_at_with_id(clip_id, split_time_us, ClipId(uuid::Uuid::new_v4()))
+    }
+
+    /// Split a clip at a given timestamp using an explicit new clip ID.
+    pub fn split_clip_at_with_id(
+        &mut self,
+        clip_id: ClipId,
+        split_time_us: TimestampUs,
+        new_id: ClipId,
+    ) -> Option<ClipId> {
         let clip_index = self.clips.iter().position(|c| c.id == clip_id)?;
         let clip = &self.clips[clip_index];
 
@@ -137,7 +147,7 @@ impl Track {
 
         // Create the second half
         let mut second_half = clip.clone();
-        second_half.id = ClipId(uuid::Uuid::new_v4());
+        second_half.id = new_id;
         second_half.position_us = split_time_us;
 
         // Calculate the offset into the source for the second half, accounting for speed
@@ -415,6 +425,16 @@ impl Track {
         }
 
         Some((removed, pos))
+    }
+
+    /// Ripple Insert: inserts a clip at index and shifts downstream clips forward by its duration.
+    pub fn ripple_insert(&mut self, clip: Clip, at_index: usize) {
+        let duration = clip.duration_us();
+        let idx = at_index.min(self.clips.len());
+        for c in &mut self.clips[idx..] {
+            c.position_us += duration;
+        }
+        self.clips.insert(idx, clip);
     }
 
     /// Duplicate Clip: clones clip and places it directly adjacent.

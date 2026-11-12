@@ -421,6 +421,11 @@ impl EditorData {
     }
 
     /// Record an atomic timeline mutation into the durable write-ahead log.
+    ///
+    /// Deprecated: All project mutations must go through `execute_command`
+    /// to ensure CommandHistory undo/redo integrity.
+    #[deprecated(note = "Route mutations through `execute_command` instead")]
+    #[allow(dead_code)]
     pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) -> bool {
         if let Some(ref mut j) = self.journal {
             if let Err(e) = j.append(mutation) {
@@ -437,7 +442,6 @@ impl EditorData {
     }
 
     /// Execute a command with full WAL persistence and undo stack recording.
-    #[allow(dead_code)]
     pub fn execute_command(
         &mut self,
         command: rd_core::Command,
@@ -1739,42 +1743,54 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         // Timeline Range & Cue Markers: I, O, X, M
         if i.key_pressed(egui::Key::I) {
             let playhead = ed.project.timeline.playhead_us;
-            ed.project.timeline.set_mark_in(playhead);
-            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                mark_in_us: ed.project.timeline.mark_in_us,
-                mark_out_us: ed.project.timeline.mark_out_us,
-            });
+            let cmd = rd_core::Command::SetMarkInOut {
+                old_mark_in_us: ed.project.timeline.mark_in_us,
+                old_mark_out_us: ed.project.timeline.mark_out_us,
+                new_mark_in_us: Some(playhead),
+                new_mark_out_us: ed.project.timeline.mark_out_us,
+            };
+            let _ = ed.execute_command(cmd);
             ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
         }
         if i.key_pressed(egui::Key::O) {
             let playhead = ed.project.timeline.playhead_us;
-            ed.project.timeline.set_mark_out(playhead);
-            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                mark_in_us: ed.project.timeline.mark_in_us,
-                mark_out_us: ed.project.timeline.mark_out_us,
-            });
+            let cmd = rd_core::Command::SetMarkInOut {
+                old_mark_in_us: ed.project.timeline.mark_in_us,
+                old_mark_out_us: ed.project.timeline.mark_out_us,
+                new_mark_in_us: ed.project.timeline.mark_in_us,
+                new_mark_out_us: Some(playhead),
+            };
+            let _ = ed.execute_command(cmd);
             ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
         }
         if !i.modifiers.ctrl && i.key_pressed(egui::Key::X) {
-            ed.project.timeline.clear_in_out();
-            ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                mark_in_us: None,
-                mark_out_us: None,
-            });
+            let cmd = rd_core::Command::SetMarkInOut {
+                old_mark_in_us: ed.project.timeline.mark_in_us,
+                old_mark_out_us: ed.project.timeline.mark_out_us,
+                new_mark_in_us: None,
+                new_mark_out_us: None,
+            };
+            let _ = ed.execute_command(cmd);
             ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
         }
         if i.key_pressed(egui::Key::M) {
             let playhead = ed.project.timeline.playhead_us;
-            let mid = ed
-                .project
-                .timeline
-                .add_marker(playhead, "Cue", [59, 130, 246]);
-            ed.record_mutation(rd_core::JournalMutation::AddMarker {
-                id: mid,
+            let marker = rd_core::TimelineMarker {
+                id: ed
+                    .project
+                    .timeline
+                    .markers
+                    .iter()
+                    .map(|m| m.id)
+                    .max()
+                    .unwrap_or(0)
+                    + 1,
                 time_us: playhead,
                 name: "Cue".into(),
                 color_rgb: [59, 130, 246],
-            });
+            };
+            let mid = marker.id;
+            let _ = ed.execute_command(rd_core::Command::AddMarker { marker });
             ed.status_message = Some((
                 format!("Marker #{} Placed at Playhead [M]", mid),
                 Instant::now(),
@@ -1787,17 +1803,21 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             && let Some(cid) = ed.selected_clip
             && let Some(tid) = ed.selected_track
         {
-            let maybe_dup = if let Some(track) = ed.project.timeline.track_mut(tid) {
-                track
-                    .duplicate_clip(cid)
-                    .and_then(|new_id| track.clip(new_id).cloned().map(|c| (new_id, c)))
+            let maybe_dup = if let Some(track) = ed.project.timeline.track(tid)
+                && let Some(clip) = track.clip(cid)
+            {
+                let mut dup = clip.clone();
+                dup.id = rd_core::ClipId::new();
+                dup.position_us += dup.duration_us();
+                Some(dup)
             } else {
                 None
             };
-            if let Some((new_id, new_clip)) = maybe_dup {
-                ed.record_mutation(rd_core::JournalMutation::AddClip {
+            if let Some(dup_clip) = maybe_dup {
+                let new_id = dup_clip.id;
+                let _ = ed.execute_command(rd_core::Command::AddClip {
                     track_id: tid,
-                    clip: new_clip,
+                    clip: dup_clip,
                 });
                 ed.selected_clip = Some(new_id);
                 ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
@@ -1832,24 +1852,21 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             let track_id = ed
                 .selected_track
                 .or_else(|| ed.project.timeline.tracks().first().map(|t| t.id));
-            if let Some(tid) = track_id {
-                let maybe_split = if let Some(track) = ed.project.timeline.track_mut(tid)
-                    && let Some(clip) = track.clip_at(playhead)
-                {
-                    let cid = clip.id;
-                    track
-                        .split_clip_at(cid, playhead)
-                        .and_then(|new_cid| track.clip(new_cid).cloned().map(|c| (cid, c)))
-                } else {
-                    None
+            if let Some(tid) = track_id
+                && let Some(track) = ed.project.timeline.track(tid)
+                && let Some(clip) = track.clip_at(playhead)
+            {
+                let orig_cid = clip.id;
+                let snap = clip.clone();
+                let new_cid = rd_core::ClipId::new();
+                let cmd = rd_core::Command::SplitClip {
+                    track_id: tid,
+                    original_clip_id: orig_cid,
+                    new_clip_id: new_cid,
+                    split_time_us: playhead,
+                    original_clip_snapshot: snap,
                 };
-                if let Some((orig_cid, new_c)) = maybe_split {
-                    ed.record_mutation(rd_core::JournalMutation::SplitClip {
-                        track_id: tid,
-                        clip_id: orig_cid,
-                        split_time_us: playhead,
-                        new_clip: new_c,
-                    });
+                if ed.execute_command(cmd).is_ok() {
                     ed.status_message = Some(("Split Clip at Playhead".into(), Instant::now()));
                 }
             }
@@ -1860,37 +1877,41 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             && let Some(cid) = ed.selected_clip.take()
         {
             if i.modifiers.shift {
-                let mut ripple_tid = None;
-                for track in ed.project.timeline.tracks_mut() {
-                    if track.ripple_delete(cid).is_some() {
-                        ripple_tid = Some(track.id);
+                let mut found = None;
+                for track in ed.project.timeline.tracks() {
+                    if let Some(pos) = track.clips().iter().position(|c| c.id == cid) {
+                        found = Some((track.id, track.clips()[pos].clone(), pos));
                         break;
                     }
                 }
-                if let Some(tid) = ripple_tid {
-                    ed.record_mutation(rd_core::JournalMutation::RippleDelete {
+                if let Some((tid, clip, pos)) = found {
+                    let cmd = rd_core::Command::RippleDelete {
                         track_id: tid,
-                        clip_id: cid,
-                    });
+                        clip,
+                        original_index: pos,
+                    };
+                    let _ = ed.execute_command(cmd);
                     ed.status_message = Some((
                         "Ripple Deleted Clip (gap closed) [Shift+Del]".into(),
                         Instant::now(),
                     ));
                 }
             } else {
-                let mut deleted_tids = Vec::new();
-                for track in ed.project.timeline.tracks_mut() {
-                    if track.remove_clip(cid).is_some() {
-                        deleted_tids.push(track.id);
+                let mut found = None;
+                for track in ed.project.timeline.tracks() {
+                    if let Some(clip) = track.clip(cid) {
+                        found = Some((track.id, clip.clone()));
+                        break;
                     }
                 }
-                for tid in deleted_tids {
-                    ed.record_mutation(rd_core::JournalMutation::RemoveClip {
+                if let Some((tid, clip)) = found {
+                    let cmd = rd_core::Command::RemoveClip {
                         track_id: tid,
-                        clip_id: cid,
-                    });
+                        clip,
+                    };
+                    let _ = ed.execute_command(cmd);
+                    ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
                 }
-                ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
             }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) && !i.modifiers.shift {
@@ -2159,18 +2180,38 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         .selected_track
                         .or_else(|| ed.project.timeline.tracks().first().map(|t| t.id));
                     if let Some(tid) = track_id
-                        && let Some(track) = ed.project.timeline.track_mut(tid)
+                        && let Some(track) = ed.project.timeline.track(tid)
                         && let Some(clip) = track.clip_at(playhead)
                     {
-                        let cid = clip.id;
-                        let _ = track.split_clip_at(cid, playhead);
+                        let orig_cid = clip.id;
+                        let snap = clip.clone();
+                        let new_cid = rd_core::ClipId::new();
+                        let cmd = rd_core::Command::SplitClip {
+                            track_id: tid,
+                            original_clip_id: orig_cid,
+                            new_clip_id: new_cid,
+                            split_time_us: playhead,
+                            original_clip_snapshot: snap,
+                        };
+                        let _ = ed.execute_command(cmd);
                     }
                     ui.close_menu();
                 }
                 if ui.button("Delete Selected Clip (Del)").clicked() {
                     if let Some(cid) = ed.selected_clip.take() {
-                        for track in ed.project.timeline.tracks_mut() {
-                            track.remove_clip(cid);
+                        let mut found = None;
+                        for track in ed.project.timeline.tracks() {
+                            if let Some(clip) = track.clip(cid) {
+                                found = Some((track.id, clip.clone()));
+                                break;
+                            }
+                        }
+                        if let Some((tid, clip)) = found {
+                            let cmd = rd_core::Command::RemoveClip {
+                                track_id: tid,
+                                clip,
+                            };
+                            let _ = ed.execute_command(cmd);
                         }
                     }
                     ui.close_menu();
@@ -2380,9 +2421,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             let default_dur = 5_000_000;
 
                             let clip = Clip::new_video(&path_str, start_pos, 0, default_dur);
-                            if let Some(track) = ed.project.timeline.track_mut(track_id) {
-                                track.add_clip(clip);
-                            }
+                            let _ =
+                                ed.execute_command(rd_core::Command::AddClip { track_id, clip });
                             ed.media_files.push(file);
                             ed.status_message =
                                 Some((format!("Imported {}", path_str), Instant::now()));
@@ -2396,6 +2436,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             .color(egui::Color32::from_rgb(140, 145, 160)),
                     );
 
+                    let mut add_clip_from_bin = None;
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
                         .show(ui, |ui| {
@@ -2424,25 +2465,19 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 };
                                 let item_label = format!("{} {}", badge, filename);
                                 if ui.selectable_label(false, item_label).clicked() {
-                                    let track_id = ed
-                                        .selected_track
-                                        .unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
-                                    let clip = Clip::new_video(
-                                        file.to_string_lossy(),
-                                        ed.project.timeline.playhead_us,
-                                        0,
-                                        5_000_000,
-                                    );
-                                    if let Some(track) = ed.project.timeline.track_mut(track_id) {
-                                        track.add_clip(clip);
-                                        ed.status_message = Some((
-                                            format!("Added clip to {}", track.name),
-                                            Instant::now(),
-                                        ));
-                                    }
+                                    add_clip_from_bin = Some(file.to_string_lossy().to_string());
                                 }
                             }
                         });
+                    if let Some(path) = add_clip_from_bin {
+                        let track_id = ed
+                            .selected_track
+                            .unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
+                        let clip =
+                            Clip::new_video(path, ed.project.timeline.playhead_us, 0, 5_000_000);
+                        let _ = ed.execute_command(rd_core::Command::AddClip { track_id, clip });
+                        ed.status_message = Some(("Added clip to track".into(), Instant::now()));
+                    }
                 }
                 LeftPanelTab::Templates => {
                     if ui
@@ -3769,11 +3804,11 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         if let rd_core::ClipKind::Text(ref mut tclip) = clip.kind {
                             tclip.font_size = ed.title_font_size;
                         }
-                        if let Some(track) = ed.project.timeline.track_mut(target_track_id) {
-                            track.add_clip(clip);
-                            ed.status_message = Some(("Title Clip Added".into(), Instant::now()));
-                            ed.needs_monitor_update = true;
-                        }
+                        let _ = ed.execute_command(rd_core::Command::AddClip {
+                            track_id: target_track_id,
+                            clip,
+                        });
+                        ed.status_message = Some(("Title Clip Added".into(), Instant::now()));
                     }
                 }
                 WorkspaceMode::Export => {
@@ -3861,14 +3896,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             }
             if let Some((old_path, new_file)) = relink_pair {
                 let new_path_str = new_file.to_string_lossy().to_string();
-                let count = ed.project.relink_media(&old_path, &new_path_str);
-                ed.record_mutation(rd_core::JournalMutation::RelinkMedia {
+                let cmd = rd_core::Command::RelinkMedia {
                     old_path,
                     new_path: new_path_str,
-                });
-                ed.status_message = Some((format!("Relinked {} clip(s)", count), Instant::now()));
-                ed.missing_media = ed.project.find_missing_media_items();
-                ed.needs_monitor_update = true;
+                };
+                let _ = ed.execute_command(cmd);
+                ed.status_message = Some(("Relinked media clips".into(), Instant::now()));
             }
             ui.separator();
         }
@@ -4315,11 +4348,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     .clicked()
                 {
                     let playhead = ed.project.timeline.playhead_us;
-                    ed.project.timeline.set_mark_in(playhead);
-                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                        mark_in_us: ed.project.timeline.mark_in_us,
-                        mark_out_us: ed.project.timeline.mark_out_us,
-                    });
+                    let cmd = rd_core::Command::SetMarkInOut {
+                        old_mark_in_us: ed.project.timeline.mark_in_us,
+                        old_mark_out_us: ed.project.timeline.mark_out_us,
+                        new_mark_in_us: Some(playhead),
+                        new_mark_out_us: ed.project.timeline.mark_out_us,
+                    };
+                    let _ = ed.execute_command(cmd);
                     ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
                 }
 
@@ -4333,11 +4368,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     .clicked()
                 {
                     let playhead = ed.project.timeline.playhead_us;
-                    ed.project.timeline.set_mark_out(playhead);
-                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                        mark_in_us: ed.project.timeline.mark_in_us,
-                        mark_out_us: ed.project.timeline.mark_out_us,
-                    });
+                    let cmd = rd_core::Command::SetMarkInOut {
+                        old_mark_in_us: ed.project.timeline.mark_in_us,
+                        old_mark_out_us: ed.project.timeline.mark_out_us,
+                        new_mark_in_us: ed.project.timeline.mark_in_us,
+                        new_mark_out_us: Some(playhead),
+                    };
+                    let _ = ed.execute_command(cmd);
                     ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
                 }
 
@@ -4349,11 +4386,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     )
                     .clicked()
                 {
-                    ed.project.timeline.clear_in_out();
-                    ed.record_mutation(rd_core::JournalMutation::SetMarkInOut {
-                        mark_in_us: None,
-                        mark_out_us: None,
-                    });
+                    let cmd = rd_core::Command::SetMarkInOut {
+                        old_mark_in_us: ed.project.timeline.mark_in_us,
+                        old_mark_out_us: ed.project.timeline.mark_out_us,
+                        new_mark_in_us: None,
+                        new_mark_out_us: None,
+                    };
+                    let _ = ed.execute_command(cmd);
                     ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
                 }
 
@@ -4368,13 +4407,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     .clicked()
                 {
                     let playhead = ed.project.timeline.playhead_us;
-                    let mid = ed.project.timeline.add_marker(playhead, "Cue", [59, 130, 246]);
-                    ed.record_mutation(rd_core::JournalMutation::AddMarker {
-                        id: mid,
+                    let marker = rd_core::TimelineMarker {
+                        id: ed.project.timeline.markers.iter().map(|m| m.id).max().unwrap_or(0) + 1,
                         time_us: playhead,
                         name: "Cue".into(),
                         color_rgb: [59, 130, 246],
-                    });
+                    };
+                    let mid = marker.id;
+                    let _ = ed.execute_command(rd_core::Command::AddMarker { marker });
                     ed.status_message = Some((format!("Marker #{} Placed at Playhead [M]", mid), Instant::now()));
                 }
 
@@ -4391,17 +4431,21 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     && let Some(cid) = ed.selected_clip
                     && let Some(tid) = ed.selected_track
                 {
-                    let maybe_dup = if let Some(track) = ed.project.timeline.track_mut(tid) {
-                        track
-                            .duplicate_clip(cid)
-                            .and_then(|new_id| track.clip(new_id).cloned().map(|c| (new_id, c)))
+                    let maybe_dup = if let Some(track) = ed.project.timeline.track(tid)
+                        && let Some(clip) = track.clip(cid)
+                    {
+                        let mut dup = clip.clone();
+                        dup.id = rd_core::ClipId::new();
+                        dup.position_us += dup.duration_us();
+                        Some(dup)
                     } else {
                         None
                     };
-                    if let Some((new_id, new_clip)) = maybe_dup {
-                        ed.record_mutation(rd_core::JournalMutation::AddClip {
+                    if let Some(dup_clip) = maybe_dup {
+                        let new_id = dup_clip.id;
+                        let _ = ed.execute_command(rd_core::Command::AddClip {
                             track_id: tid,
-                            clip: new_clip,
+                            clip: dup_clip,
                         });
                         ed.selected_clip = Some(new_id);
                         ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
@@ -4418,18 +4462,20 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     .clicked()
                     && let Some(cid) = ed.selected_clip.take()
                 {
-                    let mut ripple_tid = None;
-                    for track in ed.project.timeline.tracks_mut() {
-                        if track.ripple_delete(cid).is_some() {
-                            ripple_tid = Some(track.id);
+                    let mut found = None;
+                    for track in ed.project.timeline.tracks() {
+                        if let Some(pos) = track.clips().iter().position(|c| c.id == cid) {
+                            found = Some((track.id, track.clips()[pos].clone(), pos));
                             break;
                         }
                     }
-                    if let Some(tid) = ripple_tid {
-                        ed.record_mutation(rd_core::JournalMutation::RippleDelete {
+                    if let Some((tid, clip, pos)) = found {
+                        let cmd = rd_core::Command::RippleDelete {
                             track_id: tid,
-                            clip_id: cid,
-                        });
+                            clip,
+                            original_index: pos,
+                        };
+                        let _ = ed.execute_command(cmd);
                         ed.status_message = Some(("Ripple Deleted Clip [Shift+Del]".into(), Instant::now()));
                     }
                 }
@@ -5683,100 +5729,80 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         ed.selected_track = Some(tid);
                     }
                     PendingClipOp::Razor(cid, tid, split_time) => {
-                        let maybe_split = if let Some(t) = ed.project.timeline.track_mut(tid) {
-                            t.split_clip_at(cid, split_time)
-                                .and_then(|new_cid| t.clip(new_cid).cloned())
-                        } else {
-                            None
-                        };
-                        if let Some(new_clip) = maybe_split {
-                            ed.record_mutation(rd_core::JournalMutation::SplitClip {
+                        if let Some(t) = ed.project.timeline.track(tid)
+                            && let Some(clip) = t.clip(cid)
+                        {
+                            let snap = clip.clone();
+                            let new_cid = rd_core::ClipId::new();
+                            let cmd = rd_core::Command::SplitClip {
                                 track_id: tid,
-                                clip_id: cid,
+                                original_clip_id: cid,
+                                new_clip_id: new_cid,
                                 split_time_us: split_time,
-                                new_clip,
-                            });
+                                original_clip_snapshot: snap,
+                            };
+                            let _ = ed.execute_command(cmd);
                             ed.status_message =
                                 Some(("Split Clip with Razor Tool [C]".into(), Instant::now()));
                         }
                     }
                     PendingClipOp::RippleTrim(cid, tid, is_head) => {
-                        let res = if let Some(t) = ed.project.timeline.track_mut(tid) {
-                            if is_head {
-                                t.ripple_trim_in(cid, frame_step).map(|_| true)
-                            } else {
-                                t.ripple_trim_out(cid, -frame_step).map(|_| false)
-                            }
-                        } else {
-                            Err("No track")
-                        };
-                        if let Ok(head) = res {
-                            if head {
-                                ed.record_mutation(rd_core::JournalMutation::RippleTrimIn {
-                                    track_id: tid,
-                                    clip_id: cid,
-                                    delta_us: frame_step,
-                                });
-                                ed.status_message = Some((
-                                    "Ripple Trimmed In-Point (+1 frame) [B]".into(),
-                                    Instant::now(),
-                                ));
-                            } else {
-                                ed.record_mutation(rd_core::JournalMutation::RippleTrimOut {
-                                    track_id: tid,
-                                    clip_id: cid,
-                                    delta_us: -frame_step,
-                                });
-                                ed.status_message = Some((
-                                    "Ripple Trimmed Out-Point (-1 frame) [B]".into(),
-                                    Instant::now(),
-                                ));
-                            }
-                        }
-                    }
-                    PendingClipOp::Roll(cid, tid) => {
-                        let res = if let Some(t) = ed.project.timeline.track_mut(tid) {
-                            if let Some(pos_idx) = t.clips().iter().position(|c| c.id == cid) {
-                                if pos_idx + 1 < t.clips().len() {
-                                    let next_id = t.clips()[pos_idx + 1].id;
-                                    t.roll_edit(cid, next_id, frame_step).map(|_| (cid, next_id))
-                                } else if pos_idx > 0 {
-                                    let prev_id = t.clips()[pos_idx - 1].id;
-                                    t.roll_edit(prev_id, cid, frame_step).map(|_| (prev_id, cid))
-                                } else {
-                                    Err("No adjacent clip to roll")
-                                }
-                            } else {
-                                Err("Clip not found")
-                            }
-                        } else {
-                            Err("Track not found")
-                        };
-                        if let Ok((outgoing_id, incoming_id)) = res {
-                            ed.record_mutation(rd_core::JournalMutation::RollEdit {
-                                track_id: tid,
-                                outgoing_id,
-                                incoming_id,
-                                delta_us: frame_step,
-                            });
-                            ed.status_message = Some((
-                                "Rolled Edit Boundary (+1 frame) [N]".into(),
-                                Instant::now(),
-                            ));
-                        }
-                    }
-                    PendingClipOp::Slip(cid, tid) => {
-                        let ok = if let Some(t) = ed.project.timeline.track_mut(tid) {
-                            t.slip_edit(cid, frame_step).is_ok()
-                        } else {
-                            false
-                        };
-                        if ok {
-                            ed.record_mutation(rd_core::JournalMutation::SlipEdit {
+                        let cmd = if is_head {
+                            rd_core::Command::RippleTrimIn {
                                 track_id: tid,
                                 clip_id: cid,
                                 delta_us: frame_step,
-                            });
+                            }
+                        } else {
+                            rd_core::Command::RippleTrimOut {
+                                track_id: tid,
+                                clip_id: cid,
+                                delta_us: -frame_step,
+                            }
+                        };
+                        if ed.execute_command(cmd).is_ok() {
+                            let msg = if is_head {
+                                "Ripple Trimmed In-Point (+1 frame) [B]"
+                            } else {
+                                "Ripple Trimmed Out-Point (-1 frame) [B]"
+                            };
+                            ed.status_message = Some((msg.into(), Instant::now()));
+                        }
+                    }
+                    PendingClipOp::Roll(cid, tid) => {
+                        if let Some(t) = ed.project.timeline.track(tid) {
+                            if let Some(pos_idx) = t.clips().iter().position(|c| c.id == cid) {
+                                let pair = if pos_idx + 1 < t.clips().len() {
+                                    Some((cid, t.clips()[pos_idx + 1].id))
+                                } else if pos_idx > 0 {
+                                    Some((t.clips()[pos_idx - 1].id, cid))
+                                } else {
+                                    None
+                                };
+                                if let Some((outgoing_id, incoming_id)) = pair {
+                                    let cmd = rd_core::Command::RollEdit {
+                                        track_id: tid,
+                                        outgoing_id,
+                                        incoming_id,
+                                        delta_us: frame_step,
+                                    };
+                                    if ed.execute_command(cmd).is_ok() {
+                                        ed.status_message = Some((
+                                            "Rolled Edit Boundary (+1 frame) [N]".into(),
+                                            Instant::now(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    PendingClipOp::Slip(cid, tid) => {
+                        let cmd = rd_core::Command::SlipEdit {
+                            track_id: tid,
+                            clip_id: cid,
+                            delta_us: frame_step,
+                        };
+                        if ed.execute_command(cmd).is_ok() {
                             ed.status_message = Some((
                                 "Slipped Media Source (+1 frame) [Y]".into(),
                                 Instant::now(),
@@ -5784,17 +5810,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         }
                     }
                     PendingClipOp::Slide(cid, tid) => {
-                        let ok = if let Some(t) = ed.project.timeline.track_mut(tid) {
-                            t.slide_edit(cid, frame_step).is_ok()
-                        } else {
-                            false
+                        let cmd = rd_core::Command::SlideEdit {
+                            track_id: tid,
+                            clip_id: cid,
+                            delta_us: frame_step,
                         };
-                        if ok {
-                            ed.record_mutation(rd_core::JournalMutation::SlideEdit {
-                                track_id: tid,
-                                clip_id: cid,
-                                delta_us: frame_step,
-                            });
+                        if ed.execute_command(cmd).is_ok() {
                             ed.status_message = Some((
                                 "Slid Clip on Timeline (+1 frame) [U]".into(),
                                 Instant::now(),
@@ -6490,5 +6511,119 @@ mod tests {
         let f_frac = rd_audio::SpectrumAnalyzer::freq_to_fraction(1000.0);
         let idx = (f_frac * 127.0).round() as usize;
         assert!((curve[idx] - 6.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn test_editor_command_history_full_coverage_and_reversibility() {
+        let mut ed = EditorData::new();
+
+        // 1. SetMarkInOut via CommandHistory
+        let mark_cmd = rd_core::Command::SetMarkInOut {
+            old_mark_in_us: None,
+            old_mark_out_us: None,
+            new_mark_in_us: Some(1_000_000),
+            new_mark_out_us: Some(4_000_000),
+        };
+        ed.execute_command(mark_cmd).expect("SetMarkInOut failed");
+        assert_eq!(ed.project.timeline.mark_in_us, Some(1_000_000));
+        assert_eq!(ed.project.timeline.mark_out_us, Some(4_000_000));
+        assert_eq!(ed.history.undo_count(), 1);
+
+        ed.undo().expect("Undo MarkInOut");
+        assert_eq!(ed.project.timeline.mark_in_us, None);
+        assert_eq!(ed.project.timeline.mark_out_us, None);
+
+        ed.redo().expect("Redo MarkInOut");
+        assert_eq!(ed.project.timeline.mark_in_us, Some(1_000_000));
+        assert_eq!(ed.project.timeline.mark_out_us, Some(4_000_000));
+
+        // 2. AddMarker via CommandHistory
+        let marker = rd_core::TimelineMarker {
+            id: 101,
+            time_us: 2_500_000,
+            name: "Cue 1".into(),
+            color_rgb: [59, 130, 246],
+        };
+        ed.execute_command(rd_core::Command::AddMarker { marker })
+            .expect("AddMarker failed");
+        assert_eq!(ed.project.timeline.markers.len(), 1);
+        assert_eq!(ed.project.timeline.markers[0].id, 101);
+
+        ed.undo().expect("Undo AddMarker");
+        assert!(ed.project.timeline.markers.is_empty());
+
+        ed.redo().expect("Redo AddMarker");
+        assert_eq!(ed.project.timeline.markers.len(), 1);
+
+        // 3. AddClip, SplitClip, and RippleDelete on a fresh test track
+        let test_track_id = ed
+            .project
+            .timeline
+            .add_track(TrackKind::Video, "Command Test Track");
+        let clip = Clip::new_video("test.mp4", 0, 0, 5_000_000);
+        let clip_id = clip.id;
+        let snap = clip.clone();
+        ed.execute_command(rd_core::Command::AddClip {
+            track_id: test_track_id,
+            clip,
+        })
+        .expect("AddClip failed");
+        assert_eq!(
+            ed.project
+                .timeline
+                .track(test_track_id)
+                .unwrap()
+                .clips()
+                .len(),
+            1
+        );
+
+        let split_time = 2_000_000i64;
+        let new_clip_id = rd_core::ClipId::new();
+        ed.execute_command(rd_core::Command::SplitClip {
+            track_id: test_track_id,
+            original_clip_id: clip_id,
+            new_clip_id,
+            split_time_us: split_time,
+            original_clip_snapshot: snap,
+        })
+        .expect("SplitClip failed");
+
+        let clips_after_split = ed.project.timeline.track(test_track_id).unwrap().clips();
+        assert_eq!(clips_after_split.len(), 2);
+        assert_eq!(clips_after_split[0].id, clip_id);
+        assert_eq!(clips_after_split[1].id, new_clip_id);
+        assert_eq!(clips_after_split[0].duration_us(), 2_000_000);
+        assert_eq!(clips_after_split[1].duration_us(), 3_000_000);
+
+        // RippleDelete the first half (closes gap)
+        let first_clip = clips_after_split[0].clone();
+        ed.execute_command(rd_core::Command::RippleDelete {
+            track_id: test_track_id,
+            clip: first_clip,
+            original_index: 0,
+        })
+        .expect("RippleDelete failed");
+
+        let clips_after_ripple = ed.project.timeline.track(test_track_id).unwrap().clips();
+        assert_eq!(clips_after_ripple.len(), 1);
+        assert_eq!(clips_after_ripple[0].id, new_clip_id);
+        assert_eq!(clips_after_ripple[0].position_us, 0); // Shifted to start!
+
+        // Undo RippleDelete
+        ed.undo().expect("Undo RippleDelete");
+        let restored = ed.project.timeline.track(test_track_id).unwrap().clips();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].id, clip_id);
+        assert_eq!(restored[0].position_us, 0);
+        assert_eq!(restored[1].id, new_clip_id);
+        assert_eq!(restored[1].position_us, 2_000_000);
+
+        // Undo SplitClip
+        ed.undo().expect("Undo SplitClip");
+        let orig_track = ed.project.timeline.track(test_track_id).unwrap().clips();
+        assert_eq!(orig_track.len(), 1);
+        assert_eq!(orig_track[0].id, clip_id);
+        assert_eq!(orig_track[0].duration_us(), 5_000_000);
     }
 }
