@@ -5,7 +5,7 @@
 //! - Keyframed opacity, spatial transforms (translation, scale), and blend modes.
 //! - Direct pixel alpha blending and effect integration.
 
-use rd_effects::ShapeMaskParams;
+use rd_effects::{NeuralMatteParams, ShapeMaskParams};
 
 /// Parameters defining a video layer to be composited into a multi-track frame.
 #[derive(Debug, Clone)]
@@ -30,6 +30,8 @@ pub struct CompositorLayer {
     pub blend_mode: u32,
     /// Optional shape mask parameters.
     pub shape_mask: Option<ShapeMaskParams>,
+    /// Optional AI neural portrait matte parameters.
+    pub neural_matte: Option<NeuralMatteParams>,
 }
 
 impl CompositorLayer {
@@ -46,6 +48,7 @@ impl CompositorLayer {
             scale_y: 1.0,
             blend_mode: 0,
             shape_mask: None,
+            neural_matte: None,
         }
     }
 
@@ -73,6 +76,7 @@ impl CompositorLayer {
             scale_y,
             blend_mode,
             shape_mask: None,
+            neural_matte: None,
         }
     }
 }
@@ -169,6 +173,19 @@ fn composite_single_layer(
             if let Some(ref mask) = layer.shape_mask {
                 let mask_factor = evaluate_mask_pixel(norm_x, norm_y, mask);
                 sa *= mask_factor;
+            }
+
+            // Apply AI neural portrait matte if present
+            if let Some(ref matte) = layer.neural_matte {
+                let matte_factor = rd_effects::evaluate_matte_alpha(
+                    norm_x,
+                    norm_y,
+                    sr / 255.0,
+                    sg / 255.0,
+                    sb / 255.0,
+                    matte,
+                );
+                sa *= matte_factor;
             }
 
             if sa <= 0.001 {
@@ -330,5 +347,55 @@ mod tests {
 
         // Corner pixel (0, 0) should remain Green (background)
         assert_eq!(&target[0..4], &[0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn test_neural_matte_layer_compositing() {
+        let w = 16u32;
+        let h = 16u32;
+        let mut target = vec![0u8; (w * h * 4) as usize];
+
+        // Background: Blue
+        let bg = CompositorLayer::new([0, 0, 255, 255].repeat((w * h) as usize), w, h);
+
+        // Foreground: Green screen / room background with warm skin color subject in center
+        let mut fg_pixels = [30, 180, 30, 255].repeat((w * h) as usize);
+        for y in 6..10 {
+            for x in 6..10 {
+                let px = ((y * w + x) * 4) as usize;
+                fg_pixels[px] = 220; // R
+                fg_pixels[px + 1] = 160; // G
+                fg_pixels[px + 2] = 130; // B
+                fg_pixels[px + 3] = 255;
+            }
+        }
+
+        let mut fg = CompositorLayer::new(fg_pixels, w, h);
+        fg.neural_matte = Some(NeuralMatteParams {
+            threshold: 0.45,
+            feather: 0.05,
+            edge_choke: 0.0,
+            spill: 0.6,
+            invert: false,
+            bg_mode: 0,
+        });
+
+        composite_layers_over(&mut target, w, h, &[bg, fg]);
+
+        // Center pixel (8, 8) must be warm foreground subject
+        let center_idx = ((8 * w + 8) * 4) as usize;
+        assert!(
+            target[center_idx] > 180,
+            "Center red expected high, got {}",
+            target[center_idx]
+        );
+
+        // Corner pixel (0, 0) must be blue background
+        let corner_idx = 0;
+        assert!(
+            target[corner_idx + 2] > 200,
+            "Corner blue expected high, got {}",
+            target[corner_idx + 2]
+        );
     }
 }
