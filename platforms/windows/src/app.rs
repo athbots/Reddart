@@ -5,7 +5,6 @@
 //! inspector properties, transport controls, and playhead scrubbing.
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,7 +21,7 @@ use rd_audio::{
     AudioClock, AudioEngine, MeteringState, ParametricEqualizer, TimelineAudioScheduler,
 };
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
-use rd_decode::{AsyncDecoderService, FfmpegDecoder, FrameResponse};
+use rd_decode::{AsyncDecoderService, FrameResponse};
 use rd_render::{CompositorLayer, composite_layers_over};
 
 /// Studio editing workspace mode.
@@ -171,7 +170,6 @@ pub struct EditorData {
     pub solo_track: Option<TrackId>,
     pub show_safe_guides: bool,
     pub monitor_texture_id: Option<egui::TextureId>,
-    pub decoders: HashMap<PathBuf, FfmpegDecoder>,
     pub last_rendered_pts_us: i64,
     pub monitor_frame_buffer: Vec<u8>,
     pub needs_monitor_update: bool,
@@ -219,7 +217,6 @@ impl EditorData {
             ));
         }
 
-        let mut decoders = HashMap::new();
         let demo_path = [
             PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4"),
             PathBuf::from("Reddart_Master_Demo.mp4"),
@@ -251,9 +248,6 @@ impl EditorData {
                 .find(|t| t.kind == TrackKind::Video)
             {
                 track.add_clip(clip);
-            }
-            if let Ok(decoder) = FfmpegDecoder::open(d_path) {
-                decoders.insert(d_path.clone(), decoder);
             }
         }
 
@@ -335,7 +329,6 @@ impl EditorData {
             solo_track: None,
             show_safe_guides: true,
             monitor_texture_id: None,
-            decoders,
             last_rendered_pts_us: -999,
             monitor_frame_buffer: vec![18u8; 1920 * 1080 * 4],
             needs_monitor_update: true,
@@ -717,37 +710,16 @@ impl EditorData {
                         let rgba_opt = if let Some(frame) = maybe_frame {
                             frame.rgba_data.clone()
                         } else {
-                            // Queue background async decode
+                            // Queue background async decode on worker thread without blocking UI
                             self.async_decoder
                                 .request_frame(clip.id, path.clone(), source_time_us);
 
-                            // Fallback to warm decoder or synchronous decode without panics
-                            if let Some(dec) = self.decoders.get_mut(&path) {
-                                dec.decode_frame_at(source_time_us)
-                                    .ok()
-                                    .flatten()
-                                    .and_then(|f| f.rgba_data)
-                            } else {
-                                match FfmpegDecoder::open(&path) {
-                                    Ok(mut dec) => {
-                                        let f = dec
-                                            .decode_frame_at(source_time_us)
-                                            .ok()
-                                            .flatten()
-                                            .and_then(|f| f.rgba_data);
-                                        self.decoders.insert(path.clone(), dec);
-                                        f
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "Could not open video {}: {:?}",
-                                            path.display(),
-                                            e
-                                        );
-                                        None
-                                    }
-                                }
-                            }
+                            // Hold-frame: retrieve nearest cached frame for this asset to avoid visual blanking,
+                            // allowing the background decoder worker to fulfill the exact frame asynchronously.
+                            // CRITICAL: UI thread NEVER synchronously decodes or opens media.
+                            self.async_decoder
+                                .get_nearest_cached(&path, source_time_us)
+                                .and_then(|f| f.rgba_data.clone())
                         };
 
                         if let Some(rgba) = rgba_opt {
@@ -771,6 +743,29 @@ impl EditorData {
 
                             layers.push(CompositorLayer {
                                 rgba: layer_buf,
+                                width: 1920,
+                                height: 1080,
+                                opacity: eff_opacity,
+                                pos_x: eff_trans.position.x,
+                                pos_y: eff_trans.position.y,
+                                scale_x: eff_trans.scale.x,
+                                scale_y: eff_trans.scale.y,
+                                blend_mode: 0,
+                                shape_mask,
+                                neural_matte,
+                                auto_reframe,
+                            });
+                        } else {
+                            // Asynchronous loading hold frame while decoder worker fulfills first frame in background
+                            let mut loading_buf = vec![0u8; 1920 * 1080 * 4];
+                            Self::generate_loading_graphic(
+                                &mut loading_buf,
+                                1920,
+                                1080,
+                                &vclip.source_path,
+                            );
+                            layers.push(CompositorLayer {
+                                rgba: loading_buf,
                                 width: 1920,
                                 height: 1080,
                                 opacity: eff_opacity,
@@ -1106,6 +1101,25 @@ impl EditorData {
                     [42, 24, 16, 255] // Amber dark stripe
                 } else {
                     [20, 22, 28, 255] // Graphite dark stripe
+                };
+                let pixel_idx = row_offset + (x * 4) as usize;
+                if pixel_idx + 4 <= dst.len() {
+                    dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
+                }
+            }
+        }
+    }
+
+    /// Generate an asynchronous loading graphic displayed while background decoder warms up.
+    pub fn generate_loading_graphic(dst: &mut [u8], width: u32, height: u32, _source_path: &str) {
+        for y in 0..height {
+            let row_offset = (y * width * 4) as usize;
+            for x in 0..width {
+                let stripe = ((x + y) / 48) % 2 == 0;
+                let col: [u8; 4] = if stripe {
+                    [24, 28, 40, 255] // Slate blue dark stripe
+                } else {
+                    [16, 18, 24, 255] // Graphite dark stripe
                 };
                 let pixel_idx = row_offset + (x * 4) as usize;
                 if pixel_idx + 4 <= dst.len() {
