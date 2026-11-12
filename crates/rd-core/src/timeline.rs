@@ -214,6 +214,117 @@ impl Timeline {
         }
         nearest
     }
+
+    /// Create a compound clip from a selection of clips on a track.
+    ///
+    /// Extracts the specified clips, shifts their positions relative to the earliest clip's start,
+    /// places them into an inner nested timeline sequence, and replaces them on the track with a
+    /// single `ClipKind::Compound` clip.
+    pub fn create_compound_clip(
+        &mut self,
+        track_id: TrackId,
+        clip_ids: &[crate::clip::ClipId],
+        name: impl Into<String>,
+    ) -> Result<crate::clip::ClipId, &'static str> {
+        if clip_ids.is_empty() {
+            return Err("No clips specified for compound clip");
+        }
+
+        let track = self
+            .track_mut(track_id)
+            .ok_or("Track not found on timeline")?;
+        let track_kind = track.kind;
+
+        // Verify all clips exist on the track
+        for &cid in clip_ids {
+            if track.clip(cid).is_none() {
+                return Err("Specified clip not found on target track");
+            }
+        }
+
+        // Extract clips
+        let mut extracted = Vec::with_capacity(clip_ids.len());
+        for &cid in clip_ids {
+            if let Some(c) = track.remove_clip(cid) {
+                extracted.push(c);
+            }
+        }
+
+        if extracted.is_empty() {
+            return Err("Failed to extract clips");
+        }
+
+        // Find earliest start time
+        let min_start_us = extracted.iter().map(|c| c.position_us).min().unwrap();
+
+        // Build inner nested timeline
+        let mut inner_timeline = Timeline::new();
+        let inner_track_id = inner_timeline.add_track(track_kind, "Inner Track 1");
+        let inner_track = inner_timeline.track_mut(inner_track_id).unwrap();
+
+        for mut c in extracted {
+            c.position_us -= min_start_us;
+            inner_track.add_clip(c);
+        }
+
+        // Create the compound clip placed at min_start_us
+        let compound = crate::clip::Clip::new_compound(name, inner_timeline, min_start_us);
+        let compound_id = compound.id;
+
+        // Insert compound clip back onto the parent track
+        let track = self.track_mut(track_id).unwrap();
+        track.add_clip(compound);
+
+        Ok(compound_id)
+    }
+
+    /// Decompose / flatten a compound clip in place into its constituent clips.
+    ///
+    /// Replaces the compound clip on `track_id` with all the clips from its inner timeline,
+    /// shifting their positions by the compound clip's position and speed.
+    pub fn flatten_compound_clip(
+        &mut self,
+        track_id: TrackId,
+        compound_clip_id: crate::clip::ClipId,
+    ) -> Result<Vec<crate::clip::ClipId>, &'static str> {
+        let track = self
+            .track_mut(track_id)
+            .ok_or("Track not found on timeline")?;
+
+        let compound_clip = track
+            .remove_clip(compound_clip_id)
+            .ok_or("Compound clip not found on track")?;
+
+        let compound_data = match compound_clip.kind {
+            crate::clip::ClipKind::Compound(comp) => comp,
+            _ => {
+                // Restore clip if it's not a compound clip
+                let track = self.track_mut(track_id).unwrap();
+                track.add_clip(compound_clip);
+                return Err("Target clip is not a compound clip");
+            }
+        };
+
+        let mut unnested_ids = Vec::new();
+        let base_pos_us = compound_clip.position_us;
+        let speed = compound_clip.speed;
+
+        let track = self.track_mut(track_id).unwrap();
+
+        for inner_track in compound_data.timeline.tracks() {
+            for inner_clip in inner_track.clips() {
+                let mut restored_clip = inner_clip.clone();
+                // Map inner timeline position through compound position and speed
+                let scaled_offset = (restored_clip.position_us as f64 / speed) as TimestampUs;
+                restored_clip.position_us = base_pos_us + scaled_offset;
+                restored_clip.speed *= speed;
+                unnested_ids.push(restored_clip.id);
+                track.add_clip(restored_clip);
+            }
+        }
+
+        Ok(unnested_ids)
+    }
 }
 
 impl Default for Timeline {
@@ -272,5 +383,44 @@ mod tests {
         assert_eq!(timeline.snap_to(1_040_000, 50_000), 1_000_000);
         // Too far (at 1_200_000 with 50_000 threshold -> does not snap)
         assert_eq!(timeline.snap_to(1_200_000, 50_000), 1_200_000);
+    }
+
+    #[test]
+    fn test_create_and_flatten_compound_clip() {
+        let mut timeline = Timeline::new();
+        let vid = timeline.add_track(TrackKind::Video, "V1");
+
+        let clip1 = crate::Clip::new_video("clip1.mp4", 1_000_000, 0, 2_000_000);
+        let clip2 = crate::Clip::new_video("clip2.mp4", 3_000_000, 0, 3_000_000);
+        let id1 = clip1.id;
+        let id2 = clip2.id;
+
+        timeline.track_mut(vid).unwrap().add_clip(clip1);
+        timeline.track_mut(vid).unwrap().add_clip(clip2);
+        assert_eq!(timeline.total_clip_count(), 2);
+
+        // Group clip1 & clip2 into a compound clip
+        let compound_id = timeline
+            .create_compound_clip(vid, &[id1, id2], "Scene Compound")
+            .expect("Failed to create compound clip");
+
+        assert_eq!(timeline.total_clip_count(), 1);
+        let compound_clip = timeline.track(vid).unwrap().clip(compound_id).unwrap();
+        assert!(compound_clip.is_compound());
+        assert_eq!(compound_clip.position_us, 1_000_000);
+        assert_eq!(compound_clip.duration_us(), 5_000_000);
+
+        // Flatten back in place
+        let restored_ids = timeline
+            .flatten_compound_clip(vid, compound_id)
+            .expect("Failed to flatten compound clip");
+
+        assert_eq!(restored_ids.len(), 2);
+        assert_eq!(timeline.total_clip_count(), 2);
+        let clips = timeline.track(vid).unwrap().clips();
+        assert_eq!(clips[0].id, id1);
+        assert_eq!(clips[0].position_us, 1_000_000);
+        assert_eq!(clips[1].id, id2);
+        assert_eq!(clips[1].position_us, 3_000_000);
     }
 }

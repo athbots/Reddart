@@ -289,21 +289,57 @@ impl RenderGraph {
     /// Compile a Project Timeline at a specific timestamp into a complete RenderGraph.
     pub fn compile_timeline(project: &rd_core::Project, time_us: TimestampUs) -> Self {
         let mut graph = Self::new();
+        let composite = graph.compile_timeline_tracks(&project.timeline, time_us);
+
+        let final_node = match composite {
+            Some(node) => node,
+            None => {
+                // Empty frame: output empty 0-layer graph
+                graph.add_source(ClipId::new(), TrackId(0), 0)
+            }
+        };
+
+        // Output node
+        graph.set_output(
+            final_node,
+            project.resolution.width,
+            project.resolution.height,
+        );
+
+        graph
+    }
+
+    /// Recursively compile the active tracks of a timeline (or nested compound clip sequence)
+    /// at a given timestamp into composited render graph nodes.
+    pub fn compile_timeline_tracks(
+        &mut self,
+        timeline: &rd_core::Timeline,
+        time_us: TimestampUs,
+    ) -> Option<NodeId> {
         let mut active_layer_nodes = Vec::new();
 
         // Examine active tracks from bottom to top
-        for track in project.timeline.tracks() {
+        for track in timeline.tracks() {
             // Find active clip on this track at time_us
             if let Some(clip) = track.clip_at(time_us) {
                 // Map timeline timestamp to clip source timestamp
                 if let Some(source_time) = clip.timeline_to_source_us(time_us) {
-                    // 1. Source node
-                    let mut current = graph.add_source(clip.id, track.id, source_time);
+                    // Check if this is a compound clip or primitive clip
+                    let mut current = match &clip.kind {
+                        rd_core::ClipKind::Compound(comp) => {
+                            // Recursively compile inner nested timeline
+                            match self.compile_timeline_tracks(&comp.timeline, source_time) {
+                                Some(inner_node) => inner_node,
+                                None => continue,
+                            }
+                        }
+                        _ => self.add_source(clip.id, track.id, source_time),
+                    };
 
                     // 2. Transform node with keyframe evaluation
                     let eff_transform = clip.effective_transform(time_us);
                     let eff_opacity = clip.effective_opacity(time_us);
-                    current = graph.add_transform(
+                    current = self.add_transform(
                         current,
                         eff_transform.position.x,
                         eff_transform.position.y,
@@ -323,7 +359,7 @@ impl RenderGraph {
                                 val.to_bits().hash(&mut param_hasher);
                             }
                             current =
-                                graph.add_effect(current, &effect.effect_id, param_hasher.finish());
+                                self.add_effect(current, &effect.effect_id, param_hasher.finish());
                         }
                     }
 
@@ -333,31 +369,26 @@ impl RenderGraph {
         }
 
         if active_layer_nodes.is_empty() {
-            // Empty frame: output empty 0-layer graph
-            let empty_src = graph.add_source(ClipId::new(), TrackId(0), 0);
-            graph.set_output(
-                empty_src,
-                project.resolution.width,
-                project.resolution.height,
-            );
-            return graph;
+            return None;
         }
 
         // Composite layers bottom-up using blend nodes
         let mut composite = active_layer_nodes[0];
         for &layer in &active_layer_nodes[1..] {
             // Blend mode 0 = Normal
-            composite = graph.add_blend(composite, layer, 0, 1.0);
+            composite = self.add_blend(composite, layer, 0, 1.0);
         }
 
-        // Output node
-        graph.set_output(
-            composite,
-            project.resolution.width,
-            project.resolution.height,
-        );
+        Some(composite)
+    }
 
-        graph
+    /// Alias for `compile_timeline_tracks` for compiling nested sequences into the DAG.
+    pub fn compile_nested_sequence(
+        &mut self,
+        timeline: &rd_core::Timeline,
+        time_us: TimestampUs,
+    ) -> Option<NodeId> {
+        self.compile_timeline_tracks(timeline, time_us)
     }
 }
 
@@ -446,5 +477,79 @@ mod tests {
         let graph = RenderGraph::compile_timeline(&project, 2_000_000);
         let order = graph.topological_sort().expect("Valid DAG");
         assert!(order.len() >= 6); // 2 sources, 2 transforms, 1 blend, 1 output
+    }
+
+    #[test]
+    fn test_compile_timeline_with_compound_clip() {
+        let mut project = rd_core::Project::new("Nested Project");
+        let v1 = project
+            .timeline
+            .add_track(rd_core::TrackKind::Video, "Base Background");
+        let v2 = project
+            .timeline
+            .add_track(rd_core::TrackKind::Video, "Compound Track");
+
+        // Background clip: 0 to 10s
+        let bg = rd_core::Clip::new_video("bg.mp4", 0, 0, 10_000_000);
+        project.timeline.track_mut(v1).unwrap().add_clip(bg);
+
+        // Build inner timeline for compound clip
+        let mut inner_timeline = rd_core::Timeline::new();
+        let in_v1 = inner_timeline.add_track(rd_core::TrackKind::Video, "Inner V1");
+        let in_v2 = inner_timeline.add_track(rd_core::TrackKind::Video, "Inner V2");
+
+        let inner_clip_a = rd_core::Clip::new_video("inner_a.mp4", 0, 0, 4_000_000);
+        let inner_clip_b = rd_core::Clip::new_video("inner_b.mp4", 500_000, 0, 2_500_000);
+        inner_timeline
+            .track_mut(in_v1)
+            .unwrap()
+            .add_clip(inner_clip_a);
+        inner_timeline
+            .track_mut(in_v2)
+            .unwrap()
+            .add_clip(inner_clip_b);
+
+        // Create compound clip on V2 placed at 1.0s (1_000_000 us)
+        let compound_clip =
+            rd_core::Clip::new_compound("Intro Title & Lower Third", inner_timeline, 1_000_000);
+        project
+            .timeline
+            .track_mut(v2)
+            .unwrap()
+            .add_clip(compound_clip);
+
+        // At 2.0s on main timeline (1.0s into compound clip):
+        // Main V1 bg is active.
+        // Compound clip is active, and inside it both inner_clip_a (1.0s) and inner_clip_b (0.5s) are active!
+        let graph = RenderGraph::compile_timeline(&project, 2_000_000);
+        let order = graph
+            .topological_sort()
+            .expect("Valid DAG with compound clip");
+
+        // Verify DAG structure
+        let out_id = graph.output_node().expect("Output node exists");
+        assert_eq!(*order.last().unwrap(), out_id);
+
+        // Inner clips must be sources in the graph
+        let mut source_count = 0;
+        let mut blend_count = 0;
+        let mut transform_count = 0;
+
+        for &id in &order {
+            let node = graph.get_node(id).unwrap();
+            match node.kind {
+                NodeKind::Source { .. } => source_count += 1,
+                NodeKind::Blend { .. } => blend_count += 1,
+                NodeKind::Transform { .. } => transform_count += 1,
+                _ => {}
+            }
+        }
+
+        // 3 sources (bg + inner_a + inner_b)
+        assert_eq!(source_count, 3);
+        // 4 transforms (bg + inner_a + inner_b + compound clip outer transform)
+        assert_eq!(transform_count, 4);
+        // 2 blends (inner_a over inner_b, then compound over bg)
+        assert_eq!(blend_count, 2);
     }
 }
