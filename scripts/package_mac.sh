@@ -143,7 +143,7 @@ EOF
 
 echo "APPLRDRT" > "${APP_DIR}/Contents/PkgInfo"
 
-# Copy all 11 effects (including neural_matte, auto_reframe, and optical_flow)
+# Copy all 12 effects (including neural_matte, auto_reframe, optical_flow, and color_transform)
 cp -r "${ROOT_DIR}/effects/"* "${APP_DIR}/Contents/Resources/effects/"
 
 # Copy C header
@@ -236,7 +236,7 @@ cat <<EOF > "${MANIFEST_OUT}"
   "bundle": "Reddart.app",
   "bundle_identifier": "app.reddart.mac",
   "minimum_system_version": "12.0",
-  "effects_count": 11
+  "effects_count": 12
 }
 EOF
 

@@ -56,6 +56,7 @@ pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shad
 pub const NEURAL_MATTE_WGSL: &str = include_str!("../../../effects/neural_matte/shader.wgsl");
 pub const AUTO_REFRAME_WGSL: &str = include_str!("../../../effects/auto_reframe/shader.wgsl");
 pub const OPTICAL_FLOW_WGSL: &str = include_str!("../../../effects/optical_flow/shader.wgsl");
+pub const COLOR_TRANSFORM_WGSL: &str = include_str!("../../../effects/color_transform/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -632,6 +633,82 @@ impl EffectRegistry {
             },
             OPTICAL_FLOW_WGSL.into(),
         );
+
+        // 12. Cinema Color Space & ACES Transform
+        self.register(
+            EffectManifest {
+                id: "color_transform".into(),
+                name: "Cinema Color Space & ACES Transform".into(),
+                version: 1,
+                cost_class: CostClass::Medium,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "source_gamut".into(),
+                        name: "Source Gamut".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 4.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "source_tf".into(),
+                        name: "Source Transfer Function".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 0.0,
+                        max: 5.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "target_gamut".into(),
+                        name: "Target Gamut".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 4.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "target_tf".into(),
+                        name: "Target Transfer Function".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 0.0,
+                        max: 5.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "exposure".into(),
+                        name: "Exposure (EV)".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -6.0,
+                        max: 6.0,
+                        step: 0.1,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "tone_mapping".into(),
+                        name: "ACES Filmic Tone Mapping".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 1.0,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            COLOR_TRANSFORM_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -681,6 +758,12 @@ mod tests {
         assert!(registry.get("neural_matte").is_some());
         assert!(registry.get("auto_reframe").is_some());
         assert!(registry.get("optical_flow").is_some());
+        assert!(registry.get("color_transform").is_some());
+
+        let ct = registry.get("color_transform").unwrap();
+        assert_eq!(ct.manifest.cost_class, CostClass::Medium);
+        assert_eq!(ct.manifest.parameters.len(), 6);
+        assert!(ct.wgsl_source.contains("fn fs_main"));
 
         let of = registry.get("optical_flow").unwrap();
         assert_eq!(of.manifest.cost_class, CostClass::High);
