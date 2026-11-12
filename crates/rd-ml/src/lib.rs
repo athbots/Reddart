@@ -14,13 +14,22 @@ pub mod reframe;
 pub mod segmentation;
 pub mod stabilize;
 pub mod tracking;
+pub mod whisper;
 
-pub use captions::{CaptionSegment, CaptionStyle, WordTiming, generate_caption_track};
+pub use captions::{
+    CaptionSegment, CaptionStyle, WordTiming, export_srt, export_vtt, format_timestamp_srt,
+    format_timestamp_vtt, generate_caption_track, parse_srt, parse_timestamp_srt,
+    parse_timestamp_vtt, parse_vtt, wrap_segments,
+};
 pub use denoise::{AudioDenoiser, DenoiseConfig};
 pub use reframe::{AutoReframer, TargetAspect};
 pub use segmentation::SegmentationMask;
 pub use stabilize::{FrameMotion, VideoStabilizer};
 pub use tracking::{BoundingBox, TrackedPath};
+pub use whisper::{
+    AudioPreprocessor, SpeechBoundary, VoiceActivityDetector, WHISPER_FRAME_SIZE, WHISPER_HOP_SIZE,
+    WHISPER_SAMPLE_RATE, WhisperConfig, WhisperEngine, WhisperModelSize, WhisperStatus,
+};
 
 /// Execution provider for on-device inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
