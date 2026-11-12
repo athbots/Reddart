@@ -92,7 +92,7 @@ jobs:
 
       - name: Install Linux audio and media dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg desktop-file-utils zip
 
       - name: Install macOS media dependencies
         if: runner.os == 'macOS'
@@ -109,3 +109,15 @@ jobs:
 
       - name: Run Core Engine Tests
         run: cargo test --workspace --exclude reddart-windows -- --nocapture
+
+      - name: Verify Linux Standalone Packaging
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x scripts/package_linux.sh
+          ./scripts/package_linux.sh --skip-build --verify-reproducibility
+
+      - name: Verify macOS Universal App Packaging
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x scripts/package_mac.sh
+          ./scripts/package_mac.sh --skip-build

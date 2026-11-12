@@ -15,9 +15,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>1.0.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>1.0.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>
@@ -27,6 +27,6 @@
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Reddart requires microphone access for live voiceover recording.</string>
+    <string>Reddart requires microphone access for live voiceover recording and speech-to-text analysis.</string>
 </dict>
 </plist>

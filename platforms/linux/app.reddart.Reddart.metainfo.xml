@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.reddart.Reddart</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Reddart</name>
+  <summary>Zero-lag 4K/60fps professional video editor powered by Rust and wgpu</summary>
+  <description>
+    <p>
+      Reddart is a professional-grade, zero-lag desktop video editor designed for high-throughput
+      real-time editing at 4K 60fps. Powered by a 100% Rust engine with GPU shader pipelines, Reddart
+      delivers deterministic timelines, predictive frame prefetching, on-device Whisper speech-to-text,
+      neural audio denoising, AI portrait matting, and surround audio mixing.
+    </p>
+    <p>Key Features:</p>
+    <ul>
+      <li>Zero-lag timeline scrubbing and trimming with real-time multi-track compositing</li>
+      <li>Hardware-accelerated rendering and export via wgpu (Vulkan / Direct3D 12 / Metal)</li>
+      <li>On-device Whisper AI speech-to-text and automatic subtitle generation</li>
+      <li>Neural audio denoising with STFT Wiener filtering and harmonic hum suppression</li>
+      <li>AI portrait matting with linear-time Guided Image Filtering and green spill removal</li>
+      <li>5.1 and 7.1 surround sound mixing with ITU-R BS.775 spatial audio panning</li>
+      <li>Deterministic Write-Ahead Logging (WAL) for atomic crash recovery and zero data loss</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">reddart.desktop</launchable>
+  <url type="homepage">https://github.com/athbots/Reddart</url>
+  <url type="bugtracker">https://github.com/athbots/Reddart/issues</url>
+  <provides>
+    <binary>reddart</binary>
+    <mediatype>application/x-reddart</mediatype>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>AudioVideoEditing</category>
+  </categories>
+  <releases>
+    <release version="1.0.0" date="2026-11-12">
+      <description>
+        <p>Reddart v1.0.0 official production release:</p>
+        <ul>
+          <li>Predictive lookahead prefetching with bounded frame caching</li>
+          <li>On-device Whisper speech-to-text and subtitle track generation</li>
+          <li>Compound clips and nested sequence timelines</li>
+          <li>Multichannel 5.1/7.1 surround sound audio mixing</li>
+          <li>Neural audio denoising and video AI matting</li>
+          <li>Cross-platform standalone packaging for Linux, macOS, and Windows</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
+

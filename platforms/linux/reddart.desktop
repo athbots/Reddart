@@ -1,0 +1,24 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=Reddart
+GenericName=Video Editor
+Comment=Zero-Lag 4K/60fps Professional Desktop Video Editor
+Exec=reddart %F
+Icon=reddart
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-reddart;video/mp4;video/quicktime;video/x-matroska;video/webm;audio/wav;audio/mpeg;audio/flac;
+Keywords=video;editor;timeline;cut;trim;color;grade;lut;effects;audio;denoise;subtitles;whisper;
+StartupNotify=true
+StartupWMClass=reddart
+Actions=NewProject;Benchmark;
+
+[Desktop Action NewProject]
+Name=New Reddart Project
+Exec=reddart --new-project
+
+[Desktop Action Benchmark]
+Name=Run Render Graph Benchmark
+Exec=reddart benchmark
+
