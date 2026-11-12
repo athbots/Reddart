@@ -6,6 +6,7 @@
 pub mod lut;
 pub mod mask;
 pub mod matte;
+pub mod reframe;
 pub mod registry;
 pub mod shader;
 pub mod template;
@@ -13,6 +14,7 @@ pub mod text;
 
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
 pub use matte::{NeuralMatteParams, apply_neural_matte, evaluate_matte_alpha};
+pub use reframe::{AutoReframeParams, apply_auto_reframe};
 pub use registry::{EffectEntry, EffectManifest, EffectParamSpec, EffectRegistry};
 pub use template::{BeatDetector, MusicCue, TemplateSlot, TemplateSpec};
 pub use text::{

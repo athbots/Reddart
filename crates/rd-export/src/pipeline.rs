@@ -924,6 +924,54 @@ pub fn render_project_to_file(
                             }
                         });
 
+                    let auto_reframe = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "auto_reframe" && e.enabled)
+                        .map(|reframe_eff| {
+                            let target_aspect = reframe_eff
+                                .parameters
+                                .get("target_aspect")
+                                .copied()
+                                .unwrap_or(0.0)
+                                as u32;
+                            let pan_x = clip
+                                .evaluate_keyframe("pan_x", time_us)
+                                .or_else(|| reframe_eff.parameters.get("pan_x").copied())
+                                .unwrap_or(0.0);
+                            let pan_y = clip
+                                .evaluate_keyframe("pan_y", time_us)
+                                .or_else(|| reframe_eff.parameters.get("pan_y").copied())
+                                .unwrap_or(0.0);
+                            let zoom = clip
+                                .evaluate_keyframe("zoom", time_us)
+                                .or_else(|| reframe_eff.parameters.get("zoom").copied())
+                                .unwrap_or(1.0);
+                            let fill_mode = reframe_eff
+                                .parameters
+                                .get("fill_mode")
+                                .copied()
+                                .unwrap_or(0.0) as u32;
+                            let background_blur = clip
+                                .evaluate_keyframe("background_blur", time_us)
+                                .or_else(|| reframe_eff.parameters.get("background_blur").copied())
+                                .unwrap_or(8.0);
+                            let background_dim = clip
+                                .evaluate_keyframe("background_dim", time_us)
+                                .or_else(|| reframe_eff.parameters.get("background_dim").copied())
+                                .unwrap_or(0.45);
+
+                            rd_effects::AutoReframeParams {
+                                target_aspect,
+                                pan_x,
+                                pan_y,
+                                zoom,
+                                fill_mode,
+                                background_blur,
+                                background_dim,
+                            }
+                        });
+
                     if let Some(path) = resolve_media_path(&vclip.source_path) {
                         let source_time_us = clip.source_in_us
                             + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
@@ -971,6 +1019,7 @@ pub fn render_project_to_file(
                                     blend_mode: 0,
                                     shape_mask,
                                     neural_matte,
+                                    auto_reframe,
                                 });
                             }
                         } else {
@@ -995,6 +1044,7 @@ pub fn render_project_to_file(
                                 blend_mode: 0,
                                 shape_mask,
                                 neural_matte: None,
+                                auto_reframe: None,
                             });
                         }
                     } else {
@@ -1019,6 +1069,7 @@ pub fn render_project_to_file(
                             blend_mode: 0,
                             shape_mask,
                             neural_matte: None,
+                            auto_reframe: None,
                         });
                     }
                 }

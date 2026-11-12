@@ -2717,6 +2717,7 @@ dependencies = [
  "log",
  "rd-core",
  "rd-effects",
+ "rd-render",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

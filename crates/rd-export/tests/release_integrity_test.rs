@@ -265,7 +265,7 @@ fn test_cross_platform_packaging_integrity() {
     );
     assert_eq!(mac_manifest["version"].as_str().unwrap(), "1.0.0");
     assert_eq!(mac_manifest["bundle"].as_str().unwrap(), "Reddart.app");
-    assert_eq!(mac_manifest["effects_count"].as_u64().unwrap(), 9);
+    assert_eq!(mac_manifest["effects_count"].as_u64().unwrap(), 10);
 
     let mac_zip_name = mac_manifest["archive"]["filename"].as_str().unwrap();
     let mac_zip_path = root.join("ready_to_use/mac").join(mac_zip_name);
@@ -312,7 +312,7 @@ fn test_cross_platform_packaging_integrity() {
         linux_manifest["desktop_entry"].as_str().unwrap(),
         "share/applications/reddart.desktop"
     );
-    assert_eq!(linux_manifest["effects_count"].as_u64().unwrap(), 9);
+    assert_eq!(linux_manifest["effects_count"].as_u64().unwrap(), 10);
 
     let linux_zip_name = linux_manifest["archive"]["filename"].as_str().unwrap();
     let linux_zip_path = root.join("ready_to_use/linux").join(linux_zip_name);

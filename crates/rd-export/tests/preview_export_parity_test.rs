@@ -156,6 +156,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            auto_reframe: None,
         },
         CompositorLayer {
             rgba: pip_pixels,
@@ -173,6 +174,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 ..Default::default()
             }),
             neural_matte: None,
+            auto_reframe: None,
         },
         CompositorLayer {
             rgba: title_pixels,
@@ -190,6 +192,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 ..Default::default()
             }),
             neural_matte: None,
+            auto_reframe: None,
         },
     ];
 
