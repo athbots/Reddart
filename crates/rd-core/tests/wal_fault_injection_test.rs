@@ -42,6 +42,8 @@ fn make_test_clip(source: &str, pos_us: i64, dur_us: i64) -> Clip {
         effects: Vec::new(),
         volume: 1.0,
         pan: 0.0,
+        pan_surround: 0.0,
+        lfe_send: 0.0,
         keyframes: std::collections::HashMap::new(),
     }
 }

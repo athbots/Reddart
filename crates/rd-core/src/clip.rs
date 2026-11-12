@@ -171,6 +171,12 @@ pub struct Clip {
     /// Audio stereo pan (-1.0 left to +1.0 right, default 0.0 center).
     #[serde(default)]
     pub pan: f32,
+    /// Front/Back surround pan (-1.0 = rear/surround, 0.0 = center, 1.0 = front).
+    #[serde(default)]
+    pub pan_surround: f32,
+    /// LFE (subwoofer) send level in [0.0, 1.0].
+    #[serde(default)]
+    pub lfe_send: f32,
     /// Keyframe animation tracks for parameters (e.g. "opacity", "pos_x", "pos_y", "scale_x", "scale_y", "rotation", "speed", "volume").
     #[serde(default)]
     pub keyframes: std::collections::HashMap<String, crate::KeyframeTrack>,
@@ -200,6 +206,8 @@ impl Clip {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }
@@ -225,6 +233,8 @@ impl Clip {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }
@@ -253,6 +263,8 @@ impl Clip {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }
@@ -279,6 +291,8 @@ impl Clip {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }
@@ -390,6 +404,27 @@ impl Clip {
             .unwrap_or(base_vol)
     }
 
+    /// Get effective stereo pan (-1.0 to 1.0) at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_pan(&self, timeline_us: crate::TimestampUs) -> f32 {
+        self.evaluate_keyframe("pan", timeline_us)
+            .unwrap_or(self.pan)
+            .clamp(-1.0, 1.0)
+    }
+
+    /// Get effective surround pan (-1.0 rear to 1.0 front) at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_pan_surround(&self, timeline_us: crate::TimestampUs) -> f32 {
+        self.evaluate_keyframe("pan_surround", timeline_us)
+            .unwrap_or(self.pan_surround)
+            .clamp(-1.0, 1.0)
+    }
+
+    /// Get effective LFE send level (0.0 to 1.0) at a specific timeline timestamp, factoring in keyframes.
+    pub fn effective_lfe_send(&self, timeline_us: crate::TimestampUs) -> f32 {
+        self.evaluate_keyframe("lfe_send", timeline_us)
+            .unwrap_or(self.lfe_send)
+            .clamp(0.0, 1.0)
+    }
+
     /// Get effective speed at a specific timeline timestamp.
     pub fn effective_speed(&self, timeline_us: crate::TimestampUs) -> f64 {
         if let Some(s) = self.evaluate_keyframe("speed", timeline_us) {
@@ -498,6 +533,8 @@ mod tests {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }

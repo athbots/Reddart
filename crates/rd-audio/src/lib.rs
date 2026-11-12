@@ -7,12 +7,17 @@ pub mod clock;
 pub mod decode;
 pub mod engine;
 pub mod mixer;
+pub mod spatial;
 pub mod timeline;
 
 pub use clock::{AudioClock, SyncDecision};
 pub use decode::decode_audio_to_pcm;
 pub use engine::{AudioEngine, AudioTelemetry, MeteringState, amp_to_dbfs};
 pub use mixer::AudioMixer;
+pub use spatial::{
+    ChannelLayout, ItuDownmixer, MultichannelMixer, MultichannelTelemetry, MultichannelTrack,
+    SpatialPanner, SpatialParams,
+};
 pub use timeline::TimelineAudioScheduler;
 
 /// Audio sample rate in Hz.
