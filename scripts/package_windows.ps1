@@ -301,14 +301,31 @@ if ($ZipHash -eq $HistoricalV021Zip -and $ExeHash -eq $HistoricalV021Exe) {
 # Step 7: Genuinely Independent Clean-Build Reproducibility Verification
 if ($VerifyReproducibility) {
     Write-Host "[7/7] Verifying genuinely independent clean-build reproducibility across two isolated passes..." -ForegroundColor Yellow
-    $ReproTargetDir = Join-Path $RootDir "target\repro_clean_target"
-    if (Test-Path $ReproTargetDir) {
-        Remove-Item -Recurse -Force $ReproTargetDir
+    
+    $Pass1ExeHash = $ExeHash
+    $Pass1ZipHash = $ZipHash
+
+    # Save Pass 1 artifacts before wiping
+    $SavedPass1Dir = Join-Path $RootDir "target\dist\pass1_artifacts"
+    if (Test-Path $SavedPass1Dir) {
+        Remove-Item -Recurse -Force $SavedPass1Dir
+    }
+    New-Item -ItemType Directory -Force -Path $SavedPass1Dir | Out-Null
+    Copy-Item $TargetRelease -Destination (Join-Path $SavedPass1Dir "Reddart.exe") -Force
+    Copy-Item $ZipOut -Destination (Join-Path $SavedPass1Dir "$DistName.zip") -Force
+
+    Write-Host "  -> Purging previous compilation artifacts to guarantee clean-build isolation..." -ForegroundColor Yellow
+    Push-Location $RootDir
+    cargo clean -p reddart-windows
+    if (Test-Path (Join-Path $RootDir "target\release\reddart.exe")) {
+        Remove-Item -Force (Join-Path $RootDir "target\release\reddart.exe")
+    }
+    if (Test-Path (Join-Path $RootDir "target\release\deps\reddart*")) {
+        Remove-Item -Force (Join-Path $RootDir "target\release\deps\reddart*")
     }
 
-    Write-Host "  -> Compiling independent clean second pass from scratch into isolated target directory..." -ForegroundColor Yellow
-    Push-Location $RootDir
-    cargo build --release --locked -p reddart-windows --target-dir $ReproTargetDir
+    Write-Host "  -> Compiling independent clean second pass from scratch..." -ForegroundColor Yellow
+    cargo build --release --locked -p reddart-windows
     $ReproBuildExitCode = $LASTEXITCODE
     Pop-Location
 
@@ -317,41 +334,41 @@ if ($VerifyReproducibility) {
         exit 1
     }
 
-    $ReproExe = Join-Path $ReproTargetDir "release\reddart.exe"
-    if (-not (Test-Path $ReproExe)) {
-        Write-Error "Second-pass clean build executable not found at $ReproExe!"
+    $Pass2Exe = Join-Path $RootDir "target\release\reddart.exe"
+    if (-not (Test-Path $Pass2Exe)) {
+        Write-Error "Second-pass clean build executable not found at $Pass2Exe!"
         exit 1
     }
 
-    $ReproExeHash = (Get-FileHash -Path $ReproExe -Algorithm SHA256).Hash.ToLower()
-    Write-Host "  -> Pass 1 Binary SHA-256: $ExeHash" -ForegroundColor Cyan
-    Write-Host "  -> Pass 2 Binary SHA-256: $ReproExeHash" -ForegroundColor Cyan
+    $Pass2ExeHash = (Get-FileHash -Path $Pass2Exe -Algorithm SHA256).Hash.ToLower()
+    Write-Host "  -> Pass 1 Binary SHA-256: $Pass1ExeHash" -ForegroundColor Cyan
+    Write-Host "  -> Pass 2 Binary SHA-256: $Pass2ExeHash" -ForegroundColor Cyan
 
-    if ($ReproExeHash -ne $ExeHash) {
-        Write-Error "Genuinely independent clean-build binary reproducibility failed! Pass 1: $ExeHash, Pass 2: $ReproExeHash"
+    if ($Pass1ExeHash -ne $Pass2ExeHash) {
+        Write-Error "Genuinely independent clean-build binary reproducibility failed! Pass 1: $Pass1ExeHash, Pass 2: $Pass2ExeHash"
         exit 1
     }
-    Write-Host "  [OK] Bit-for-bit clean-build binary reproducibility verified ($ExeHash)" -ForegroundColor Green
+    Write-Host "  [OK] Bit-for-bit clean-build binary reproducibility verified ($Pass1ExeHash)" -ForegroundColor Green
 
     $SecondDistDir = Join-Path $RootDir "target\dist\repro_test_$DistName"
     $SecondZip = Join-Path $RootDir "target\dist\repro_test.zip"
 
-    Stage-DistributionPackage $SecondDistDir $ReproExe
+    Stage-DistributionPackage $SecondDistDir $Pass2Exe
     Create-DeterministicZip $SecondDistDir $SecondZip
-    $SecondZipHash = (Get-FileHash -Path $SecondZip -Algorithm SHA256).Hash.ToLower()
+    $Pass2ZipHash = (Get-FileHash -Path $SecondZip -Algorithm SHA256).Hash.ToLower()
 
     Remove-Item -Recurse -Force $SecondDistDir
     Remove-Item -Force $SecondZip
-    Remove-Item -Recurse -Force $ReproTargetDir
+    Remove-Item -Recurse -Force $SavedPass1Dir
 
-    Write-Host "  -> Pass 1 Archive SHA-256: $ZipHash" -ForegroundColor Cyan
-    Write-Host "  -> Pass 2 Archive SHA-256: $SecondZipHash" -ForegroundColor Cyan
+    Write-Host "  -> Pass 1 Archive SHA-256: $Pass1ZipHash" -ForegroundColor Cyan
+    Write-Host "  -> Pass 2 Archive SHA-256: $Pass2ZipHash" -ForegroundColor Cyan
 
-    if ($SecondZipHash -ne $ZipHash) {
-        Write-Error "Genuinely independent clean-build archive reproducibility failed! Pass 1: $ZipHash, Pass 2: $SecondZipHash"
+    if ($Pass1ZipHash -ne $Pass2ZipHash) {
+        Write-Error "Genuinely independent clean-build archive reproducibility failed! Pass 1: $Pass1ZipHash, Pass 2: $Pass2ZipHash"
         exit 1
     }
-    Write-Host "  [OK] Bit-for-bit clean-build distribution archive reproducibility verified ($ZipHash)" -ForegroundColor Green
+    Write-Host "  [OK] Bit-for-bit clean-build distribution archive reproducibility verified ($Pass1ZipHash)" -ForegroundColor Green
 } else {
     Write-Host "[7/7] Packaging validation passed! (Pass -VerifyReproducibility to run full multi-pass clean-build check)" -ForegroundColor Green
 }
