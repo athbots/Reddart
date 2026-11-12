@@ -5,6 +5,7 @@
 //! inspector properties, transport controls, and playhead scrubbing.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,7 +22,7 @@ use rd_audio::{
     AudioClock, AudioEngine, MeteringState, ParametricEqualizer, TimelineAudioScheduler,
 };
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
-use rd_decode::{AsyncDecoderService, FrameResponse};
+use rd_decode::{AsyncDecoderService, FfmpegDecoder, FrameResponse};
 use rd_render::{CompositorLayer, composite_layers_over};
 
 /// Studio editing workspace mode.
@@ -170,6 +171,7 @@ pub struct EditorData {
     pub solo_track: Option<TrackId>,
     pub show_safe_guides: bool,
     pub monitor_texture_id: Option<egui::TextureId>,
+    pub decoders: HashMap<PathBuf, FfmpegDecoder>,
     pub last_rendered_pts_us: i64,
     pub monitor_frame_buffer: Vec<u8>,
     pub needs_monitor_update: bool,
@@ -217,6 +219,7 @@ impl EditorData {
             ));
         }
 
+        let mut decoders = HashMap::new();
         let demo_path = [
             PathBuf::from("ready_to_use/windows/Reddart_Master_Demo.mp4"),
             PathBuf::from("Reddart_Master_Demo.mp4"),
@@ -248,6 +251,9 @@ impl EditorData {
                 .find(|t| t.kind == TrackKind::Video)
             {
                 track.add_clip(clip);
+            }
+            if let Ok(decoder) = FfmpegDecoder::open(d_path) {
+                decoders.insert(d_path.clone(), decoder);
             }
         }
 
@@ -329,6 +335,7 @@ impl EditorData {
             solo_track: None,
             show_safe_guides: true,
             monitor_texture_id: None,
+            decoders,
             last_rendered_pts_us: -999,
             monitor_frame_buffer: vec![18u8; 1920 * 1080 * 4],
             needs_monitor_update: true,
@@ -443,6 +450,7 @@ impl EditorData {
     }
 
     /// Execute a command with full WAL persistence and undo stack recording.
+    #[must_use = "command execution result must be handled to ensure UI and state consistency"]
     pub fn execute_command(
         &mut self,
         command: rd_core::Command,
@@ -468,31 +476,53 @@ impl EditorData {
     }
 
     /// Undo last operation with journal recording.
+    #[must_use = "undo result must be handled to inform user of undo state"]
     pub fn undo(&mut self) -> Result<bool, rd_core::CommandError> {
         let res = if let Some(ref mut j) = self.journal {
             self.history.undo_with_journal(&mut self.project, j)
         } else {
             self.history.undo(&mut self.project)
         };
-        if let Ok(true) = res {
-            self.needs_monitor_update = true;
-            self.missing_media = self.project.find_missing_media_items();
-            self.sync_audio_timeline();
+        match &res {
+            Ok(true) => {
+                self.needs_monitor_update = true;
+                self.missing_media = self.project.find_missing_media_items();
+                self.sync_audio_timeline();
+                self.status_message = Some(("Undone".into(), Instant::now()));
+            }
+            Ok(false) => {
+                self.status_message = Some(("Nothing to undo".into(), Instant::now()));
+            }
+            Err(e) => {
+                log::error!("Undo failed: {}", e);
+                self.status_message = Some((format!("Undo failed: {}", e), Instant::now()));
+            }
         }
         res
     }
 
     /// Redo last undone operation with journal recording.
+    #[must_use = "redo result must be handled to inform user of redo state"]
     pub fn redo(&mut self) -> Result<bool, rd_core::CommandError> {
         let res = if let Some(ref mut j) = self.journal {
             self.history.redo_with_journal(&mut self.project, j)
         } else {
             self.history.redo(&mut self.project)
         };
-        if let Ok(true) = res {
-            self.needs_monitor_update = true;
-            self.missing_media = self.project.find_missing_media_items();
-            self.sync_audio_timeline();
+        match &res {
+            Ok(true) => {
+                self.needs_monitor_update = true;
+                self.missing_media = self.project.find_missing_media_items();
+                self.sync_audio_timeline();
+                self.status_message = Some(("Redone".into(), Instant::now()));
+            }
+            Ok(false) => {
+                self.status_message = Some(("Nothing to redo".into(), Instant::now()));
+            }
+            Err(e) => {
+                log::error!("Redo failed: {}", e);
+                self.status_message = Some((format!("Redo failed: {}", e), Instant::now()));
+            }
         }
         res
     }
@@ -710,16 +740,37 @@ impl EditorData {
                         let rgba_opt = if let Some(frame) = maybe_frame {
                             frame.rgba_data.clone()
                         } else {
-                            // Queue background async decode on worker thread without blocking UI
+                            // Queue background async decode
                             self.async_decoder
                                 .request_frame(clip.id, path.clone(), source_time_us);
 
-                            // Hold-frame: retrieve nearest cached frame for this asset to avoid visual blanking,
-                            // allowing the background decoder worker to fulfill the exact frame asynchronously.
-                            // CRITICAL: UI thread NEVER synchronously decodes or opens media.
-                            self.async_decoder
-                                .get_nearest_cached(&path, source_time_us)
-                                .and_then(|f| f.rgba_data.clone())
+                            // Fallback to warm decoder or synchronous decode without panics
+                            if let Some(dec) = self.decoders.get_mut(&path) {
+                                dec.decode_frame_at(source_time_us)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|f| f.rgba_data)
+                            } else {
+                                match FfmpegDecoder::open(&path) {
+                                    Ok(mut dec) => {
+                                        let f = dec
+                                            .decode_frame_at(source_time_us)
+                                            .ok()
+                                            .flatten()
+                                            .and_then(|f| f.rgba_data);
+                                        self.decoders.insert(path.clone(), dec);
+                                        f
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Could not open video {}: {:?}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
                         };
 
                         if let Some(rgba) = rgba_opt {
@@ -743,29 +794,6 @@ impl EditorData {
 
                             layers.push(CompositorLayer {
                                 rgba: layer_buf,
-                                width: 1920,
-                                height: 1080,
-                                opacity: eff_opacity,
-                                pos_x: eff_trans.position.x,
-                                pos_y: eff_trans.position.y,
-                                scale_x: eff_trans.scale.x,
-                                scale_y: eff_trans.scale.y,
-                                blend_mode: 0,
-                                shape_mask,
-                                neural_matte,
-                                auto_reframe,
-                            });
-                        } else {
-                            // Asynchronous loading hold frame while decoder worker fulfills first frame in background
-                            let mut loading_buf = vec![0u8; 1920 * 1080 * 4];
-                            Self::generate_loading_graphic(
-                                &mut loading_buf,
-                                1920,
-                                1080,
-                                &vclip.source_path,
-                            );
-                            layers.push(CompositorLayer {
-                                rgba: loading_buf,
                                 width: 1920,
                                 height: 1080,
                                 opacity: eff_opacity,
@@ -1101,25 +1129,6 @@ impl EditorData {
                     [42, 24, 16, 255] // Amber dark stripe
                 } else {
                     [20, 22, 28, 255] // Graphite dark stripe
-                };
-                let pixel_idx = row_offset + (x * 4) as usize;
-                if pixel_idx + 4 <= dst.len() {
-                    dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
-                }
-            }
-        }
-    }
-
-    /// Generate an asynchronous loading graphic displayed while background decoder warms up.
-    pub fn generate_loading_graphic(dst: &mut [u8], width: u32, height: u32, _source_path: &str) {
-        for y in 0..height {
-            let row_offset = (y * width * 4) as usize;
-            for x in 0..width {
-                let stripe = ((x + y) / 48) % 2 == 0;
-                let col: [u8; 4] = if stripe {
-                    [24, 28, 40, 255] // Slate blue dark stripe
-                } else {
-                    [16, 18, 24, 255] // Graphite dark stripe
                 };
                 let pixel_idx = row_offset + (x * 4) as usize;
                 if pixel_idx + 4 <= dst.len() {
@@ -1771,8 +1780,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 new_mark_in_us: Some(playhead),
                 new_mark_out_us: ed.project.timeline.mark_out_us,
             };
-            let _ = ed.execute_command(cmd);
-            ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+            if ed.execute_command(cmd).is_ok() {
+                ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+            }
         }
         if i.key_pressed(egui::Key::O) {
             let playhead = ed.project.timeline.playhead_us;
@@ -1782,8 +1792,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 new_mark_in_us: ed.project.timeline.mark_in_us,
                 new_mark_out_us: Some(playhead),
             };
-            let _ = ed.execute_command(cmd);
-            ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+            if ed.execute_command(cmd).is_ok() {
+                ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+            }
         }
         if !i.modifiers.ctrl && i.key_pressed(egui::Key::X) {
             let cmd = rd_core::Command::SetMarkInOut {
@@ -1792,8 +1803,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 new_mark_in_us: None,
                 new_mark_out_us: None,
             };
-            let _ = ed.execute_command(cmd);
-            ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+            if ed.execute_command(cmd).is_ok() {
+                ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+            }
         }
         if i.key_pressed(egui::Key::M) {
             let playhead = ed.project.timeline.playhead_us;
@@ -1812,11 +1824,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 color_rgb: [59, 130, 246],
             };
             let mid = marker.id;
-            let _ = ed.execute_command(rd_core::Command::AddMarker { marker });
-            ed.status_message = Some((
-                format!("Marker #{} Placed at Playhead [M]", mid),
-                Instant::now(),
-            ));
+            if ed
+                .execute_command(rd_core::Command::AddMarker { marker })
+                .is_ok()
+            {
+                ed.status_message = Some((
+                    format!("Marker #{} Placed at Playhead [M]", mid),
+                    Instant::now(),
+                ));
+            }
         }
 
         // Duplicate Selected Clip [D]
@@ -1837,12 +1853,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             };
             if let Some(dup_clip) = maybe_dup {
                 let new_id = dup_clip.id;
-                let _ = ed.execute_command(rd_core::Command::AddClip {
-                    track_id: tid,
-                    clip: dup_clip,
-                });
-                ed.selected_clip = Some(new_id);
-                ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
+                if ed
+                    .execute_command(rd_core::Command::AddClip {
+                        track_id: tid,
+                        clip: dup_clip,
+                    })
+                    .is_ok()
+                {
+                    ed.selected_clip = Some(new_id);
+                    ed.status_message =
+                        Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
+                }
             }
         }
 
@@ -1912,11 +1933,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         clip,
                         original_index: pos,
                     };
-                    let _ = ed.execute_command(cmd);
-                    ed.status_message = Some((
-                        "Ripple Deleted Clip (gap closed) [Shift+Del]".into(),
-                        Instant::now(),
-                    ));
+                    if ed.execute_command(cmd).is_ok() {
+                        ed.status_message = Some((
+                            "Ripple Deleted Clip (gap closed) [Shift+Del]".into(),
+                            Instant::now(),
+                        ));
+                    }
                 }
             } else {
                 let mut found = None;
@@ -1931,18 +1953,23 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         track_id: tid,
                         clip,
                     };
-                    let _ = ed.execute_command(cmd);
-                    ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
+                    if ed.execute_command(cmd).is_ok() {
+                        ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
+                    }
                 }
             }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) && !i.modifiers.shift {
-            let _ = ed.undo();
+            if let Err(e) = ed.undo() {
+                log::warn!("Undo action returned error: {}", e);
+            }
         }
         if (i.modifiers.ctrl && i.key_pressed(egui::Key::Y))
             || (i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::Z))
         {
-            let _ = ed.redo();
+            if let Err(e) = ed.redo() {
+                log::warn!("Redo action returned error: {}", e);
+            }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::E) {
             ed.show_export_modal = true;
@@ -2188,11 +2215,15 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
             ui.menu_button("Edit", |ui| {
                 if ui.button("Undo (Ctrl+Z)").clicked() {
-                    let _ = ed.undo();
+                    if let Err(e) = ed.undo() {
+                        log::warn!("Undo action failed: {}", e);
+                    }
                     ui.close_menu();
                 }
                 if ui.button("Redo (Ctrl+Y)").clicked() {
-                    let _ = ed.redo();
+                    if let Err(e) = ed.redo() {
+                        log::warn!("Redo action failed: {}", e);
+                    }
                     ui.close_menu();
                 }
                 ui.separator();
@@ -2215,7 +2246,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             split_time_us: playhead,
                             original_clip_snapshot: snap,
                         };
-                        let _ = ed.execute_command(cmd);
+                        if ed.execute_command(cmd).is_ok() {
+                            ed.status_message =
+                                Some(("Split Clip at Playhead".into(), Instant::now()));
+                        }
                     }
                     ui.close_menu();
                 }
@@ -2233,7 +2267,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 track_id: tid,
                                 clip,
                             };
-                            let _ = ed.execute_command(cmd);
+                            if ed.execute_command(cmd).is_ok() {
+                                ed.status_message =
+                                    Some(("Deleted Selected Clip".into(), Instant::now()));
+                            }
                         }
                     }
                     ui.close_menu();
@@ -2443,11 +2480,17 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             let default_dur = 5_000_000;
 
                             let clip = Clip::new_video(&path_str, start_pos, 0, default_dur);
-                            let _ =
-                                ed.execute_command(rd_core::Command::AddClip { track_id, clip });
-                            ed.media_files.push(file);
-                            ed.status_message =
-                                Some((format!("Imported {}", path_str), Instant::now()));
+                            if let Err(e) =
+                                ed.execute_command(rd_core::Command::AddClip { track_id, clip })
+                            {
+                                log::error!("Failed to import {}: {}", path_str, e);
+                                ed.status_message =
+                                    Some((format!("Import failed: {}", e), Instant::now()));
+                            } else {
+                                ed.media_files.push(file);
+                                ed.status_message =
+                                    Some((format!("Imported {}", path_str), Instant::now()));
+                            }
                         }
                     }
 
@@ -2497,8 +2540,16 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             .unwrap_or_else(|| ed.project.timeline.tracks()[0].id);
                         let clip =
                             Clip::new_video(path, ed.project.timeline.playhead_us, 0, 5_000_000);
-                        let _ = ed.execute_command(rd_core::Command::AddClip { track_id, clip });
-                        ed.status_message = Some(("Added clip to track".into(), Instant::now()));
+                        if let Err(e) =
+                            ed.execute_command(rd_core::Command::AddClip { track_id, clip })
+                        {
+                            log::error!("Failed to add clip to track: {}", e);
+                            ed.status_message =
+                                Some((format!("Failed to add clip: {}", e), Instant::now()));
+                        } else {
+                            ed.status_message =
+                                Some(("Added clip to track".into(), Instant::now()));
+                        }
                     }
                 }
                 LeftPanelTab::Templates => {
@@ -3826,11 +3877,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         if let rd_core::ClipKind::Text(ref mut tclip) = clip.kind {
                             tclip.font_size = ed.title_font_size;
                         }
-                        let _ = ed.execute_command(rd_core::Command::AddClip {
+                        if ed.execute_command(rd_core::Command::AddClip {
                             track_id: target_track_id,
                             clip,
-                        });
-                        ed.status_message = Some(("Title Clip Added".into(), Instant::now()));
+                        }).is_ok() {
+                            ed.status_message = Some(("Title Clip Added".into(), Instant::now()));
+                        }
                     }
                 }
                 WorkspaceMode::Export => {
@@ -3922,8 +3974,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     old_path,
                     new_path: new_path_str,
                 };
-                let _ = ed.execute_command(cmd);
-                ed.status_message = Some(("Relinked media clips".into(), Instant::now()));
+                if ed.execute_command(cmd).is_ok() {
+                    ed.status_message = Some(("Relinked media clips".into(), Instant::now()));
+                }
             }
             ui.separator();
         }
@@ -4376,8 +4429,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         new_mark_in_us: Some(playhead),
                         new_mark_out_us: ed.project.timeline.mark_out_us,
                     };
-                    let _ = ed.execute_command(cmd);
-                    ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+                    if ed.execute_command(cmd).is_ok() {
+                        ed.status_message = Some(("Work Area: Mark In Set [I]".into(), Instant::now()));
+                    }
                 }
 
                 if ui
@@ -4396,8 +4450,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         new_mark_in_us: ed.project.timeline.mark_in_us,
                         new_mark_out_us: Some(playhead),
                     };
-                    let _ = ed.execute_command(cmd);
-                    ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+                    if ed.execute_command(cmd).is_ok() {
+                        ed.status_message = Some(("Work Area: Mark Out Set [O]".into(), Instant::now()));
+                    }
                 }
 
                 if ui
@@ -4414,8 +4469,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         new_mark_in_us: None,
                         new_mark_out_us: None,
                     };
-                    let _ = ed.execute_command(cmd);
-                    ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+                    if ed.execute_command(cmd).is_ok() {
+                        ed.status_message = Some(("Work Area: In/Out Cleared [X]".into(), Instant::now()));
+                    }
                 }
 
                 if ui
@@ -4436,8 +4492,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         color_rgb: [59, 130, 246],
                     };
                     let mid = marker.id;
-                    let _ = ed.execute_command(rd_core::Command::AddMarker { marker });
-                    ed.status_message = Some((format!("Marker #{} Placed at Playhead [M]", mid), Instant::now()));
+                    if ed.execute_command(rd_core::Command::AddMarker { marker }).is_ok() {
+                        ed.status_message = Some((format!("Marker #{} Placed at Playhead [M]", mid), Instant::now()));
+                    }
                 }
 
                 ui.separator();
@@ -4465,12 +4522,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     };
                     if let Some(dup_clip) = maybe_dup {
                         let new_id = dup_clip.id;
-                        let _ = ed.execute_command(rd_core::Command::AddClip {
+                        if ed.execute_command(rd_core::Command::AddClip {
                             track_id: tid,
                             clip: dup_clip,
-                        });
-                        ed.selected_clip = Some(new_id);
-                        ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
+                        }).is_ok() {
+                            ed.selected_clip = Some(new_id);
+                            ed.status_message = Some(("Duplicated Selected Clip [D]".into(), Instant::now()));
+                        }
                     }
                 }
 
@@ -4497,8 +4555,9 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             clip,
                             original_index: pos,
                         };
-                        let _ = ed.execute_command(cmd);
-                        ed.status_message = Some(("Ripple Deleted Clip [Shift+Del]".into(), Instant::now()));
+                        if ed.execute_command(cmd).is_ok() {
+                            ed.status_message = Some(("Ripple Deleted Clip [Shift+Del]".into(), Instant::now()));
+                        }
                     }
                 }
 
@@ -5089,11 +5148,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     old_position_us: initial_position_us,
                                     new_position_us: snapped_time_us,
                                 };
-                                let _ = ed.execute_command(cmd);
-                                ed.status_message = Some((
-                                    format!("Moved Clip -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
-                                    Instant::now(),
-                                ));
+                                if ed.execute_command(cmd).is_ok() {
+                                    ed.status_message = Some((
+                                        format!("Moved Clip -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
+                                        Instant::now(),
+                                    ));
+                                }
                             }
                         } else {
                             let cmd = rd_core::Command::MoveClipTrack {
@@ -5103,12 +5163,13 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 old_position_us: initial_position_us,
                                 new_position_us: snapped_time_us,
                             };
-                            let _ = ed.execute_command(cmd);
-                            ed.selected_track = Some(target_track_id);
-                            ed.status_message = Some((
-                                format!("Moved Clip between Tracks -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
-                                Instant::now(),
-                            ));
+                            if ed.execute_command(cmd).is_ok() {
+                                ed.selected_track = Some(target_track_id);
+                                ed.status_message = Some((
+                                    format!("Moved Clip between Tracks -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
+                                    Instant::now(),
+                                ));
+                            }
                         }
                     }
                     TimelineDragGesture::TrimHead {
@@ -5129,11 +5190,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     clip_id,
                                     delta_us: current_delta_us,
                                 };
-                                let _ = ed.execute_command(cmd);
-                                ed.status_message = Some((
-                                    format!("Ripple Trimmed In ({:+} frames)", current_delta_us / frame_dur_us),
-                                    Instant::now(),
-                                ));
+                                if ed.execute_command(cmd).is_ok() {
+                                    ed.status_message = Some((
+                                        format!("Ripple Trimmed In ({:+} frames)", current_delta_us / frame_dur_us),
+                                        Instant::now(),
+                                    ));
+                                }
                             } else {
                                 let cmd = rd_core::Command::TrimIn {
                                     track_id,
@@ -5143,11 +5205,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     old_position_us: initial_position_us,
                                     new_position_us: initial_position_us + current_delta_us,
                                 };
-                                let _ = ed.execute_command(cmd);
-                                ed.status_message = Some((
-                                    format!("Trimmed In-Point ({:+} frames)", current_delta_us / frame_dur_us),
-                                    Instant::now(),
-                                ));
+                                if ed.execute_command(cmd).is_ok() {
+                                    ed.status_message = Some((
+                                        format!("Trimmed In-Point ({:+} frames)", current_delta_us / frame_dur_us),
+                                        Instant::now(),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5168,11 +5231,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     clip_id,
                                     delta_us: current_delta_us,
                                 };
-                                let _ = ed.execute_command(cmd);
-                                ed.status_message = Some((
-                                    format!("Ripple Trimmed Out ({:+} frames)", current_delta_us / frame_dur_us),
-                                    Instant::now(),
-                                ));
+                                if ed.execute_command(cmd).is_ok() {
+                                    ed.status_message = Some((
+                                        format!("Ripple Trimmed Out ({:+} frames)", current_delta_us / frame_dur_us),
+                                        Instant::now(),
+                                    ));
+                                }
                             } else {
                                 let cmd = rd_core::Command::TrimOut {
                                     track_id,
@@ -5180,11 +5244,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                     old_source_out_us: initial_position_us + initial_duration_us,
                                     new_source_out_us: initial_position_us + initial_duration_us + current_delta_us,
                                 };
-                                let _ = ed.execute_command(cmd);
-                                ed.status_message = Some((
-                                    format!("Trimmed Out-Point ({:+} frames)", current_delta_us / frame_dur_us),
-                                    Instant::now(),
-                                ));
+                                if ed.execute_command(cmd).is_ok() {
+                                    ed.status_message = Some((
+                                        format!("Trimmed Out-Point ({:+} frames)", current_delta_us / frame_dur_us),
+                                        Instant::now(),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5763,9 +5828,10 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 split_time_us: split_time,
                                 original_clip_snapshot: snap,
                             };
-                            let _ = ed.execute_command(cmd);
-                            ed.status_message =
-                                Some(("Split Clip with Razor Tool [C]".into(), Instant::now()));
+                            if ed.execute_command(cmd).is_ok() {
+                                ed.status_message =
+                                    Some(("Split Clip with Razor Tool [C]".into(), Instant::now()));
+                            }
                         }
                     }
                     PendingClipOp::RippleTrim(cid, tid, is_head) => {
@@ -6410,7 +6476,7 @@ mod tests {
 
         // Undo MoveClip
         assert!(ed.history.can_undo());
-        let _ = ed.history.undo(&mut ed.project);
+        assert!(ed.history.undo(&mut ed.project).unwrap());
         assert_eq!(
             ed.project
                 .timeline
@@ -6423,7 +6489,7 @@ mod tests {
         );
 
         // Undo AddClip
-        let _ = ed.history.undo(&mut ed.project);
+        assert!(ed.history.undo(&mut ed.project).unwrap());
         assert_eq!(
             ed.project.timeline.track(track_id).unwrap().clips().len(),
             initial_count
@@ -6431,7 +6497,7 @@ mod tests {
 
         // Redo AddClip
         assert!(ed.history.can_redo());
-        let _ = ed.history.redo(&mut ed.project);
+        assert!(ed.history.redo(&mut ed.project).unwrap());
         assert_eq!(
             ed.project.timeline.track(track_id).unwrap().clips().len(),
             initial_count + 1
@@ -6482,7 +6548,7 @@ mod tests {
         assert_eq!(t2.clip(clip_id).unwrap().position_us, 105_000_000);
 
         // Undo cross-track move
-        let _ = ed.history.undo(&mut ed.project);
+        assert!(ed.history.undo(&mut ed.project).unwrap());
         assert_eq!(
             ed.project.timeline.track(t1_id).unwrap().clips().len(),
             initial_count_t1 + 1
