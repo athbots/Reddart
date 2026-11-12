@@ -39,3 +39,4 @@ int32_t reddart_engine_attach_metal_texture(AppleEngine* engine, void* texture_p
 #endif
 
 #endif // REDDART_H
+

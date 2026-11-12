@@ -1,0 +1,15 @@
+{
+    "product":  "Reddart Video Editor",
+    "version":  "1.0.0",
+    "platform":  "macos-universal",
+    "generated_at":  "2026-11-12T09:26:48Z",
+    "archive":  {
+                    "filename":  "Reddart-v1.0.0-macOS-Universal.zip",
+                    "sha256":  "2fa4c0d7d28b200833133a50416c9b62000b4b2d67109db4d38ce882b0db7640",
+                    "bytes":  1481424
+                },
+    "bundle":  "Reddart.app",
+    "bundle_identifier":  "app.reddart.mac",
+    "minimum_system_version":  "12.0",
+    "effects_count":  9
+}

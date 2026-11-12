@@ -14,8 +14,28 @@ use std::time::Instant;
 
 fn print_version() {
     println!("Reddart Video Editor v{}", env!("CARGO_PKG_VERSION"));
-    println!("Platform: Windows 11 (x86_64-pc-windows-msvc)");
-    println!("Engine: Rust 2024 | Direct3D 12 / Vulkan | wgpu 24 | egui 0.31 | 48 kHz WASAPI");
+    #[cfg(target_os = "windows")]
+    {
+        println!("Platform: Windows (x86_64-pc-windows-msvc)");
+        println!("Engine: Rust 2024 | Direct3D 12 / Vulkan | wgpu 24 | egui 0.31 | 48 kHz WASAPI");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        println!("Platform: Linux (x86_64-unknown-linux-gnu)");
+        println!(
+            "Engine: Rust 2024 | Vulkan / Wayland / X11 | wgpu 24 | egui 0.31 | 48 kHz ALSA / PulseAudio"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        println!("Platform: macOS (Universal 2 - Apple Silicon & Intel)");
+        println!("Engine: Rust 2024 | Metal / AppKit | wgpu 24 | egui 0.31 | 48 kHz CoreAudio");
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        println!("Platform: Generic Unix / POSIX");
+        println!("Engine: Rust 2024 | wgpu 24 | egui 0.31 | Zero-Lag Real-Time Timeline");
+    }
 }
 
 fn print_help() {

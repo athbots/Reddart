@@ -243,3 +243,117 @@ fn test_release_manifest_and_file_hash_integrity() {
         zip_hash
     );
 }
+
+#[test]
+fn test_cross_platform_packaging_integrity() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir.parent().unwrap().parent().unwrap();
+
+    // 1. Verify macOS ready-to-use artifacts
+    let mac_manifest_path = root.join("ready_to_use/mac/manifest.json");
+    assert!(
+        mac_manifest_path.exists(),
+        "ready_to_use/mac/manifest.json must exist"
+    );
+    let mac_manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&mac_manifest_path).unwrap())
+            .expect("Valid JSON macOS manifest");
+
+    assert_eq!(
+        mac_manifest["product"].as_str().unwrap(),
+        "Reddart Video Editor"
+    );
+    assert_eq!(mac_manifest["version"].as_str().unwrap(), "1.0.0");
+    assert_eq!(mac_manifest["bundle"].as_str().unwrap(), "Reddart.app");
+    assert_eq!(mac_manifest["effects_count"].as_u64().unwrap(), 9);
+
+    let mac_zip_name = mac_manifest["archive"]["filename"].as_str().unwrap();
+    let mac_zip_path = root.join("ready_to_use/mac").join(mac_zip_name);
+    assert!(
+        mac_zip_path.exists(),
+        "macOS zip archive must exist at {:?}",
+        mac_zip_path
+    );
+
+    let actual_mac_hash = compute_file_sha256(&mac_zip_path).expect("Hash macOS zip");
+    assert_eq!(
+        actual_mac_hash,
+        mac_manifest["archive"]["sha256"].as_str().unwrap(),
+        "macOS archive hash must match manifest"
+    );
+
+    let mac_sums_path = root.join("ready_to_use/mac/SHA256SUMS.txt");
+    assert!(
+        mac_sums_path.exists(),
+        "ready_to_use/mac/SHA256SUMS.txt must exist"
+    );
+    let mac_sums_content = fs::read_to_string(&mac_sums_path).unwrap();
+    assert!(
+        mac_sums_content.contains(&actual_mac_hash),
+        "macOS SHA256SUMS.txt must contain zip hash"
+    );
+
+    // 2. Verify Linux ready-to-use artifacts
+    let linux_manifest_path = root.join("ready_to_use/linux/manifest.json");
+    assert!(
+        linux_manifest_path.exists(),
+        "ready_to_use/linux/manifest.json must exist"
+    );
+    let linux_manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&linux_manifest_path).unwrap())
+            .expect("Valid JSON Linux manifest");
+
+    assert_eq!(
+        linux_manifest["product"].as_str().unwrap(),
+        "Reddart Video Editor"
+    );
+    assert_eq!(linux_manifest["version"].as_str().unwrap(), "1.0.0");
+    assert_eq!(
+        linux_manifest["desktop_entry"].as_str().unwrap(),
+        "share/applications/reddart.desktop"
+    );
+    assert_eq!(linux_manifest["effects_count"].as_u64().unwrap(), 9);
+
+    let linux_zip_name = linux_manifest["archive"]["filename"].as_str().unwrap();
+    let linux_zip_path = root.join("ready_to_use/linux").join(linux_zip_name);
+    assert!(
+        linux_zip_path.exists(),
+        "Linux zip archive must exist at {:?}",
+        linux_zip_path
+    );
+
+    let actual_linux_hash = compute_file_sha256(&linux_zip_path).expect("Hash Linux zip");
+    assert_eq!(
+        actual_linux_hash,
+        linux_manifest["archive"]["sha256"].as_str().unwrap(),
+        "Linux archive hash must match manifest"
+    );
+
+    let linux_sums_path = root.join("ready_to_use/linux/SHA256SUMS.txt");
+    assert!(
+        linux_sums_path.exists(),
+        "ready_to_use/linux/SHA256SUMS.txt must exist"
+    );
+    let linux_sums_content = fs::read_to_string(&linux_sums_path).unwrap();
+    assert!(
+        linux_sums_content.contains(&actual_linux_hash),
+        "Linux SHA256SUMS.txt must contain zip hash"
+    );
+
+    // 3. Verify FreeDesktop specifications
+    let desktop_file = root.join("platforms/linux/reddart.desktop");
+    assert!(desktop_file.exists());
+    let desktop_str = fs::read_to_string(&desktop_file).unwrap();
+    assert!(desktop_str.contains("Type=Application"));
+    assert!(desktop_str.contains("Name=Reddart"));
+    assert!(desktop_str.contains("Exec=reddart %F"));
+
+    let metainfo_file = root.join("platforms/linux/app.reddart.Reddart.metainfo.xml");
+    assert!(metainfo_file.exists());
+    let metainfo_str = fs::read_to_string(&metainfo_file).unwrap();
+    assert!(metainfo_str.contains("<id>app.reddart.Reddart</id>"));
+
+    let svg_icon = root.join("platforms/linux/reddart.svg");
+    assert!(svg_icon.exists());
+    assert!(!fs::read_to_string(&svg_icon).unwrap().is_empty());
+}

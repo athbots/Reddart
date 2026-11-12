@@ -1,0 +1,143 @@
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "name": "Reddart Cinematic Showcase",
+  "format_version": 1,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "frame_rate": {
+    "num": 60,
+    "den": 1
+  },
+  "timeline": {
+    "tracks": [
+      {
+        "id": 1,
+        "kind": "Video",
+        "name": "Main Camera",
+        "enabled": true,
+        "locked": false,
+        "clips": [
+          {
+            "id": "a0000001-0000-0000-0000-000000000001",
+            "kind": {
+              "Video": {
+                "source_path": "footage/shot_01.mp4",
+                "proxy_path": null,
+                "has_audio": true
+              }
+            },
+            "position_us": 0,
+            "source_in_us": 0,
+            "source_out_us": 6000000,
+            "speed": 1.0,
+            "opacity": 1.0,
+            "transform": {
+              "position": { "x": 0.0, "y": 0.0 },
+              "scale": { "x": 1.0, "y": 1.0 },
+              "rotation": 0.0
+            },
+            "effects": [
+              {
+                "effect_id": "brightness_contrast",
+                "parameters": {
+                  "brightness": 0.05,
+                  "contrast": 0.12
+                },
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "a0000001-0000-0000-0000-000000000002",
+            "kind": {
+              "Video": {
+                "source_path": "footage/shot_02.mp4",
+                "proxy_path": null,
+                "has_audio": true
+              }
+            },
+            "position_us": 6000000,
+            "source_in_us": 1000000,
+            "source_out_us": 9000000,
+            "speed": 1.0,
+            "opacity": 1.0,
+            "transform": {
+              "position": { "x": 0.0, "y": 0.0 },
+              "scale": { "x": 1.0, "y": 1.0 },
+              "rotation": 0.0
+            },
+            "effects": []
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "kind": "Text",
+        "name": "Title Overlays",
+        "enabled": true,
+        "locked": false,
+        "clips": [
+          {
+            "id": "b0000002-0000-0000-0000-000000000001",
+            "kind": {
+              "Text": {
+                "text": "REDDART VIDEO EDITOR",
+                "font_family": "Inter",
+                "font_size": 48.0,
+                "color": [1.0, 1.0, 1.0, 1.0],
+                "position": [0.5, 0.85]
+              }
+            },
+            "position_us": 1000000,
+            "source_in_us": 0,
+            "source_out_us": 4000000,
+            "speed": 1.0,
+            "opacity": 1.0,
+            "transform": {
+              "position": { "x": 0.0, "y": 0.0 },
+              "scale": { "x": 1.0, "y": 1.0 },
+              "rotation": 0.0
+            },
+            "effects": []
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "kind": "Audio",
+        "name": "Soundtrack",
+        "enabled": true,
+        "locked": false,
+        "clips": [
+          {
+            "id": "c0000003-0000-0000-0000-000000000001",
+            "kind": {
+              "Audio": {
+                "source_path": "audio/soundtrack.wav",
+                "volume": 0.85
+              }
+            },
+            "position_us": 0,
+            "source_in_us": 0,
+            "source_out_us": 14000000,
+            "speed": 1.0,
+            "opacity": 1.0,
+            "transform": {
+              "position": { "x": 0.0, "y": 0.0 },
+              "scale": { "x": 1.0, "y": 1.0 },
+              "rotation": 0.0
+            },
+            "effects": []
+          }
+        ]
+      }
+    ],
+    "next_track_id": 3,
+    "playhead_us": 0
+  },
+  "created_at": 1730700000000,
+  "modified_at": 1730700000000
+}
+

@@ -1,0 +1,4 @@
+Reddart Video Editor
+Version: 1.0.0
+Platform: macOS (Universal 2 - Apple Silicon & Intel)
+Engine: Rust 2024 | Metal / AppKit | wgpu 24 | egui 0.31 | 48 kHz CoreAudio

@@ -1,0 +1,4 @@
+Reddart Video Editor
+Version: 1.0.0
+Platform: Linux (x86_64-unknown-linux-gnu)
+Engine: Rust 2024 | Vulkan / Wayland / X11 | wgpu 24 | egui 0.31 | ALSA / PulseAudio
