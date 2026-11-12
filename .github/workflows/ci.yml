@@ -92,7 +92,7 @@ jobs:
 
       - name: Install Linux audio and media dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg desktop-file-utils
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg desktop-file-utils zip
 
       - name: Install macOS media dependencies
         if: runner.os == 'macOS'
