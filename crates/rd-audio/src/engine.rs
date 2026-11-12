@@ -8,39 +8,17 @@ use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use log::{info, warn};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::clock::AudioClock;
 use crate::eq::ParametricEqualizer;
 use crate::mixer::AudioMixer;
+pub use crate::ring::AtomicF32;
+use crate::ring::PcmRingBuffer;
 use crate::spectrum::{AudioSampleRing, SpectrumAnalyzer};
 use crate::{CHANNELS, SAMPLE_RATE};
 use rd_core::TimestampUs;
-
-/// Lock-free atomic representation of an f32.
-#[derive(Debug)]
-pub struct AtomicF32 {
-    bits: AtomicU32,
-}
-
-impl AtomicF32 {
-    pub fn new(val: f32) -> Self {
-        Self {
-            bits: AtomicU32::new(val.to_bits()),
-        }
-    }
-
-    #[inline]
-    pub fn load(&self) -> f32 {
-        f32::from_bits(self.bits.load(Ordering::Relaxed))
-    }
-
-    #[inline]
-    pub fn store(&self, val: f32) {
-        self.bits.store(val.to_bits(), Ordering::Relaxed);
-    }
-}
 
 /// Convert linear amplitude (0.0 to 1.0+) to standard decibels relative to Full Scale (dBFS).
 #[inline]
@@ -109,6 +87,9 @@ pub struct AudioEngine {
     pub eq: Arc<Mutex<ParametricEqualizer>>,
     sample_ring: Arc<Mutex<AudioSampleRing>>,
     spectrum_analyzer: Arc<Mutex<SpectrumAnalyzer>>,
+    ring_buffer: Arc<PcmRingBuffer>,
+    mixer_thread_running: Arc<AtomicBool>,
+    mixer_thread_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl AudioEngine {
@@ -127,6 +108,38 @@ impl AudioEngine {
             actual_sample_rate as f32,
             128,
         )));
+        let ring_buffer = Arc::new(PcmRingBuffer::new(32768));
+        let mixer_thread_running = Arc::new(AtomicBool::new(true));
+
+        let bg_running = mixer_thread_running.clone();
+        let bg_mixer = mixer.clone();
+        let bg_ring = ring_buffer.clone();
+        let bg_playing = is_playing.clone();
+
+        let mixer_handle = std::thread::Builder::new()
+            .name("reddart-audio-mixer".into())
+            .spawn(move || {
+                let mut chunk = vec![0.0f32; 1024];
+                while bg_running.load(Ordering::Relaxed) {
+                    if bg_playing.load(Ordering::Acquire) {
+                        let space = bg_ring.available_write();
+                        if space >= chunk.len() {
+                            if let Ok(mut mix) = bg_mixer.lock() {
+                                mix.mix_interleaved(&mut chunk);
+                                bg_ring.write(&chunk);
+                            }
+                            if bg_ring.available_write() < chunk.len() {
+                                std::thread::sleep(std::time::Duration::from_millis(4));
+                            }
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_millis(4));
+                        }
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(15));
+                    }
+                }
+            })
+            .ok();
 
         let host = cpal::default_host();
         let device_opt = host.default_output_device();
@@ -144,7 +157,8 @@ impl AudioEngine {
                 buffer_size: cpal::BufferSize::Default,
             };
 
-            let mixer_clone = mixer.clone();
+            let pcm_ring_clone = ring_buffer.clone();
+            let clock_clone = clock.clone();
             let telemetry_clone = telemetry.clone();
             let playing_clone = is_playing.clone();
             let eq_clone = eq.clone();
@@ -158,11 +172,9 @@ impl AudioEngine {
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     if playing_clone.load(Ordering::Acquire) {
-                        if let Ok(mut mix) = mixer_clone.try_lock() {
-                            mix.mix_interleaved(data);
-                        } else {
-                            data.fill(0.0);
-                        }
+                        pcm_ring_clone.read_or_zero(data);
+                        let frames = data.len() / (CHANNELS as usize);
+                        clock_clone.advance_samples(frames, SAMPLE_RATE);
                     } else {
                         data.fill(0.0);
                     }
@@ -263,7 +275,15 @@ impl AudioEngine {
             eq,
             sample_ring,
             spectrum_analyzer,
+            ring_buffer,
+            mixer_thread_running,
+            mixer_thread_handle: Mutex::new(mixer_handle),
         })
+    }
+
+    /// Reference to the bounded lock-free PCM ring buffer feeding real-time audio output.
+    pub fn ring_buffer(&self) -> &Arc<PcmRingBuffer> {
+        &self.ring_buffer
     }
 
     /// Set the consolidated timeline PCM audio buffer into the real-time mixer.
@@ -272,6 +292,7 @@ impl AudioEngine {
             mix.clear();
             mix.add_track(pcm_data, 1.0);
         }
+        self.ring_buffer.clear();
     }
 
     /// Check whether a live CPAL hardware output stream is currently attached.
@@ -289,6 +310,7 @@ impl AudioEngine {
         if let Ok(mut mix) = self.mixer.lock() {
             mix.add_track(pcm_data, volume);
         }
+        self.ring_buffer.clear();
     }
 
     /// Clear all loaded audio tracks.
@@ -296,6 +318,7 @@ impl AudioEngine {
         if let Ok(mut mix) = self.mixer.lock() {
             *mix = AudioMixer::new(self.clock.clone());
         }
+        self.ring_buffer.clear();
     }
 
     /// Set master bus output gain (0.0 to 2.0).
@@ -315,6 +338,7 @@ impl AudioEngine {
         if let Ok(mut mix) = self.mixer.lock() {
             mix.seek_to_sample(sample_pos);
         }
+        self.ring_buffer.clear();
         self.clock.seek_to(timestamp_us);
     }
 
@@ -328,6 +352,7 @@ impl AudioEngine {
     pub fn pause(&self) {
         self.is_playing.store(false, Ordering::Release);
         self.clock.set_playing(false);
+        self.ring_buffer.clear();
     }
 
     /// Read dynamic telemetry metrics with studio meter ballistics (smooth decay and peak-hold).
@@ -430,3 +455,14 @@ impl AudioEngine {
 // CPAL Stream is held for lifetime management; audio callback access is synchronized via Arc and atomics.
 unsafe impl Send for AudioEngine {}
 unsafe impl Sync for AudioEngine {}
+
+impl Drop for AudioEngine {
+    fn drop(&mut self) {
+        self.mixer_thread_running.store(false, Ordering::Release);
+        if let Ok(mut lock) = self.mixer_thread_handle.lock() {
+            if let Some(handle) = lock.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}

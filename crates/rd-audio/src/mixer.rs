@@ -5,7 +5,6 @@
 //! Zero allocations, locks, or system calls in the audio render callback.
 
 use crate::clock::AudioClock;
-use crate::{CHANNELS, SAMPLE_RATE};
 use std::sync::Arc;
 
 /// Audio track channel data for real-time mixing.
@@ -57,9 +56,7 @@ impl AudioMixer {
         // Zero output buffer
         output.fill(0.0);
 
-        let channels = CHANNELS as usize;
         let total_samples = output.len();
-        let frame_count = total_samples / channels;
 
         // Mix each track into the output buffer
         for track in &mut self.tracks {
@@ -81,9 +78,11 @@ impl AudioMixer {
                 *sample = sample.tanh();
             }
         }
+    }
 
-        // Advance master audio clock
-        self.clock.advance_samples(frame_count, SAMPLE_RATE);
+    /// Access reference to the master audio clock.
+    pub fn clock(&self) -> &Arc<AudioClock> {
+        &self.clock
     }
 
     /// Reset playback position for all tracks.
