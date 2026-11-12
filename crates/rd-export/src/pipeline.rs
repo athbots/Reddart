@@ -519,18 +519,12 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
 /// Helper to test if a specific encoder can be instantiated by FFmpeg on host hardware.
 fn test_encoder_available(encoder_name: &str) -> bool {
     let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
-    std::process::Command::new(bin)
-        .args([
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=duration=0.03:size=64x64",
-            "-c:v",
-            encoder_name,
-            "-f",
-            "null",
-            "-",
-        ])
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.03:size=64x64"]);
+    if encoder_name.contains("videotoolbox") {
+        cmd.args(["-allow_sw", "1"]);
+    }
+    cmd.args(["-c:v", encoder_name, "-f", "null", "-"])
         .output()
         .map(|out| out.status.success())
         .unwrap_or(false)
@@ -766,43 +760,49 @@ pub fn render_project_to_file(
 
     let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let mut cmd = std::process::Command::new(ffmpeg_bin);
-    cmd.arg("-y")
-        .args([
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "-s",
-            &format!("{}x{}", req.preset.width, req.preset.height),
-            "-r",
-            &fps_str,
-            "-i",
-            "pipe:0",
-            "-f",
-            "f32le",
-            "-ar",
-            "48000",
-            "-ac",
-            "2",
-            "-i",
-            temp_audio_path.to_str().unwrap_or(""),
-            "-c:v",
-            encoder,
-            "-pix_fmt",
-            "yuv420p",
-            "-b:v",
-            &b_str,
-            "-c:a",
-            "aac",
-            "-b:a",
-            &ab_str,
-            "-movflags",
-            "+faststart",
-        ])
-        .arg(req.output_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped());
+    cmd.arg("-y").args([
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgba",
+        "-s",
+        &format!("{}x{}", req.preset.width, req.preset.height),
+        "-r",
+        &fps_str,
+        "-i",
+        "pipe:0",
+        "-f",
+        "f32le",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-i",
+        temp_audio_path.to_str().unwrap_or(""),
+    ]);
+
+    if encoder.contains("videotoolbox") {
+        cmd.args(["-allow_sw", "1"]);
+    }
+
+    cmd.args([
+        "-c:v",
+        encoder,
+        "-pix_fmt",
+        "yuv420p",
+        "-b:v",
+        &b_str,
+        "-c:a",
+        "aac",
+        "-b:a",
+        &ab_str,
+        "-movflags",
+        "+faststart",
+    ])
+    .arg(req.output_path)
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| {
         let _ = std::fs::remove_file(&temp_audio_path);
