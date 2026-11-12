@@ -10,7 +10,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -114,6 +114,19 @@ impl FrameCache {
             .map(|e| e.frame.clone())
     }
 
+    /// Find the nearest cached frame for `source_path` regardless of tolerance window.
+    pub fn get_nearest(
+        &self,
+        source_path: &Path,
+        time_us: TimestampUs,
+    ) -> Option<Arc<DecodedFrame>> {
+        self.entries
+            .iter()
+            .filter(|e| e.source_path == source_path)
+            .min_by_key(|e| (e.pts_us - time_us).abs())
+            .map(|e| e.frame.clone())
+    }
+
     /// Insert a newly decoded frame, evicting the oldest entry when at capacity.
     pub fn insert(&mut self, source_path: PathBuf, frame: Arc<DecodedFrame>) {
         if self.entries.len() >= self.capacity {
@@ -142,22 +155,32 @@ impl FrameCache {
     }
 }
 
+/// Default capacity for bounded asynchronous request and response queues.
+pub const DEFAULT_QUEUE_CAPACITY: usize = 64;
+
 /// Asynchronous decoder service coordinating background decoding workers.
 pub struct AsyncDecoderService {
-    req_tx: Sender<FrameRequest>,
+    req_tx: SyncSender<FrameRequest>,
     resp_rx: Receiver<FrameResponse>,
     generation: Arc<AtomicU64>,
     cache: Arc<Mutex<FrameCache>>,
     running: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
     next_req_id: AtomicU64,
+    queue_capacity: usize,
 }
 
 impl AsyncDecoderService {
-    /// Initialize the asynchronous decoder service with a given frame cache capacity.
+    /// Initialize the asynchronous decoder service with a given frame cache capacity and default bounded queue capacity (64).
     pub fn new(cache_capacity: usize) -> Self {
-        let (req_tx, req_rx) = mpsc::channel::<FrameRequest>();
-        let (resp_tx, resp_rx) = mpsc::channel::<FrameResponse>();
+        Self::with_queue_capacity(cache_capacity, DEFAULT_QUEUE_CAPACITY)
+    }
+
+    /// Initialize the asynchronous decoder service with explicit frame cache and channel queue capacities.
+    pub fn with_queue_capacity(cache_capacity: usize, queue_capacity: usize) -> Self {
+        let queue_cap = queue_capacity.max(1);
+        let (req_tx, req_rx) = mpsc::sync_channel::<FrameRequest>(queue_cap);
+        let (resp_tx, resp_rx) = mpsc::sync_channel::<FrameResponse>(queue_cap);
 
         let generation = Arc::new(AtomicU64::new(1));
         let cache = Arc::new(Mutex::new(FrameCache::new(cache_capacity)));
@@ -200,7 +223,7 @@ impl AsyncDecoderService {
                             if req.generation < cur_gen_post {
                                 continue;
                             }
-                            let _ = resp_tx.send(FrameResponse::Ready {
+                            let _ = resp_tx.try_send(FrameResponse::Ready {
                                 request_id: req.request_id,
                                 generation: req.generation,
                                 clip_id: req.clip_id,
@@ -240,7 +263,7 @@ impl AsyncDecoderService {
                                         c.insert(req.source_path.clone(), frame_arc.clone());
                                     }
 
-                                    let _ = resp_tx.send(FrameResponse::Ready {
+                                    let _ = resp_tx.try_send(FrameResponse::Ready {
                                         request_id: req.request_id,
                                         generation: req.generation,
                                         clip_id: req.clip_id,
@@ -254,7 +277,7 @@ impl AsyncDecoderService {
                                     if req.generation < cur_gen_post {
                                         continue;
                                     }
-                                    let _ = resp_tx.send(FrameResponse::Error {
+                                    let _ = resp_tx.try_send(FrameResponse::Error {
                                         request_id: req.request_id,
                                         generation: req.generation,
                                         clip_id: req.clip_id,
@@ -268,7 +291,7 @@ impl AsyncDecoderService {
                                     if req.generation < cur_gen_post {
                                         continue;
                                     }
-                                    let _ = resp_tx.send(FrameResponse::Error {
+                                    let _ = resp_tx.try_send(FrameResponse::Error {
                                         request_id: req.request_id,
                                         generation: req.generation,
                                         clip_id: req.clip_id,
@@ -284,7 +307,7 @@ impl AsyncDecoderService {
                             if req.generation < cur_gen_post {
                                 continue;
                             }
-                            let _ = resp_tx.send(FrameResponse::Error {
+                            let _ = resp_tx.try_send(FrameResponse::Error {
                                 request_id: req.request_id,
                                 generation: req.generation,
                                 clip_id: req.clip_id,
@@ -308,7 +331,13 @@ impl AsyncDecoderService {
             running,
             worker_handle: Some(handle),
             next_req_id: AtomicU64::new(1),
+            queue_capacity: queue_cap,
         }
+    }
+
+    /// Return the bounded queue capacity configured for request and response channels.
+    pub fn queue_capacity(&self) -> usize {
+        self.queue_capacity
     }
 
     /// Advance the generation counter, invalidating all currently pending queued requests.
@@ -322,7 +351,7 @@ impl AsyncDecoderService {
         self.generation.load(Ordering::Acquire)
     }
 
-    /// Look up a frame in the cache without issuing a background request.
+    /// Look up a frame in the cache within tolerance without issuing a background request.
     pub fn get_cached(
         &self,
         source_path: &Path,
@@ -335,8 +364,18 @@ impl AsyncDecoderService {
             .get(source_path, time_us, tolerance_us)
     }
 
+    /// Retrieve the nearest cached frame for `source_path` regardless of tolerance window,
+    /// serving as a seamless hold frame while asynchronous background decoding progresses.
+    pub fn get_nearest_cached(
+        &self,
+        source_path: &Path,
+        time_us: TimestampUs,
+    ) -> Option<Arc<DecodedFrame>> {
+        self.cache.lock().ok()?.get_nearest(source_path, time_us)
+    }
+
     /// Submit a non-blocking request to decode a frame.
-    /// If the frame is already in cache, it will be returned immediately via `get_cached`.
+    /// If the bounded queue is full, logs backpressure and drops the request without blocking the UI thread.
     /// Returns the assigned unique request ID.
     pub fn request_frame(
         &self,
@@ -355,8 +394,41 @@ impl AsyncDecoderService {
             source_time_us,
         };
 
-        let _ = self.req_tx.send(req);
+        match self.req_tx.try_send(req) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                log::trace!(
+                    "AsyncDecoder: request queue full (capacity {}), dropped request #{}",
+                    self.queue_capacity,
+                    request_id
+                );
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                log::warn!("AsyncDecoder: worker thread disconnected");
+            }
+        }
         request_id
+    }
+
+    /// Submit a non-blocking request to decode a frame, returning explicit error on queue full or disconnect.
+    pub fn try_request_frame(
+        &self,
+        clip_id: ClipId,
+        source_path: PathBuf,
+        source_time_us: TimestampUs,
+    ) -> Result<u64, TrySendError<FrameRequest>> {
+        let request_id = self.next_req_id.fetch_add(1, Ordering::Relaxed);
+        let generation = self.generation.load(Ordering::Acquire);
+
+        let req = FrameRequest {
+            request_id,
+            generation,
+            clip_id,
+            source_path,
+            source_time_us,
+        };
+
+        self.req_tx.try_send(req).map(|_| request_id)
     }
 
     /// Non-blocking check for the next available decoded frame response.
@@ -393,6 +465,7 @@ impl AsyncDecoderService {
 
     /// Predictive lookahead: queue background decode requests for upcoming frames along the playhead's path.
     /// Skips any timestamp that is already present in the frame cache.
+    /// Employs bounded queue backpressure: ceases enqueuing when the bounded queue is saturated.
     /// Returns the number of prefetch requests actually queued.
     pub fn prefetch_lookahead(
         &self,
@@ -433,8 +506,13 @@ impl AsyncDecoderService {
                     source_path: source_path.clone(),
                     source_time_us: target_time_us,
                 };
-                if self.req_tx.send(req).is_ok() {
-                    queued += 1;
+                match self.req_tx.try_send(req) {
+                    Ok(()) => queued += 1,
+                    Err(TrySendError::Full(_)) => {
+                        // Bounded queue backpressure: queue is full, stop queuing lookahead requests
+                        break;
+                    }
+                    Err(TrySendError::Disconnected(_)) => break,
                 }
             }
         }

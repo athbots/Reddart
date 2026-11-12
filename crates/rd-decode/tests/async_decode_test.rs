@@ -125,3 +125,89 @@ fn test_async_decoder_cache_retrieval() {
 
     assert!(cached, "Frame was expected to decode and be cached");
 }
+
+#[test]
+fn test_async_decoder_bounded_queues_and_backpressure() {
+    // Instantiate with a strictly bounded queue capacity of 4 items
+    let queue_cap = 4;
+    let service = AsyncDecoderService::with_queue_capacity(16, queue_cap);
+    assert_eq!(service.queue_capacity(), queue_cap);
+
+    let clip_id = ClipId::new();
+    let dummy_path = PathBuf::from("non_existent_folder/sample_video.mp4");
+
+    // Rapidly submit requests to fill the bounded synchronous channel
+    let mut accepted = 0;
+    let mut full_detected = false;
+
+    // Issue 32 requests in rapid succession
+    for i in 0..32 {
+        match service.try_request_frame(clip_id, dummy_path.clone(), i * 33_333) {
+            Ok(_) => accepted += 1,
+            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                full_detected = true;
+                break;
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                panic!("Decoder worker should remain active");
+            }
+        }
+    }
+
+    assert!(
+        full_detected,
+        "Bounded queue must reject requests when queue capacity is reached"
+    );
+    assert!(
+        accepted <= queue_cap + 2, // Accounting for worker popping in background
+        "Accepted requests ({accepted}) must be bounded near queue capacity ({queue_cap})"
+    );
+
+    // Verify non-blocking request_frame under saturated conditions does not hang or panic
+    for i in 100..150 {
+        let req_id = service.request_frame(clip_id, dummy_path.clone(), i * 33_333);
+        assert!(req_id > 0);
+    }
+
+    // Verify prefetch_lookahead obeys bounded queue backpressure
+    let prefetch_queued = service.prefetch_lookahead(
+        clip_id, dummy_path, 1_000_000, 33_333,
+        100, // Attempt to enqueue 100 prefetch requests
+    );
+    assert!(
+        prefetch_queued <= queue_cap + 2,
+        "Prefetch queued ({prefetch_queued}) must be strictly bounded by queue capacity"
+    );
+}
+
+#[test]
+fn test_async_decoder_nearest_cached_hold_frame() {
+    let service = AsyncDecoderService::new(16);
+    let sample_path = PathBuf::from("ready_to_use/windows/samples/footage/shot_01.mp4");
+
+    if !sample_path.exists() {
+        return;
+    }
+
+    let clip_id = ClipId::new();
+    let _ = service.request_frame(clip_id, sample_path.clone(), 0);
+
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if let Some(FrameResponse::Ready { frame, .. }) = service.try_recv() {
+            assert!(frame.rgba_data.is_some());
+
+            // Query nearest cached frame with timestamp far away (e.g., 5 seconds out)
+            // where exact get_cached with 33ms tolerance would fail:
+            let exact = service.get_cached(&sample_path, 5_000_000, 33_333);
+            assert!(exact.is_none());
+
+            // Nearest cached frame must succeed, providing a zero-latency hold frame
+            let hold_frame = service.get_nearest_cached(&sample_path, 5_000_000);
+            assert!(hold_frame.is_some());
+            assert_eq!(hold_frame.unwrap().pts_us, frame.pts_us);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
