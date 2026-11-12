@@ -79,7 +79,7 @@ cp "${ROOT_DIR}/platforms/linux/reddart.desktop" "${DIST_DIR}/share/applications
 cp "${ROOT_DIR}/platforms/linux/app.reddart.Reddart.metainfo.xml" "${DIST_DIR}/share/metainfo/app.reddart.Reddart.metainfo.xml"
 cp "${ROOT_DIR}/platforms/linux/reddart.svg" "${DIST_DIR}/share/icons/hicolor/scalable/apps/reddart.svg"
 
-# Copy all 9 WGSL shaders & effect manifests
+# Copy all 12 WGSL shaders & effect manifests
 cp -r "${ROOT_DIR}/effects/"* "${DIST_DIR}/share/reddart/effects/"
 
 # Copy sample project and assets if present
@@ -201,7 +201,7 @@ cat <<EOF > "${MANIFEST_OUT}"
   "desktop_entry": "share/applications/reddart.desktop",
   "appstream_id": "app.reddart.Reddart",
   "icon": "share/icons/hicolor/scalable/apps/reddart.svg",
-  "effects_count": 11
+  "effects_count": 12
 }
 EOF
 

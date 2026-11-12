@@ -134,7 +134,7 @@ $infoPlist = @"
 [System.IO.File]::WriteAllText((Join-Path $AppDir "Contents\Info.plist"), $infoPlist, $utf8NoBom)
 [System.IO.File]::WriteAllText((Join-Path $AppDir "Contents\PkgInfo"), "APPLRDRT", $utf8NoBom)
 
-# Copy all 11 effects (including neural_matte, auto_reframe, and optical_flow)
+# Copy all 12 effects (including neural_matte, auto_reframe, optical_flow, and color_transform)
 Copy-Item -Recurse (Join-Path $RootDir "effects\*") -Destination "$AppDir\Contents\Resources\effects\" -Force
 
 # Copy C header
@@ -250,7 +250,7 @@ $manifestObj = [ordered]@{
     bundle = "Reddart.app"
     bundle_identifier = "app.reddart.mac"
     minimum_system_version = "12.0"
-    effects_count = 11
+    effects_count = 12
 }
 $manifestJson = ($manifestObj | ConvertTo-Json -Depth 5) + "`r`n"
 [System.IO.File]::WriteAllText($ManifestOut, $manifestJson, $utf8NoBom)

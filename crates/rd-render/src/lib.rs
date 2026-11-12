@@ -14,6 +14,12 @@ pub mod quality;
 pub use composite::{CompositorLayer, composite_layers_over};
 pub use interpolate::{blend_rgba_frames, interpolate_optical_flow, interpolate_retimed_frame};
 pub use optical_flow::{DenseOpticalFlowEstimator, OpticalFlowConfig, OpticalFlowField};
+pub use rd_effects::color_space;
+pub use rd_effects::color_space::{
+    AscCdlParams, ColorGamut, ColorPipeline, ColorPipelineConfig, Mat3, TransferFunction,
+    aces_filmic_tone_map, decode_transfer_function, encode_transfer_function,
+    gamut_transform_matrix,
+};
 
 /// Render graph node identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

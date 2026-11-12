@@ -1,4 +1,4 @@
 # Reddart Video Editor v1.0.0 - macOS Release Checksums
-# Generated: 2026-11-12T15:16:52Z
+# Generated: 2026-11-12T16:49:14Z
 
-718c58f16b0c709ff715258f5458f192bf38756a8d982ccbd2ac184df4f39b27  Reddart-v1.0.0-macOS-Universal.zip
+85cfc93a22aab2709810600efb480bdeb02e5fca1402fde74892bf129146488d  Reddart-v1.0.0-macOS-Universal.zip
