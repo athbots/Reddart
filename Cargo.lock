@@ -396,8 +396,10 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 name = "benchmark"
 version = "1.0.0"
 dependencies = [
+ "pollster",
  "rd-core",
  "rd-render",
+ "wgpu",
 ]
 
 [[package]]
@@ -2731,6 +2733,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "log",
+ "pollster",
  "rd-core",
  "rd-effects",
  "serde",
