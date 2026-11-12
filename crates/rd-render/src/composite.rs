@@ -363,7 +363,7 @@ mod tests {
         for y in 6..10 {
             for x in 6..10 {
                 let px = ((y * w + x) * 4) as usize;
-                fg_pixels[px] = 220;     // R
+                fg_pixels[px] = 220; // R
                 fg_pixels[px + 1] = 160; // G
                 fg_pixels[px + 2] = 130; // B
                 fg_pixels[px + 3] = 255;
@@ -384,10 +384,18 @@ mod tests {
 
         // Center pixel (8, 8) must be warm foreground subject
         let center_idx = ((8 * w + 8) * 4) as usize;
-        assert!(target[center_idx] > 180, "Center red expected high, got {}", target[center_idx]);
+        assert!(
+            target[center_idx] > 180,
+            "Center red expected high, got {}",
+            target[center_idx]
+        );
 
         // Corner pixel (0, 0) must be blue background
         let corner_idx = 0;
-        assert!(target[corner_idx + 2] > 200, "Corner blue expected high, got {}", target[corner_idx + 2]);
+        assert!(
+            target[corner_idx + 2] > 200,
+            "Corner blue expected high, got {}",
+            target[corner_idx + 2]
+        );
     }
 }
