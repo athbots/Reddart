@@ -454,6 +454,8 @@ mod tests {
             effects: Vec::new(),
             volume: 1.0,
             pan: 0.0,
+            pan_surround: 0.0,
+            lfe_send: 0.0,
             keyframes: std::collections::HashMap::new(),
         }
     }

@@ -13,3 +13,4 @@ cpal = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
