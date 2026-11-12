@@ -1,4 +1,4 @@
-# Reddart Feature Implementation & Verification Matrix (v0.3.0 / v1.0 Roadmap)
+# Reddart Feature Implementation & Verification Matrix (v1.0.0 Production)
 
 ## Classification Schema
 

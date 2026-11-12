@@ -35,6 +35,8 @@ An audit of repository history identified why a checksum difference existed betw
 | **`v0.2.1` Release Asset** (`Reddart-v0.2.1-Windows-x86_64.zip`) | `a4f576d` | Published `2026-11-07` | `40bcfbe045c48facb4294b2de037c98028897d309ad2f0e5d508d6ec9fe8a8b4` | Historical release ZIP archive published on GitHub Releases. |
 | **`v0.3.0` Release Asset** (`Reddart.exe`) | `master` | Release Candidate | `05cf222e69b3628d510136fa5d7f56f18b91c81203aea0fdb7c7e0d2bc635f9a` | Integrated Editing Workflow, multi-layer compositing, async decoder, timeline audio mixer. |
 | **`v0.3.0` Release Asset** (`Reddart-v0.3.0-Windows-x86_64.zip`) | `master` | Release Candidate | `e3bf1328b2278ad2640061d0bd344025bcaeec4afc3cf910472e69933c87e77d` | Standalone release distribution archive with sample media and SHA-256 integrity verification. |
+| **`v1.0.0` Release Asset** (`Reddart.exe`) | `master` | Production Release | `ab848fbaa8113a18cefd86ce07570bf9b500a58180077988a23b885b79972cab` | Official v1.0.0 Windows production release binary. |
+| **`v1.0.0` Release Asset** (`Reddart-v1.0.0-Windows-x86_64.zip`) | `master` | Production Release | `561209508533f0d8deb418a88d3348ac7a64aca23c92598be3f5c92994073e87` | Official v1.0.0 Windows distribution archive with sample media and SHA-256 integrity verification. |
 
 ### Resolution Contract
 - The historical release assets attached to GitHub tag `v0.2.1` remain unchanged as the published archive of that commit.

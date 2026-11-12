@@ -394,7 +394,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "benchmark"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "rd-core",
  "rd-render",
@@ -2611,7 +2611,7 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "rd-android"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "log",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "rd-apple"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "parking_lot",
@@ -2646,7 +2646,7 @@ dependencies = [
 
 [[package]]
 name = "rd-audio"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -2657,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "rd-core"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "serde",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "rd-decode"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "log",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "rd-effects"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "log",
@@ -2694,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "rd-export"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "rd-audio",
@@ -2710,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "rd-ml"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "log",
@@ -2722,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "rd-render"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "record-demo"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "reddart-windows"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytemuck",
