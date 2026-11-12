@@ -202,7 +202,11 @@ impl EditorData {
         project.timeline.add_track(TrackKind::Audio, "Audio 1");
 
         // Initialize production Write-Ahead Log journal & perform crash recovery if needed
-        let default_save_path = PathBuf::from("Untitled_Project.reddart");
+        let default_save_path = if cfg!(test) {
+            std::env::temp_dir().join(format!("test_reddart_{}.reddart", rd_core::ClipId::new().0))
+        } else {
+            PathBuf::from("Untitled_Project.reddart")
+        };
         let mut journal = rd_core::ProjectJournal::open_or_create(&default_save_path).ok();
         let mut wal_msg = None;
         if let Some(ref mut j) = journal
@@ -253,13 +257,17 @@ impl EditorData {
             }
         }
 
-        // Initialize low-latency CPAL hardware audio engine
-        let audio_clock = AudioClock::new();
-        let audio_engine = match AudioEngine::new(audio_clock) {
-            Ok(eng) => Some(Arc::new(eng)),
-            Err(e) => {
-                log::warn!("AudioEngine initialization notice: {:?}", e);
-                None
+        // Initialize low-latency CPAL hardware audio engine (skipped in unit test runs to prevent headless WASAPI driver contention)
+        let audio_engine = if cfg!(test) {
+            None
+        } else {
+            let audio_clock = AudioClock::new();
+            match AudioEngine::new(audio_clock) {
+                Ok(eng) => Some(Arc::new(eng)),
+                Err(e) => {
+                    log::warn!("AudioEngine initialization notice: {:?}", e);
+                    None
+                }
             }
         };
 
