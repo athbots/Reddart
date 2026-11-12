@@ -21,9 +21,15 @@ pub use captions::{
     format_timestamp_vtt, generate_caption_track, parse_srt, parse_timestamp_srt,
     parse_timestamp_vtt, parse_vtt, wrap_segments,
 };
-pub use denoise::{AudioDenoiser, DenoiseConfig};
+pub use denoise::{
+    AudioDenoiser, BiquadFilter, DenoiseConfig, DenoiseMode, DenoiseProfile, HumNotchFilter,
+    fft_radix2,
+};
 pub use reframe::{AutoReframer, TargetAspect};
-pub use segmentation::SegmentationMask;
+pub use segmentation::{
+    CompositeBackground, GuidedFilter, PortraitMattingConfig, PortraitMattingEngine,
+    SegmentationMask, Trimap, composite_segmented_frame, suppress_color_spill,
+};
 pub use stabilize::{FrameMotion, VideoStabilizer};
 pub use tracking::{BoundingBox, TrackedPath};
 pub use whisper::{

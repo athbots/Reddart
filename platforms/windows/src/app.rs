@@ -588,6 +588,42 @@ impl EditorData {
                             }
                         });
 
+                    let neural_matte = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "neural_matte" && e.enabled)
+                        .map(|matte_eff| {
+                            let threshold = clip
+                                .evaluate_keyframe("threshold", playhead_us)
+                                .or_else(|| matte_eff.parameters.get("threshold").copied())
+                                .unwrap_or(0.45);
+                            let feather = clip
+                                .evaluate_keyframe("feather", playhead_us)
+                                .or_else(|| matte_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let edge_choke = clip
+                                .evaluate_keyframe("edge_choke", playhead_us)
+                                .or_else(|| matte_eff.parameters.get("edge_choke").copied())
+                                .unwrap_or(0.0);
+                            let spill = clip
+                                .evaluate_keyframe("spill", playhead_us)
+                                .or_else(|| matte_eff.parameters.get("spill").copied())
+                                .unwrap_or(0.6);
+                            let invert =
+                                matte_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+                            let bg_mode =
+                                matte_eff.parameters.get("bg_mode").copied().unwrap_or(0.0) as u32;
+
+                            rd_effects::NeuralMatteParams {
+                                threshold,
+                                feather,
+                                edge_choke,
+                                spill,
+                                invert,
+                                bg_mode,
+                            }
+                        });
+
                     if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
                         let source_time_us = clip.source_in_us
                             + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
@@ -674,6 +710,7 @@ impl EditorData {
                                 scale_y: eff_trans.scale.y,
                                 blend_mode: 0,
                                 shape_mask,
+                                neural_matte,
                             });
                         }
                     } else {
@@ -696,6 +733,7 @@ impl EditorData {
                             scale_y: eff_trans.scale.y,
                             blend_mode: 0,
                             shape_mask,
+                            neural_matte: None,
                         });
                     }
                 }

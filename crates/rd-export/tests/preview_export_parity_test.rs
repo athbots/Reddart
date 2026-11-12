@@ -155,6 +155,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             scale_y: 1.0,
             blend_mode: 0,
             shape_mask: None,
+            neural_matte: None,
         },
         CompositorLayer {
             rgba: pip_pixels,
@@ -171,6 +172,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 feather: 0.1,
                 ..Default::default()
             }),
+            neural_matte: None,
         },
         CompositorLayer {
             rgba: title_pixels,
@@ -187,6 +189,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 feather: 0.25,
                 ..Default::default()
             }),
+            neural_matte: None,
         },
     ];
 

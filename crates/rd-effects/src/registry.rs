@@ -53,6 +53,7 @@ pub const DIRECTIONAL_WIPE_WGSL: &str =
 pub const CHROMA_KEY_WGSL: &str = include_str!("../../../effects/chroma_key/shader.wgsl");
 pub const LUT_3D_WGSL: &str = include_str!("../../../effects/lut_3d/shader.wgsl");
 pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shader.wgsl");
+pub const NEURAL_MATTE_WGSL: &str = include_str!("../../../effects/neural_matte/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -411,6 +412,83 @@ impl EffectRegistry {
             },
             MASK_SHAPE_WGSL.into(),
         );
+
+        // 9. AI Portrait Matte (Neural Background Removal)
+        self.register(
+            EffectManifest {
+                id: "neural_matte".into(),
+                name: "AI Portrait Matte".into(),
+                version: 1,
+                cost_class: CostClass::Medium,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "threshold".into(),
+                        name: "Matte Threshold".into(),
+                        param_type: ParamType::Float,
+                        default: 0.45,
+                        min: 0.1,
+                        max: 0.9,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "feather".into(),
+                        name: "Edge Feather".into(),
+                        param_type: ParamType::Float,
+                        default: 0.05,
+                        min: 0.001,
+                        max: 0.5,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "edge_choke".into(),
+                        name: "Edge Choke".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -0.5,
+                        max: 0.5,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "spill".into(),
+                        name: "Spill Suppression".into(),
+                        param_type: ParamType::Float,
+                        default: 0.6,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "invert".into(),
+                        name: "Invert Matte (0 or 1)".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "bg_mode".into(),
+                        name: "Background Mode (0:Transparent, 1:Solid, 2:Desaturate, 3:Dim)"
+                            .into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 3.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            NEURAL_MATTE_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -457,6 +535,12 @@ mod tests {
         assert!(registry.get("chroma_key").is_some());
         assert!(registry.get("lut_3d").is_some());
         assert!(registry.get("mask_shape").is_some());
+        assert!(registry.get("neural_matte").is_some());
+
+        let nm = registry.get("neural_matte").unwrap();
+        assert_eq!(nm.manifest.cost_class, CostClass::Medium);
+        assert_eq!(nm.manifest.parameters.len(), 6);
+        assert!(nm.wgsl_source.contains("fn fs_main"));
 
         let mask = registry.get("mask_shape").unwrap();
         assert_eq!(mask.manifest.cost_class, CostClass::Low);

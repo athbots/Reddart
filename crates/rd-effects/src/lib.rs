@@ -5,12 +5,15 @@
 
 pub mod lut;
 pub mod mask;
+pub mod matte;
 pub mod registry;
 pub mod shader;
 pub mod template;
 pub mod text;
 
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
+pub use matte::{NeuralMatteParams, apply_neural_matte, evaluate_matte_alpha};
+pub use registry::{EffectEntry, EffectManifest, EffectParamSpec, EffectRegistry};
 pub use template::{BeatDetector, MusicCue, TemplateSlot, TemplateSpec};
 pub use text::{
     TextAlignment, TextOverlayParams, get_glyph_8x8, render_text_clip_overlay, render_text_overlay,
