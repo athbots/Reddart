@@ -46,6 +46,110 @@ pub struct FfmpegDecoder {
     caps: DecoderCapabilities,
 }
 
+/// Locate the FFmpeg executable by checking:
+/// 1. `<current_exe_dir>/bin/ffmpeg.exe` (or `ffmpeg` on Unix)
+/// 2. `<current_exe_dir>/ffmpeg.exe`
+/// 3. Local `bin/ffmpeg.exe`
+/// 4. `ready_to_use/windows/bin/ffmpeg.exe`
+/// 5. System PATH
+pub fn find_ffmpeg_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffmpeg.exe"
+    } else {
+        "bin/ffmpeg"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let rtu_bin = PathBuf::from(if cfg!(windows) {
+        "ready_to_use/windows/bin/ffmpeg.exe"
+    } else {
+        "ready_to_use/windows/bin/ffmpeg"
+    });
+    if rtu_bin.exists() {
+        return Some(rtu_bin);
+    }
+    let probe = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffmpeg"))
+    } else {
+        None
+    }
+}
+
+/// Locate the FFprobe executable by checking:
+/// 1. `<current_exe_dir>/bin/ffprobe.exe` (or `ffprobe` on Unix)
+/// 2. `<current_exe_dir>/ffprobe.exe`
+/// 3. Local `bin/ffprobe.exe`
+/// 4. `ready_to_use/windows/bin/ffprobe.exe`
+/// 5. System PATH
+pub fn find_ffprobe_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffprobe.exe"
+    } else {
+        "bin/ffprobe"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let rtu_bin = PathBuf::from(if cfg!(windows) {
+        "ready_to_use/windows/bin/ffprobe.exe"
+    } else {
+        "ready_to_use/windows/bin/ffprobe"
+    });
+    if rtu_bin.exists() {
+        return Some(rtu_bin);
+    }
+    let probe = std::process::Command::new("ffprobe")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffprobe"))
+    } else {
+        None
+    }
+}
+
 impl FfmpegDecoder {
     /// Probe and open a real media file on disk.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -54,8 +158,10 @@ impl FfmpegDecoder {
             bail!("Media file does not exist: {}", path.display());
         }
 
+        let ffprobe_bin = find_ffprobe_executable().unwrap_or_else(|| PathBuf::from("ffprobe"));
+
         // Run ffprobe to extract stream metadata
-        let output = Command::new("ffprobe")
+        let output = Command::new(&ffprobe_bin)
             .arg("-v")
             .arg("error")
             .arg("-show_entries")
@@ -64,7 +170,13 @@ impl FfmpegDecoder {
             .arg("json")
             .arg(&path)
             .output()
-            .with_context(|| format!("Failed to execute ffprobe on {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to execute ffprobe ({}) on {}",
+                    ffprobe_bin.display(),
+                    path.display()
+                )
+            })?;
 
         if !output.status.success() {
             bail!(
@@ -156,8 +268,9 @@ impl FfmpegDecoder {
         self.kill_stream();
 
         let seek_seconds = (timestamp_us.max(0) as f64) / 1_000_000.0;
+        let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
 
-        let child = Command::new("ffmpeg")
+        let child = Command::new(&ffmpeg_bin)
             .arg("-hwaccel")
             .arg("auto")
             .arg("-ss")

@@ -39,6 +39,9 @@ pub struct ColorGradeSettings {
     pub exposure: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub lut_idx: usize,
 }
 
 impl Default for ColorGradeSettings {
@@ -47,6 +50,9 @@ impl Default for ColorGradeSettings {
             exposure: 0.0,
             contrast: 1.0,
             saturation: 1.0,
+            temperature: 0.0,
+            tint: 0.0,
+            lut_idx: 0,
         }
     }
 }
@@ -127,7 +133,8 @@ impl ExportJob {
         let b_str = format!("{}k", preset.video_bitrate_kbps);
         let ab_str = format!("{}k", preset.audio_bitrate_kbps);
 
-        let status = std::process::Command::new("ffmpeg")
+        let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        let status = std::process::Command::new(bin)
             .args([
                 "-y",
                 "-f",
@@ -164,7 +171,8 @@ impl ExportJob {
 
     /// Inspect an encoded media file using ffprobe to verify video and audio stream integrity.
     pub fn probe_file(path: &Path) -> Result<MediaProbeResult, std::io::Error> {
-        let output = std::process::Command::new("ffprobe")
+        let bin = find_ffprobe_executable().unwrap_or_else(|| PathBuf::from("ffprobe"));
+        let output = std::process::Command::new(bin)
             .args([
                 "-v",
                 "quiet",
@@ -290,7 +298,10 @@ pub fn resample_and_grade_frame(
     // Apply color grade in-place if non-default
     let has_grade = grade.exposure.abs() > 0.001
         || (grade.contrast - 1.0).abs() > 0.001
-        || (grade.saturation - 1.0).abs() > 0.001;
+        || (grade.saturation - 1.0).abs() > 0.001
+        || grade.temperature.abs() > 0.01
+        || grade.tint.abs() > 0.01
+        || grade.lut_idx > 0;
 
     if has_grade {
         let exp_mul = (2.0_f32).powf(grade.exposure);
@@ -318,11 +329,110 @@ pub fn resample_and_grade_frame(
             g = luma + (g - luma) * sat;
             b = luma + (b - luma) * sat;
 
-            chunk[0] = (r.clamp(0.0, 1.0) * 255.0) as u8;
-            chunk[1] = (g.clamp(0.0, 1.0) * 255.0) as u8;
-            chunk[2] = (b.clamp(0.0, 1.0) * 255.0) as u8;
+            // Temperature (Kelvin Warm/Cool)
+            if grade.temperature.abs() > 0.01 {
+                let t = grade.temperature / 100.0;
+                r += t * 0.12;
+                b -= t * 0.12;
+            }
+
+            // Tint (Magenta / Green)
+            if grade.tint.abs() > 0.01 {
+                let m = grade.tint / 100.0;
+                g -= m * 0.10;
+                r += m * 0.05;
+                b += m * 0.05;
+            }
+
+            // 3D Look-Up Table profile emulations
+            match grade.lut_idx {
+                1 => {
+                    // Teal & Orange (Hollywood blockbuster)
+                    if luma < 0.5 {
+                        let w = (1.0 - luma * 2.0).clamp(0.0, 1.0);
+                        r -= 0.06 * w;
+                        g += 0.02 * w;
+                        b += 0.08 * w;
+                    } else {
+                        let w = ((luma - 0.5) * 2.0).clamp(0.0, 1.0);
+                        r += 0.08 * w;
+                        g += 0.03 * w;
+                        b -= 0.05 * w;
+                    }
+                }
+                2 => {
+                    // Golden Hour (Vintage Warm)
+                    r += 0.06;
+                    g += 0.03;
+                    b -= 0.04;
+                    if luma < 0.25 {
+                        r += 0.02;
+                        g += 0.01;
+                    }
+                }
+                3 => {
+                    // High-Contrast Noir B&W
+                    let noir = ((luma - 0.5) * 1.35 + 0.5).clamp(0.0, 1.0);
+                    r = noir;
+                    g = noir;
+                    b = noir;
+                }
+                4 => {
+                    // Kodak 2383 Print Film Emulation
+                    let s_r = if r < 0.5 {
+                        2.0 * r * r
+                    } else {
+                        1.0 - 2.0 * (1.0 - r) * (1.0 - r)
+                    };
+                    r = s_r * 1.04;
+                    g *= 0.98;
+                    b *= 0.92;
+                }
+                5 => {
+                    // Fujifilm Eterna 500T
+                    r = r * 0.96 + 0.015;
+                    g = g * 0.98 + 0.01;
+                    b = b * 1.02 + 0.01;
+                }
+                _ => {}
+            }
+
+            chunk[0] = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+            chunk[1] = (g.clamp(0.0, 1.0) * 255.0).round() as u8;
+            chunk[2] = (b.clamp(0.0, 1.0) * 255.0).round() as u8;
         }
     }
+}
+
+/// Resolve a clip source path against current working directory,
+/// environment overrides, standard sample asset directories, and parent directories.
+pub fn resolve_media_path(raw_path: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(raw_path);
+    if p.exists() {
+        return Some(p);
+    }
+    if let Ok(sample_dir) = std::env::var("REDDART_SAMPLE_DIR") {
+        let candidate = PathBuf::from(sample_dir).join(&p);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    let candidates = [
+        PathBuf::from("samples").join(&p),
+        PathBuf::from("../samples").join(&p),
+        PathBuf::from("ready_to_use/windows/samples").join(&p),
+        PathBuf::from("ready_to_use/windows").join(&p),
+        PathBuf::from("ready_to_use").join(&p),
+        PathBuf::from("../ready_to_use/windows/samples").join(&p),
+        PathBuf::from("../../ready_to_use/windows/samples").join(&p),
+        PathBuf::from("../../../ready_to_use/windows/samples").join(&p),
+    ];
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Some(candidate.clone());
+        }
+    }
+    None
 }
 
 /// Mix audio from all enabled tracks of the project into a 48 kHz stereo 32-bit float PCM file.
@@ -340,16 +450,12 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
         }
         for clip in track.clips() {
             let audio_path = match &clip.kind {
-                ClipKind::Audio(aclip) => Some(PathBuf::from(&aclip.source_path)),
-                ClipKind::Video(vclip) if vclip.has_audio => {
-                    Some(PathBuf::from(&vclip.source_path))
-                }
+                ClipKind::Audio(aclip) => resolve_media_path(&aclip.source_path),
+                ClipKind::Video(vclip) if vclip.has_audio => resolve_media_path(&vclip.source_path),
                 _ => None,
             };
 
-            if let Some(path) = audio_path
-                && path.exists()
-            {
+            if let Some(path) = audio_path {
                 let pcm = pcm_cache
                     .entry(path.clone())
                     .or_insert_with(|| rd_audio::decode_audio_to_pcm(&path).unwrap_or_default());
@@ -412,7 +518,8 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
 
 /// Helper to test if a specific encoder can be instantiated by FFmpeg on host hardware.
 fn test_encoder_available(encoder_name: &str) -> bool {
-    std::process::Command::new("ffmpeg")
+    let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    std::process::Command::new(bin)
         .args([
             "-f",
             "lavfi",
@@ -512,19 +619,115 @@ pub fn select_encoder(video_codec: &str) -> &'static str {
     }
 }
 
-/// Returns true if both `ffmpeg` and `ffprobe` executables are installed and runnable on PATH.
+/// Locate the FFmpeg executable by checking:
+/// 1. `<current_exe_dir>/bin/ffmpeg.exe` (or `ffmpeg` on Unix)
+/// 2. `<current_exe_dir>/ffmpeg.exe`
+/// 3. Local `bin/ffmpeg.exe`
+/// 4. System PATH
+pub fn find_ffmpeg_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffmpeg.exe"
+    } else {
+        "bin/ffmpeg"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let probe = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffmpeg"))
+    } else {
+        None
+    }
+}
+
+/// Locate the FFprobe executable by checking:
+/// 1. `<current_exe_dir>/bin/ffprobe.exe` (or `ffprobe` on Unix)
+/// 2. `<current_exe_dir>/ffprobe.exe`
+/// 3. Local `bin/ffprobe.exe`
+/// 4. System PATH
+pub fn find_ffprobe_executable() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bin_name = if cfg!(windows) {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            };
+            let bin_sub = exe_dir.join("bin").join(bin_name);
+            if bin_sub.exists() {
+                return Some(bin_sub);
+            }
+            let adjacent = exe_dir.join(bin_name);
+            if adjacent.exists() {
+                return Some(adjacent);
+            }
+        }
+    }
+    let local_bin = PathBuf::from(if cfg!(windows) {
+        "bin/ffprobe.exe"
+    } else {
+        "bin/ffprobe"
+    });
+    if local_bin.exists() {
+        return Some(local_bin);
+    }
+    let probe = std::process::Command::new("ffprobe")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if probe {
+        Some(PathBuf::from("ffprobe"))
+    } else {
+        None
+    }
+}
+
+/// Returns true if both `ffmpeg` and `ffprobe` executables are installed and runnable.
 pub fn is_ffmpeg_available() -> bool {
-    let ffmpeg_ok = std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let ffprobe_ok = std::process::Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    ffmpeg_ok && ffprobe_ok
+    find_ffmpeg_executable().is_some() && find_ffprobe_executable().is_some()
+}
+
+/// Generate an industrial "MEDIA OFFLINE" warning graphic with diagonal hazard stripes
+/// when a referenced media file is detached or missing.
+pub fn generate_offline_graphic(dst: &mut [u8], width: u32, height: u32, _source_path: &str) {
+    for y in 0..height {
+        let row_offset = (y * width * 4) as usize;
+        for x in 0..width {
+            let stripe = ((x + y) / 48) % 2 == 0;
+            let col: [u8; 4] = if stripe {
+                [42, 24, 16, 255] // Amber dark stripe
+            } else {
+                [20, 22, 28, 255] // Graphite dark stripe
+            };
+            let pixel_idx = row_offset + (x * 4) as usize;
+            if pixel_idx + 4 <= dst.len() {
+                dst[pixel_idx..pixel_idx + 4].copy_from_slice(&col);
+            }
+        }
+    }
 }
 
 /// Rendering request specification.
@@ -561,7 +764,8 @@ pub fn render_project_to_file(
     let ab_str = format!("{}k", req.preset.audio_bitrate_kbps);
     let fps_str = format!("{:.3}", req.preset.fps);
 
-    let mut cmd = std::process::Command::new("ffmpeg");
+    let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let mut cmd = std::process::Command::new(ffmpeg_bin);
     cmd.arg("-y")
         .args([
             "-f",
@@ -610,7 +814,7 @@ pub fn render_project_to_file(
         std::io::Error::other("Failed to capture FFmpeg stdin")
     })?;
 
-    let mut decoders: HashMap<PathBuf, FfmpegDecoder> = HashMap::new();
+    let mut decoders: HashMap<PathBuf, Option<FfmpegDecoder>> = HashMap::new();
     let mut frame_buffer = vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
     let start_time = Instant::now();
 
@@ -625,118 +829,178 @@ pub fn render_project_to_file(
 
         let time_us = ((frame_idx as f64 / req.preset.fps) * 1_000_000.0).round() as i64;
 
-        // Find active video clip on topmost enabled track
-        let active_clip = req
-            .project
-            .timeline
-            .tracks()
-            .iter()
-            .rev()
-            .filter(|t| t.kind == TrackKind::Video && t.enabled)
-            .find_map(|t| t.clip_at(time_us).cloned());
+        // Collect all active video clips across all enabled video tracks (ordered bottom to top)
+        let mut active_layers: Vec<rd_render::CompositorLayer> = Vec::new();
 
-        let mut rendered = false;
-
-        if let Some(clip) = active_clip
-            && let ClipKind::Video(ref vclip) = clip.kind
-        {
-            let path = PathBuf::from(&vclip.source_path);
-            if path.exists() {
-                let source_time_us =
-                    clip.source_in_us + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
-
-                let decoder = decoders.entry(path.clone()).or_insert_with(|| {
-                    FfmpegDecoder::open(&path).expect("Failed to initialize video decoder")
-                });
-
-                if let Ok(Some(decoded)) = decoder.decode_frame_at(source_time_us)
-                    && let Some(rgba) = decoded.rgba_data
-                {
-                    resample_and_grade_frame(
-                        &rgba,
-                        decoded.width,
-                        decoded.height,
-                        &mut frame_buffer,
-                        req.preset.width,
-                        req.preset.height,
-                        req.grade,
-                    );
-
-                    // Apply effective keyframed opacity
+        for track in req.project.timeline.tracks() {
+            if !track.enabled || track.kind != TrackKind::Video {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(time_us) {
+                if let ClipKind::Video(ref vclip) = clip.kind {
                     let eff_opacity = clip.effective_opacity(time_us);
-                    if eff_opacity < 0.999 {
-                        for pixel in frame_buffer.chunks_exact_mut(4) {
-                            pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
-                            pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
-                            pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
-                            pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
-                        }
+                    if eff_opacity <= 0.001 {
+                        continue;
                     }
 
-                    // Apply shape masking if active on clip (with keyframed mask parameters)
-                    if let Some(mask_eff) = clip
+                    let eff_trans = clip.effective_transform(time_us);
+                    let shape_mask = clip
                         .effects
                         .iter()
                         .find(|e| e.effect_id == "mask_shape" && e.enabled)
-                    {
-                        let shape_type = mask_eff
-                            .parameters
-                            .get("shape_type")
-                            .copied()
-                            .unwrap_or(0.0) as u32;
-                        let center_x = clip
-                            .evaluate_keyframe("center_x", time_us)
-                            .or_else(|| mask_eff.parameters.get("center_x").copied())
-                            .unwrap_or(0.5);
-                        let center_y = clip
-                            .evaluate_keyframe("center_y", time_us)
-                            .or_else(|| mask_eff.parameters.get("center_y").copied())
-                            .unwrap_or(0.5);
-                        let size_x = clip
-                            .evaluate_keyframe("size_x", time_us)
-                            .or_else(|| mask_eff.parameters.get("size_x").copied())
-                            .unwrap_or(0.35);
-                        let size_y = clip
-                            .evaluate_keyframe("size_y", time_us)
-                            .or_else(|| mask_eff.parameters.get("size_y").copied())
-                            .unwrap_or(0.35);
-                        let feather = clip
-                            .evaluate_keyframe("feather", time_us)
-                            .or_else(|| mask_eff.parameters.get("feather").copied())
-                            .unwrap_or(0.05);
-                        let invert =
-                            mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+                        .map(|mask_eff| {
+                            let shape_type = mask_eff
+                                .parameters
+                                .get("shape_type")
+                                .copied()
+                                .unwrap_or(0.0) as u32;
+                            let center_x = clip
+                                .evaluate_keyframe("center_x", time_us)
+                                .or_else(|| mask_eff.parameters.get("center_x").copied())
+                                .unwrap_or(0.5);
+                            let center_y = clip
+                                .evaluate_keyframe("center_y", time_us)
+                                .or_else(|| mask_eff.parameters.get("center_y").copied())
+                                .unwrap_or(0.5);
+                            let size_x = clip
+                                .evaluate_keyframe("size_x", time_us)
+                                .or_else(|| mask_eff.parameters.get("size_x").copied())
+                                .unwrap_or(0.35);
+                            let size_y = clip
+                                .evaluate_keyframe("size_y", time_us)
+                                .or_else(|| mask_eff.parameters.get("size_y").copied())
+                                .unwrap_or(0.35);
+                            let feather = clip
+                                .evaluate_keyframe("feather", time_us)
+                                .or_else(|| mask_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let invert =
+                                mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
 
-                        let mask_params = rd_effects::ShapeMaskParams {
-                            shape_type,
-                            center_x,
-                            center_y,
-                            size_x,
-                            size_y,
-                            feather,
-                            invert,
-                        };
-                        rd_effects::apply_shape_mask(
-                            &mut frame_buffer,
+                            rd_effects::ShapeMaskParams {
+                                shape_type,
+                                center_x,
+                                center_y,
+                                size_x,
+                                size_y,
+                                feather,
+                                invert,
+                            }
+                        });
+
+                    if let Some(path) = resolve_media_path(&vclip.source_path) {
+                        let source_time_us = clip.source_in_us
+                            + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
+
+                        let decoder_opt =
+                            decoders.entry(path.clone()).or_insert_with(
+                                || match FfmpegDecoder::open(&path) {
+                                    Ok(d) => Some(d),
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Failed to open video decoder for {}: {:?}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                },
+                            );
+
+                        if let Some(decoder) = decoder_opt {
+                            if let Ok(Some(decoded)) = decoder.decode_frame_at(source_time_us)
+                                && let Some(rgba) = decoded.rgba_data
+                            {
+                                let mut layer_buf =
+                                    vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                                resample_and_grade_frame(
+                                    &rgba,
+                                    decoded.width,
+                                    decoded.height,
+                                    &mut layer_buf,
+                                    req.preset.width,
+                                    req.preset.height,
+                                    req.grade,
+                                );
+
+                                active_layers.push(rd_render::CompositorLayer {
+                                    rgba: layer_buf,
+                                    width: req.preset.width,
+                                    height: req.preset.height,
+                                    opacity: eff_opacity,
+                                    pos_x: eff_trans.position.x,
+                                    pos_y: eff_trans.position.y,
+                                    scale_x: eff_trans.scale.x,
+                                    scale_y: eff_trans.scale.y,
+                                    blend_mode: 0,
+                                    shape_mask,
+                                });
+                            }
+                        } else {
+                            // Media decoder failed; use offline graphic
+                            let mut offline_buf =
+                                vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                            generate_offline_graphic(
+                                &mut offline_buf,
+                                req.preset.width,
+                                req.preset.height,
+                                &vclip.source_path,
+                            );
+                            active_layers.push(rd_render::CompositorLayer {
+                                rgba: offline_buf,
+                                width: req.preset.width,
+                                height: req.preset.height,
+                                opacity: eff_opacity,
+                                pos_x: eff_trans.position.x,
+                                pos_y: eff_trans.position.y,
+                                scale_x: eff_trans.scale.x,
+                                scale_y: eff_trans.scale.y,
+                                blend_mode: 0,
+                                shape_mask,
+                            });
+                        }
+                    } else {
+                        // Media file missing; explicit offline-media placeholder
+                        let mut offline_buf =
+                            vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
+                        generate_offline_graphic(
+                            &mut offline_buf,
                             req.preset.width,
                             req.preset.height,
-                            &mask_params,
+                            &vclip.source_path,
                         );
+                        active_layers.push(rd_render::CompositorLayer {
+                            rgba: offline_buf,
+                            width: req.preset.width,
+                            height: req.preset.height,
+                            opacity: eff_opacity,
+                            pos_x: eff_trans.position.x,
+                            pos_y: eff_trans.position.y,
+                            scale_x: eff_trans.scale.x,
+                            scale_y: eff_trans.scale.y,
+                            blend_mode: 0,
+                            shape_mask,
+                        });
                     }
-
-                    rendered = true;
                 }
             }
         }
 
-        if !rendered {
-            // Timeline gap: fill with dark letterbox slate
-            for pixel in frame_buffer.chunks_exact_mut(4) {
-                pixel[0] = 10;
-                pixel[1] = 12;
-                pixel[2] = 16;
-                pixel[3] = 255;
-            }
+        // Timeline base slate
+        for pixel in frame_buffer.chunks_exact_mut(4) {
+            pixel[0] = 10;
+            pixel[1] = 12;
+            pixel[2] = 16;
+            pixel[3] = 255;
+        }
+
+        if !active_layers.is_empty() {
+            rd_render::composite_layers_over(
+                &mut frame_buffer,
+                req.preset.width,
+                req.preset.height,
+                &active_layers,
+            );
         }
 
         // Composite active text / title overlays from all enabled tracks
@@ -984,6 +1248,9 @@ mod tests {
                 exposure: 0.2,
                 contrast: 1.1,
                 saturation: 1.05,
+                temperature: 0.0,
+                tint: 0.0,
+                lut_idx: 0,
             },
         };
 

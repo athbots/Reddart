@@ -31,6 +31,45 @@ pub enum Command {
         old_position_us: crate::TimestampUs,
         new_position_us: crate::TimestampUs,
     },
+    /// Move a clip between different tracks and positions.
+    MoveClipTrack {
+        source_track_id: crate::TrackId,
+        target_track_id: crate::TrackId,
+        clip_id: crate::ClipId,
+        old_position_us: crate::TimestampUs,
+        new_position_us: crate::TimestampUs,
+    },
+    /// Ripple trim in-point.
+    RippleTrimIn {
+        track_id: crate::TrackId,
+        clip_id: crate::ClipId,
+        delta_us: i64,
+    },
+    /// Ripple trim out-point.
+    RippleTrimOut {
+        track_id: crate::TrackId,
+        clip_id: crate::ClipId,
+        delta_us: i64,
+    },
+    /// Roll edit adjacent boundary.
+    RollEdit {
+        track_id: crate::TrackId,
+        outgoing_id: crate::ClipId,
+        incoming_id: crate::ClipId,
+        delta_us: i64,
+    },
+    /// Slip media in-place.
+    SlipEdit {
+        track_id: crate::TrackId,
+        clip_id: crate::ClipId,
+        delta_us: i64,
+    },
+    /// Slide clip along track.
+    SlideEdit {
+        track_id: crate::TrackId,
+        clip_id: crate::ClipId,
+        delta_us: i64,
+    },
     /// Trim a clip's in-point.
     TrimIn {
         track_id: crate::TrackId,
@@ -79,6 +118,8 @@ pub enum Command {
     },
     /// Remove a track (stores complete track for undo).
     RemoveTrack { track: crate::Track, index: usize },
+    /// Relink media matching old_path to new_path across the project.
+    RelinkMedia { old_path: String, new_path: String },
     /// A group of commands applied atomically.
     Compound {
         label: String,
@@ -122,6 +163,99 @@ impl Command {
                     .clip_mut(*clip_id)
                     .ok_or(CommandError::ClipNotFound(*clip_id))?;
                 clip.position_us = *new_position_us;
+                Ok(())
+            }
+            Command::MoveClipTrack {
+                source_track_id,
+                target_track_id,
+                clip_id,
+                new_position_us,
+                ..
+            } => {
+                let source_track = project
+                    .timeline
+                    .track_mut(*source_track_id)
+                    .ok_or(CommandError::TrackNotFound(*source_track_id))?;
+                let mut clip = source_track
+                    .remove_clip(*clip_id)
+                    .ok_or(CommandError::ClipNotFound(*clip_id))?;
+                clip.position_us = *new_position_us;
+                let target_track = project
+                    .timeline
+                    .track_mut(*target_track_id)
+                    .ok_or(CommandError::TrackNotFound(*target_track_id))?;
+                target_track.add_clip(clip);
+                Ok(())
+            }
+            Command::RippleTrimIn {
+                track_id,
+                clip_id,
+                delta_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .ripple_trim_in(*clip_id, *delta_us)
+                    .map_err(CommandError::EditFailed)?;
+                Ok(())
+            }
+            Command::RippleTrimOut {
+                track_id,
+                clip_id,
+                delta_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .ripple_trim_out(*clip_id, *delta_us)
+                    .map_err(CommandError::EditFailed)?;
+                Ok(())
+            }
+            Command::RollEdit {
+                track_id,
+                outgoing_id,
+                incoming_id,
+                delta_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .roll_edit(*outgoing_id, *incoming_id, *delta_us)
+                    .map_err(CommandError::EditFailed)?;
+                Ok(())
+            }
+            Command::SlipEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .slip_edit(*clip_id, *delta_us)
+                    .map_err(CommandError::EditFailed)?;
+                Ok(())
+            }
+            Command::SlideEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => {
+                let track = project
+                    .timeline
+                    .track_mut(*track_id)
+                    .ok_or(CommandError::TrackNotFound(*track_id))?;
+                track
+                    .slide_edit(*clip_id, *delta_us)
+                    .map_err(CommandError::EditFailed)?;
                 Ok(())
             }
             Command::TrimIn {
@@ -215,6 +349,10 @@ impl Command {
                 project.timeline.remove_track(track.id);
                 Ok(())
             }
+            Command::RelinkMedia { old_path, new_path } => {
+                project.relink_media(old_path, new_path);
+                Ok(())
+            }
             Command::Compound { commands, .. } => {
                 for cmd in commands {
                     cmd.apply(project)?;
@@ -245,6 +383,66 @@ impl Command {
                 clip_id: *clip_id,
                 old_position_us: *new_position_us,
                 new_position_us: *old_position_us,
+            },
+            Command::MoveClipTrack {
+                source_track_id,
+                target_track_id,
+                clip_id,
+                old_position_us,
+                new_position_us,
+            } => Command::MoveClipTrack {
+                source_track_id: *target_track_id,
+                target_track_id: *source_track_id,
+                clip_id: *clip_id,
+                old_position_us: *new_position_us,
+                new_position_us: *old_position_us,
+            },
+            Command::RippleTrimIn {
+                track_id,
+                clip_id,
+                delta_us,
+            } => Command::RippleTrimIn {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: -*delta_us,
+            },
+            Command::RippleTrimOut {
+                track_id,
+                clip_id,
+                delta_us,
+            } => Command::RippleTrimOut {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: -*delta_us,
+            },
+            Command::RollEdit {
+                track_id,
+                outgoing_id,
+                incoming_id,
+                delta_us,
+            } => Command::RollEdit {
+                track_id: *track_id,
+                outgoing_id: *outgoing_id,
+                incoming_id: *incoming_id,
+                delta_us: -*delta_us,
+            },
+            Command::SlipEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => Command::SlipEdit {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: -*delta_us,
+            },
+            Command::SlideEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => Command::SlideEdit {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: -*delta_us,
             },
             Command::TrimIn {
                 track_id,
@@ -349,6 +547,10 @@ impl Command {
                 name: track.name.clone(),
                 index: *index,
             },
+            Command::RelinkMedia { old_path, new_path } => Command::RelinkMedia {
+                old_path: new_path.clone(),
+                new_path: old_path.clone(),
+            },
             Command::Compound { label, commands } => Command::Compound {
                 label: format!("Undo {}", label),
                 commands: commands.iter().rev().map(|c| c.inverse()).collect(),
@@ -377,6 +579,65 @@ impl Command {
                 track_id: *track_id,
                 clip_id: *clip_id,
                 new_position_us: *new_position_us,
+            }],
+            Command::MoveClipTrack {
+                source_track_id,
+                target_track_id,
+                clip_id,
+                new_position_us,
+                ..
+            } => vec![JournalMutation::MoveClipTrack {
+                source_track_id: *source_track_id,
+                target_track_id: *target_track_id,
+                clip_id: *clip_id,
+                new_position_us: *new_position_us,
+            }],
+            Command::RippleTrimIn {
+                track_id,
+                clip_id,
+                delta_us,
+            } => vec![JournalMutation::RippleTrimIn {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: *delta_us,
+            }],
+            Command::RippleTrimOut {
+                track_id,
+                clip_id,
+                delta_us,
+            } => vec![JournalMutation::RippleTrimOut {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: *delta_us,
+            }],
+            Command::RollEdit {
+                track_id,
+                outgoing_id,
+                incoming_id,
+                delta_us,
+            } => vec![JournalMutation::RollEdit {
+                track_id: *track_id,
+                outgoing_id: *outgoing_id,
+                incoming_id: *incoming_id,
+                delta_us: *delta_us,
+            }],
+            Command::SlipEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => vec![JournalMutation::SlipEdit {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: *delta_us,
+            }],
+            Command::SlideEdit {
+                track_id,
+                clip_id,
+                delta_us,
+            } => vec![JournalMutation::SlideEdit {
+                track_id: *track_id,
+                clip_id: *clip_id,
+                delta_us: *delta_us,
             }],
             Command::TrimIn {
                 track_id,
@@ -451,6 +712,12 @@ impl Command {
             Command::RemoveTrack { track, .. } => {
                 vec![JournalMutation::RemoveTrack { id: track.id }]
             }
+            Command::RelinkMedia { old_path, new_path } => {
+                vec![JournalMutation::RelinkMedia {
+                    old_path: old_path.clone(),
+                    new_path: new_path.clone(),
+                }]
+            }
             Command::Compound { commands, .. } => {
                 commands.iter().flat_map(|c| c.to_mutations()).collect()
             }
@@ -520,7 +787,14 @@ impl CommandHistory {
         }
     }
 
-    /// Execute a command, persist mutations to the WAL journal, and push to undo stack.
+    /// Execute a command, persist mutations to the WAL journal with durability,
+    /// and push to the undo stack.
+    ///
+    /// Transaction semantics:
+    /// 1. Command is applied to the in-memory project.
+    /// 2. Corresponding mutations are appended and synced to the durable WAL journal.
+    /// 3. If journal append fails, the in-memory mutation is rolled back via the inverse command,
+    ///    no entry is pushed to the undo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn execute_with_journal(
         &mut self,
         command: Command,
@@ -528,9 +802,17 @@ impl CommandHistory {
         journal: &mut crate::journal::ProjectJournal,
     ) -> Result<(), CommandError> {
         command.apply(project)?;
-        for mutation in command.to_mutations() {
-            let _ = journal.append(mutation);
+
+        let mutations = command.to_mutations();
+        for mutation in &mutations {
+            if let Err(e) = journal.append(mutation.clone()) {
+                // WAL failed: Roll back in-memory application so project state is preserved
+                let _ = command.inverse().apply(project);
+                log::error!("WAL append failed during execute_with_journal: {}", e);
+                return Err(CommandError::JournalError(e));
+            }
         }
+
         self.undo_stack.push(command);
         self.redo_stack.clear();
 
@@ -543,6 +825,10 @@ impl CommandHistory {
     }
 
     /// Undo the last command and record inverse mutations to the WAL journal.
+    ///
+    /// Transaction semantics:
+    /// If journal persistence fails, the in-memory undo is rolled back by reapplying the command,
+    /// the command remains on the undo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn undo_with_journal(
         &mut self,
         project: &mut Project,
@@ -550,10 +836,21 @@ impl CommandHistory {
     ) -> Result<bool, CommandError> {
         if let Some(command) = self.undo_stack.pop() {
             let inverse = command.inverse();
-            inverse.apply(project)?;
-            for mutation in inverse.to_mutations() {
-                let _ = journal.append(mutation);
+            if let Err(e) = inverse.apply(project) {
+                self.undo_stack.push(command);
+                return Err(e);
             }
+
+            for mutation in inverse.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back in-memory inverse by reapplying original command
+                    let _ = command.apply(project);
+                    self.undo_stack.push(command);
+                    log::error!("WAL append failed during undo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
+            }
+
             self.redo_stack.push(command);
             project.touch();
             Ok(true)
@@ -563,16 +860,31 @@ impl CommandHistory {
     }
 
     /// Redo the last undone command and record mutations to the WAL journal.
+    ///
+    /// Transaction semantics:
+    /// If journal persistence fails, the in-memory redo is rolled back by applying the inverse,
+    /// the command remains on the redo stack, and `Err(CommandError::JournalError)` is returned.
     pub fn redo_with_journal(
         &mut self,
         project: &mut Project,
         journal: &mut crate::journal::ProjectJournal,
     ) -> Result<bool, CommandError> {
         if let Some(command) = self.redo_stack.pop() {
-            command.apply(project)?;
-            for mutation in command.to_mutations() {
-                let _ = journal.append(mutation);
+            if let Err(e) = command.apply(project) {
+                self.redo_stack.push(command);
+                return Err(e);
             }
+
+            for mutation in command.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back by applying inverse
+                    let _ = command.inverse().apply(project);
+                    self.redo_stack.push(command);
+                    log::error!("WAL append failed during redo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
+            }
+
             self.undo_stack.push(command);
             project.touch();
             Ok(true)
@@ -617,6 +929,10 @@ pub enum CommandError {
     ClipNotFound(crate::ClipId),
     #[error("Split failed: split point is outside clip range")]
     SplitFailed,
+    #[error("Edit operation failed: {0}")]
+    EditFailed(&'static str),
+    #[error("WAL journal persistence failure: {0}")]
+    JournalError(#[from] std::io::Error),
 }
 
 #[cfg(test)]
@@ -774,5 +1090,186 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_undo_redo_move_clip_track() {
+        let mut project = make_test_project();
+        let mut history = CommandHistory::new(100);
+
+        // Add a second video track
+        let track2_id = project.timeline.add_track(crate::TrackKind::Video, "V2");
+        let track1_id = project.timeline.tracks()[0].id;
+
+        let clip = make_test_clip(1_000_000);
+        let clip_id = clip.id;
+
+        history
+            .execute(
+                Command::AddClip {
+                    track_id: track1_id,
+                    clip,
+                },
+                &mut project,
+            )
+            .unwrap();
+        assert_eq!(project.timeline.track(track1_id).unwrap().clips().len(), 1);
+        assert_eq!(project.timeline.track(track2_id).unwrap().clips().len(), 0);
+
+        // Move clip from track 1 to track 2
+        history
+            .execute(
+                Command::MoveClipTrack {
+                    source_track_id: track1_id,
+                    target_track_id: track2_id,
+                    clip_id,
+                    old_position_us: 1_000_000,
+                    new_position_us: 2_000_000,
+                },
+                &mut project,
+            )
+            .unwrap();
+
+        assert_eq!(project.timeline.track(track1_id).unwrap().clips().len(), 0);
+        let t2_clips = project.timeline.track(track2_id).unwrap().clips();
+        assert_eq!(t2_clips.len(), 1);
+        assert_eq!(t2_clips[0].id, clip_id);
+        assert_eq!(t2_clips[0].position_us, 2_000_000);
+
+        // Undo move
+        history.undo(&mut project).unwrap();
+        assert_eq!(project.timeline.track(track1_id).unwrap().clips().len(), 1);
+        assert_eq!(project.timeline.track(track2_id).unwrap().clips().len(), 0);
+        assert_eq!(
+            project.timeline.track(track1_id).unwrap().clips()[0].position_us,
+            1_000_000
+        );
+
+        // Redo move
+        history.redo(&mut project).unwrap();
+        assert_eq!(project.timeline.track(track1_id).unwrap().clips().len(), 0);
+        assert_eq!(project.timeline.track(track2_id).unwrap().clips().len(), 1);
+        assert_eq!(
+            project.timeline.track(track2_id).unwrap().clips()[0].position_us,
+            2_000_000
+        );
+    }
+
+    #[test]
+    fn test_undo_redo_ripple_trim() {
+        let mut project = make_test_project();
+        let mut history = CommandHistory::new(100);
+        let track_id = project.timeline.tracks()[0].id;
+
+        // Clip 1: 0..2_000_000 us
+        let clip1 = make_test_clip(0);
+        let clip1_id = clip1.id;
+        // Clip 2: 2_000_000..4_000_000 us
+        let clip2 = make_test_clip(2_000_000);
+        let clip2_id = clip2.id;
+
+        history
+            .execute(
+                Command::AddClip {
+                    track_id,
+                    clip: clip1,
+                },
+                &mut project,
+            )
+            .unwrap();
+        history
+            .execute(
+                Command::AddClip {
+                    track_id,
+                    clip: clip2,
+                },
+                &mut project,
+            )
+            .unwrap();
+
+        // Ripple Trim In on clip1: trim 500_000 us from the front.
+        // clip1 position moves 0 -> 500_000, duration shrinks by 500_000.
+        // All clips at or after old end (2_000_000) ripple left by 500_000 us.
+        history
+            .execute(
+                Command::RippleTrimIn {
+                    track_id,
+                    clip_id: clip1_id,
+                    delta_us: 500_000,
+                },
+                &mut project,
+            )
+            .unwrap();
+
+        let track = project.timeline.track(track_id).unwrap();
+        let c1 = track.clip(clip1_id).unwrap();
+        let c2 = track.clip(clip2_id).unwrap();
+        assert_eq!(c1.source_in_us, 500_000);
+        assert_eq!(c1.position_us, 0);
+        assert_eq!(c2.position_us, 1_500_000); // Shifted 500ms left
+
+        // Undo ripple trim
+        history.undo(&mut project).unwrap();
+        let track = project.timeline.track(track_id).unwrap();
+        let c1 = track.clip(clip1_id).unwrap();
+        let c2 = track.clip(clip2_id).unwrap();
+        assert_eq!(c1.source_in_us, 0);
+        assert_eq!(c1.position_us, 0);
+        assert_eq!(c2.position_us, 2_000_000);
+
+        // Redo ripple trim
+        history.redo(&mut project).unwrap();
+        let track = project.timeline.track(track_id).unwrap();
+        let c1 = track.clip(clip1_id).unwrap();
+        let c2 = track.clip(clip2_id).unwrap();
+        assert_eq!(c1.source_in_us, 500_000);
+        assert_eq!(c1.position_us, 0);
+        assert_eq!(c2.position_us, 1_500_000);
+    }
+
+    #[test]
+    fn test_undo_redo_slip_and_slide_edit() {
+        let mut project = make_test_project();
+        let mut history = CommandHistory::new(100);
+        let track_id = project.timeline.tracks()[0].id;
+
+        let clip = make_test_clip(1_000_000);
+        let clip_id = clip.id;
+        history
+            .execute(Command::AddClip { track_id, clip }, &mut project)
+            .unwrap();
+
+        // Slip edit: slip source window by +200_000 us (position untouched)
+        history
+            .execute(
+                Command::SlipEdit {
+                    track_id,
+                    clip_id,
+                    delta_us: 200_000,
+                },
+                &mut project,
+            )
+            .unwrap();
+
+        let c = project
+            .timeline
+            .track(track_id)
+            .unwrap()
+            .clip(clip_id)
+            .unwrap();
+        assert_eq!(c.position_us, 1_000_000);
+        assert_eq!(c.source_in_us, 200_000);
+        assert_eq!(c.source_out_us, 2_200_000);
+
+        // Undo slip
+        history.undo(&mut project).unwrap();
+        let c = project
+            .timeline
+            .track(track_id)
+            .unwrap()
+            .clip(clip_id)
+            .unwrap();
+        assert_eq!(c.source_in_us, 0);
+        assert_eq!(c.source_out_us, 2_000_000);
     }
 }

@@ -18,9 +18,10 @@ use winit::{
 };
 
 use crate::gpu;
-use rd_audio::{AudioClock, AudioEngine, MeteringState, decode_audio_to_pcm};
+use rd_audio::{AudioClock, AudioEngine, MeteringState, TimelineAudioScheduler};
 use rd_core::{Clip, ClipId, Project, TrackId, TrackKind};
-use rd_decode::FfmpegDecoder;
+use rd_decode::{AsyncDecoderService, FfmpegDecoder, FrameResponse};
+use rd_render::{CompositorLayer, composite_layers_over};
 
 /// Studio editing workspace mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,11 +68,67 @@ pub fn format_smpte(timestamp_us: i64, fps: f64) -> String {
 }
 
 /// Parameters for real-time video color grading.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorGradeSettings {
     pub exposure: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub lut_idx: usize,
+}
+
+impl Default for ColorGradeSettings {
+    fn default() -> Self {
+        Self {
+            exposure: 0.0,
+            contrast: 0.0,
+            saturation: 1.0,
+            temperature: 0.0,
+            tint: 0.0,
+            lut_idx: 0,
+        }
+    }
+}
+
+/// Active drag gesture state on the timeline surface.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimelineDragGesture {
+    None,
+    ScrubPlayhead,
+    MoveClip {
+        clip_id: ClipId,
+        source_track_id: TrackId,
+        target_track_id: TrackId,
+        initial_position_us: i64,
+        clip_duration_us: i64,
+        drag_start_pointer_x: f32,
+        drag_start_pointer_y: f32,
+        current_delta_us: i64,
+        snapped_time_us: i64,
+        snapped_guide_x: Option<f32>,
+    },
+    TrimHead {
+        clip_id: ClipId,
+        track_id: TrackId,
+        initial_position_us: i64,
+        initial_duration_us: i64,
+        initial_trim_in_us: i64,
+        drag_start_pointer_x: f32,
+        current_delta_us: i64,
+        snapped_guide_x: Option<f32>,
+        is_ripple: bool,
+    },
+    TrimTail {
+        clip_id: ClipId,
+        track_id: TrackId,
+        initial_position_us: i64,
+        initial_duration_us: i64,
+        drag_start_pointer_x: f32,
+        current_delta_us: i64,
+        snapped_guide_x: Option<f32>,
+        is_ripple: bool,
+    },
 }
 
 /// Editor state holding user project data, selection, and playback state.
@@ -94,7 +151,7 @@ pub struct EditorData {
     pub export_completed: bool,
     pub last_save_path: Option<PathBuf>,
     pub last_autosave_time: Instant,
-    pub missing_media: Vec<PathBuf>,
+    pub missing_media: Vec<rd_core::MissingMediaItem>,
     pub status_message: Option<(String, Instant)>,
     pub snapping_enabled: bool,
     pub master_volume: f32,
@@ -126,6 +183,9 @@ pub struct EditorData {
     pub template_project_name: String,
     pub keyframe_param_selected: String,
     pub keyframe_easing_selected: rd_core::Easing,
+    pub async_decoder: AsyncDecoderService,
+    pub audio_scheduler: TimelineAudioScheduler,
+    pub drag_gesture: TimelineDragGesture,
 }
 
 impl EditorData {
@@ -190,20 +250,17 @@ impl EditorData {
         // Initialize low-latency CPAL hardware audio engine
         let audio_clock = AudioClock::new();
         let audio_engine = match AudioEngine::new(audio_clock) {
-            Ok(eng) => {
-                let eng = Arc::new(eng);
-                if let Some(ref d_path) = demo_path
-                    && let Ok(pcm) = decode_audio_to_pcm(d_path)
-                {
-                    eng.load_track_pcm(pcm, 1.0);
-                }
-                Some(eng)
-            }
+            Ok(eng) => Some(Arc::new(eng)),
             Err(e) => {
                 log::warn!("AudioEngine initialization notice: {:?}", e);
                 None
             }
         };
+
+        let mut audio_scheduler = TimelineAudioScheduler::new();
+        if let Some(ref audio) = audio_engine {
+            let _ = audio_scheduler.sync_timeline(audio, &project, None);
+        }
 
         let audio_metering = MeteringState {
             peak_l_dbfs: -96.0,
@@ -239,8 +296,12 @@ impl EditorData {
             missing_media: Vec::new(),
             status_message: Some((
                 wal_msg.unwrap_or_else(|| {
-                    "Reddart Studio v0.2.1 | Press Space to preview, Ctrl+T for templates, Ctrl+E to export"
-                        .into()
+                    concat!(
+                        "Reddart Studio v",
+                        env!("CARGO_PKG_VERSION"),
+                        " | Press Space to preview, Ctrl+T for templates, Ctrl+E to export"
+                    )
+                    .into()
                 }),
                 Instant::now(),
             )),
@@ -273,6 +334,21 @@ impl EditorData {
             template_project_name: "New Template Project".into(),
             keyframe_param_selected: "opacity".into(),
             keyframe_easing_selected: rd_core::Easing::Linear,
+            async_decoder: AsyncDecoderService::new(64),
+            audio_scheduler,
+            drag_gesture: TimelineDragGesture::None,
+        }
+    }
+
+    /// Synchronize the project's audio clips into the real-time audio mixer.
+    pub fn sync_audio_timeline(&mut self) {
+        if let Some(ref audio) = self.audio_engine {
+            if let Err(e) =
+                self.audio_scheduler
+                    .sync_timeline(audio, &self.project, self.solo_track)
+            {
+                log::warn!("Audio timeline synchronization notice: {:?}", e);
+            }
         }
     }
 
@@ -314,6 +390,7 @@ impl EditorData {
                     self.selected_clip = None;
                     self.selected_track = None;
                     self.missing_media.clear();
+                    self.sync_audio_timeline();
                     self.needs_monitor_update = true;
 
                     self.status_message = Some((
@@ -334,10 +411,75 @@ impl EditorData {
     }
 
     /// Record an atomic timeline mutation into the durable write-ahead log.
-    pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) {
+    pub fn record_mutation(&mut self, mutation: rd_core::JournalMutation) -> bool {
         if let Some(ref mut j) = self.journal {
-            let _ = j.append(mutation);
+            if let Err(e) = j.append(mutation) {
+                log::error!("Failed to append mutation to WAL journal: {}", e);
+                self.status_message =
+                    Some((format!("WAL persistence error: {}", e), Instant::now()));
+                return false;
+            }
+            self.sync_audio_timeline();
+            true
+        } else {
+            false
         }
+    }
+
+    /// Execute a command with full WAL persistence and undo stack recording.
+    #[allow(dead_code)]
+    pub fn execute_command(
+        &mut self,
+        command: rd_core::Command,
+    ) -> Result<(), rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history
+                .execute_with_journal(command, &mut self.project, j)
+        } else {
+            self.history.execute(command, &mut self.project)
+        };
+        match &res {
+            Ok(()) => {
+                self.needs_monitor_update = true;
+                self.missing_media = self.project.find_missing_media_items();
+                self.sync_audio_timeline();
+            }
+            Err(e) => {
+                log::error!("Command execution failed: {}", e);
+                self.status_message = Some((format!("Operation failed: {}", e), Instant::now()));
+            }
+        }
+        res
+    }
+
+    /// Undo last operation with journal recording.
+    pub fn undo(&mut self) -> Result<bool, rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history.undo_with_journal(&mut self.project, j)
+        } else {
+            self.history.undo(&mut self.project)
+        };
+        if let Ok(true) = res {
+            self.needs_monitor_update = true;
+            self.missing_media = self.project.find_missing_media_items();
+            self.sync_audio_timeline();
+        }
+        res
+    }
+
+    /// Redo last undone operation with journal recording.
+    pub fn redo(&mut self) -> Result<bool, rd_core::CommandError> {
+        let res = if let Some(ref mut j) = self.journal {
+            self.history.redo_with_journal(&mut self.project, j)
+        } else {
+            self.history.redo(&mut self.project)
+        };
+        if let Ok(true) = res {
+            self.needs_monitor_update = true;
+            self.missing_media = self.project.find_missing_media_items();
+            self.sync_audio_timeline();
+        }
+        res
     }
 
     /// Set playback state and synchronize hardware audio engine.
@@ -363,6 +505,8 @@ impl EditorData {
     /// Seek to a specific timestamp in microseconds and synchronize audio position.
     pub fn seek_to_time_us(&mut self, time_us: i64) {
         self.project.timeline.playhead_us = time_us.max(0);
+        self.async_decoder.bump_generation();
+        self.needs_monitor_update = true;
         if let Some(ref audio) = self.audio_engine {
             audio.seek_to_time_us(time_us);
         }
@@ -380,132 +524,177 @@ impl EditorData {
     pub fn update_monitor_frame(&mut self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
         let playhead_us = self.project.timeline.playhead_us;
 
-        // Find active video clip on topmost enabled video track
-        let active_clip = self
-            .project
-            .timeline
-            .tracks()
-            .iter()
-            .rev()
-            .filter(|t| t.kind == TrackKind::Video && t.enabled)
-            .find_map(|t| t.clip_at(playhead_us).cloned());
+        // Skip re-composite if playhead hasn't changed and no update is flagged
+        if playhead_us == self.last_rendered_pts_us && !self.needs_monitor_update {
+            return;
+        }
 
-        let mut updated = false;
+        // Collect all active video clips across all enabled video tracks (ordered bottom to top)
+        let mut layers: Vec<CompositorLayer> = Vec::new();
 
-        if let Some(clip) = active_clip {
-            if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
-                let path = PathBuf::from(&vclip.source_path);
-                if path.exists() {
-                    let source_time_us = clip.source_in_us
-                        + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
+        for track in self.project.timeline.tracks() {
+            if !track.enabled || track.kind != TrackKind::Video {
+                continue;
+            }
+            if let Some(clip) = track.clip_at(playhead_us) {
+                if let rd_core::ClipKind::Video(ref vclip) = clip.kind {
+                    let eff_opacity = clip.effective_opacity(playhead_us);
+                    if eff_opacity <= 0.001 {
+                        continue;
+                    }
 
-                    if source_time_us != self.last_rendered_pts_us || self.needs_monitor_update {
-                        let decoder = self.decoders.entry(path.clone()).or_insert_with(|| {
-                            FfmpegDecoder::open(&path).expect("Failed to initialize video decoder")
+                    let eff_trans = clip.effective_transform(playhead_us);
+                    let shape_mask = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "mask_shape" && e.enabled)
+                        .map(|mask_eff| {
+                            let shape_type = mask_eff
+                                .parameters
+                                .get("shape_type")
+                                .copied()
+                                .unwrap_or(0.0) as u32;
+                            let center_x = clip
+                                .evaluate_keyframe("center_x", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("center_x").copied())
+                                .unwrap_or(0.5);
+                            let center_y = clip
+                                .evaluate_keyframe("center_y", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("center_y").copied())
+                                .unwrap_or(0.5);
+                            let size_x = clip
+                                .evaluate_keyframe("size_x", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("size_x").copied())
+                                .unwrap_or(0.35);
+                            let size_y = clip
+                                .evaluate_keyframe("size_y", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("size_y").copied())
+                                .unwrap_or(0.35);
+                            let feather = clip
+                                .evaluate_keyframe("feather", playhead_us)
+                                .or_else(|| mask_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let invert =
+                                mask_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+
+                            rd_effects::ShapeMaskParams {
+                                shape_type,
+                                center_x,
+                                center_y,
+                                size_x,
+                                size_y,
+                                feather,
+                                invert,
+                            }
                         });
 
-                        if let Ok(Some(frame)) = decoder.decode_frame_at(source_time_us)
-                            && let Some(rgba) = frame.rgba_data
-                        {
+                    if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
+                        let source_time_us = clip.source_in_us
+                            + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
+
+                        // Check async decoder cache first for non-blocking instantaneous retrieval
+                        let maybe_frame =
+                            self.async_decoder.get_cached(&path, source_time_us, 33_333);
+
+                        let rgba_opt = if let Some(frame) = maybe_frame {
+                            frame.rgba_data.clone()
+                        } else {
+                            // Queue background async decode
+                            self.async_decoder
+                                .request_frame(clip.id, path.clone(), source_time_us);
+
+                            // Fallback to warm decoder or synchronous decode without panics
+                            if let Some(dec) = self.decoders.get_mut(&path) {
+                                dec.decode_frame_at(source_time_us)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|f| f.rgba_data)
+                            } else {
+                                match FfmpegDecoder::open(&path) {
+                                    Ok(mut dec) => {
+                                        let f = dec
+                                            .decode_frame_at(source_time_us)
+                                            .ok()
+                                            .flatten()
+                                            .and_then(|f| f.rgba_data);
+                                        self.decoders.insert(path.clone(), dec);
+                                        f
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Could not open video {}: {:?}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                        };
+
+                        if let Some(rgba) = rgba_opt {
+                            let mut layer_buf = vec![0u8; 1920 * 1080 * 4];
                             Self::resample_and_grade_frame(
                                 &rgba,
-                                frame.width,
-                                frame.height,
-                                &mut self.monitor_frame_buffer,
+                                1920,
+                                1080,
+                                &mut layer_buf,
                                 1920,
                                 1080,
                                 ColorGradeSettings {
                                     exposure: self.color_exposure,
                                     contrast: self.color_contrast,
                                     saturation: self.color_saturation,
+                                    temperature: self.color_temperature,
+                                    tint: self.color_tint,
+                                    lut_idx: self.color_lut_idx,
                                 },
                             );
 
-                            // Apply effective keyframed opacity
-                            let eff_opacity = clip.effective_opacity(playhead_us);
-                            if eff_opacity < 0.999 {
-                                for pixel in self.monitor_frame_buffer.chunks_exact_mut(4) {
-                                    pixel[0] = ((pixel[0] as f32) * eff_opacity) as u8;
-                                    pixel[1] = ((pixel[1] as f32) * eff_opacity) as u8;
-                                    pixel[2] = ((pixel[2] as f32) * eff_opacity) as u8;
-                                    pixel[3] = ((pixel[3] as f32) * eff_opacity) as u8;
-                                }
-                            }
-
-                            // Apply shape mask if present on clip (with keyframed mask parameters)
-                            if let Some(mask_eff) = clip
-                                .effects
-                                .iter()
-                                .find(|e| e.effect_id == "mask_shape" && e.enabled)
-                            {
-                                let shape_type = mask_eff
-                                    .parameters
-                                    .get("shape_type")
-                                    .copied()
-                                    .unwrap_or(0.0)
-                                    as u32;
-                                let center_x = clip
-                                    .evaluate_keyframe("center_x", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("center_x").copied())
-                                    .unwrap_or(0.5);
-                                let center_y = clip
-                                    .evaluate_keyframe("center_y", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("center_y").copied())
-                                    .unwrap_or(0.5);
-                                let size_x = clip
-                                    .evaluate_keyframe("size_x", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("size_x").copied())
-                                    .unwrap_or(0.35);
-                                let size_y = clip
-                                    .evaluate_keyframe("size_y", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("size_y").copied())
-                                    .unwrap_or(0.35);
-                                let feather = clip
-                                    .evaluate_keyframe("feather", playhead_us)
-                                    .or_else(|| mask_eff.parameters.get("feather").copied())
-                                    .unwrap_or(0.05);
-                                let invert =
-                                    mask_eff.parameters.get("invert").copied().unwrap_or(0.0)
-                                        >= 0.5;
-
-                                let mask_params = rd_effects::ShapeMaskParams {
-                                    shape_type,
-                                    center_x,
-                                    center_y,
-                                    size_x,
-                                    size_y,
-                                    feather,
-                                    invert,
-                                };
-                                rd_effects::apply_shape_mask(
-                                    &mut self.monitor_frame_buffer,
-                                    1920,
-                                    1080,
-                                    &mask_params,
-                                );
-                            }
-
-                            updated = true;
-                            self.last_rendered_pts_us = source_time_us;
-                            self.needs_monitor_update = false;
+                            layers.push(CompositorLayer {
+                                rgba: layer_buf,
+                                width: 1920,
+                                height: 1080,
+                                opacity: eff_opacity,
+                                pos_x: eff_trans.position.x,
+                                pos_y: eff_trans.position.y,
+                                scale_x: eff_trans.scale.x,
+                                scale_y: eff_trans.scale.y,
+                                blend_mode: 0,
+                                shape_mask,
+                            });
                         }
+                    } else {
+                        // Explicit offline media placeholder
+                        let mut offline_buf = vec![0u8; 1920 * 1080 * 4];
+                        Self::generate_offline_graphic(
+                            &mut offline_buf,
+                            1920,
+                            1080,
+                            &vclip.source_path,
+                        );
+                        layers.push(CompositorLayer {
+                            rgba: offline_buf,
+                            width: 1920,
+                            height: 1080,
+                            opacity: eff_opacity,
+                            pos_x: eff_trans.position.x,
+                            pos_y: eff_trans.position.y,
+                            scale_x: eff_trans.scale.x,
+                            scale_y: eff_trans.scale.y,
+                            blend_mode: 0,
+                            shape_mask,
+                        });
                     }
-                } else if self.last_rendered_pts_us != -2 {
-                    Self::generate_offline_graphic(
-                        &mut self.monitor_frame_buffer,
-                        1920,
-                        1080,
-                        &vclip.source_path,
-                    );
-                    updated = true;
-                    self.last_rendered_pts_us = -2;
                 }
             }
-        } else if self.last_rendered_pts_us != playhead_us || self.needs_monitor_update {
+        }
+
+        if layers.is_empty() {
             Self::generate_smpte_pattern(&mut self.monitor_frame_buffer, 1920, 1080, playhead_us);
-            updated = true;
-            self.last_rendered_pts_us = playhead_us;
-            self.needs_monitor_update = false;
+        } else {
+            self.monitor_frame_buffer.fill(0);
+            composite_layers_over(&mut self.monitor_frame_buffer, 1920, 1080, &layers);
         }
 
         // Composite active text / title overlays from all enabled tracks
@@ -543,32 +732,32 @@ impl EditorData {
                         1080,
                         &params,
                     );
-                    updated = true;
                 }
             }
         }
 
-        if updated {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &self.monitor_frame_buffer,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(1920 * 4),
-                    rows_per_image: Some(1080),
-                },
-                wgpu::Extent3d {
-                    width: 1920,
-                    height: 1080,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+        self.last_rendered_pts_us = playhead_us;
+        self.needs_monitor_update = false;
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.monitor_frame_buffer,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(1920 * 4),
+                rows_per_image: Some(1080),
+            },
+            wgpu::Extent3d {
+                width: 1920,
+                height: 1080,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     /// High-performance aspect-fit letterboxing and real-time color grading.
@@ -622,7 +811,12 @@ impl EditorData {
         }
 
         // Apply realtime color grading in-place if non-default
-        if grade.exposure != 0.0 || grade.contrast != 0.0 || (grade.saturation - 1.0).abs() > 0.001
+        if grade.exposure != 0.0
+            || grade.contrast != 0.0
+            || (grade.saturation - 1.0).abs() > 0.001
+            || grade.temperature.abs() > 0.01
+            || grade.tint.abs() > 0.01
+            || grade.lut_idx > 0
         {
             let exp_mult = 2.0_f32.powf(grade.exposure);
             let contrast_mult = 1.0 + grade.contrast;
@@ -642,11 +836,79 @@ impl EditorData {
                 b = (b - 0.5) * contrast_mult + 0.5;
 
                 // Saturation (Rec. 709 luma)
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 if (grade.saturation - 1.0).abs() > 0.001 {
-                    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                     r = luma + (r - luma) * grade.saturation;
                     g = luma + (g - luma) * grade.saturation;
                     b = luma + (b - luma) * grade.saturation;
+                }
+
+                // Temperature (Kelvin Warm/Cool)
+                if grade.temperature.abs() > 0.01 {
+                    let t = grade.temperature / 100.0;
+                    r += t * 0.12;
+                    b -= t * 0.12;
+                }
+
+                // Tint (Magenta / Green)
+                if grade.tint.abs() > 0.01 {
+                    let m = grade.tint / 100.0;
+                    g -= m * 0.10;
+                    r += m * 0.05;
+                    b += m * 0.05;
+                }
+
+                // 3D Look-Up Table profile emulations
+                match grade.lut_idx {
+                    1 => {
+                        // Teal & Orange (Hollywood blockbuster)
+                        if luma < 0.5 {
+                            let w = (1.0 - luma * 2.0).clamp(0.0, 1.0);
+                            r -= 0.06 * w;
+                            g += 0.02 * w;
+                            b += 0.08 * w;
+                        } else {
+                            let w = ((luma - 0.5) * 2.0).clamp(0.0, 1.0);
+                            r += 0.08 * w;
+                            g += 0.03 * w;
+                            b -= 0.05 * w;
+                        }
+                    }
+                    2 => {
+                        // Golden Hour (Vintage Warm)
+                        r += 0.06;
+                        g += 0.03;
+                        b -= 0.04;
+                        if luma < 0.25 {
+                            r += 0.02;
+                            g += 0.01;
+                        }
+                    }
+                    3 => {
+                        // High-Contrast Noir B&W
+                        let noir = ((luma - 0.5) * 1.35 + 0.5).clamp(0.0, 1.0);
+                        r = noir;
+                        g = noir;
+                        b = noir;
+                    }
+                    4 => {
+                        // Kodak 2383 Print Film Emulation
+                        let s_r = if r < 0.5 {
+                            2.0 * r * r
+                        } else {
+                            1.0 - 2.0 * (1.0 - r) * (1.0 - r)
+                        };
+                        r = s_r * 1.04;
+                        g *= 0.98;
+                        b *= 0.92;
+                    }
+                    5 => {
+                        // Fujifilm Eterna 500T
+                        r = r * 0.96 + 0.015;
+                        g = g * 0.98 + 0.01;
+                        b = b * 1.02 + 0.01;
+                    }
+                    _ => {}
                 }
 
                 chunk[0] = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -980,11 +1242,32 @@ impl ApplicationHandler for ReddartApp {
         let mut editor = if let Some(ref path) = self.initial_project {
             let mut ed = EditorData::new();
             if path.exists() {
-                if let Ok(proj) = rd_core::Project::load_file(path) {
-                    ed.project = proj;
-                    ed.last_save_path = Some(path.clone());
-                    ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
-                    log::info!("Loaded project from CLI: {}", path.display());
+                match rd_core::Project::load_file_with_recovery(path) {
+                    Ok((proj, report)) => {
+                        ed.project = proj;
+                        ed.last_save_path = Some(path.clone());
+                        ed.journal = rd_core::ProjectJournal::open_or_create(path).ok();
+                        ed.missing_media = ed.project.find_missing_media_items();
+                        ed.sync_audio_timeline();
+                        ed.needs_monitor_update = true;
+                        let rec_count = report.map(|r| r.valid_records_replayed).unwrap_or(0);
+                        if rec_count > 0 {
+                            log::info!(
+                                "Loaded project from CLI with {} recovered journal edits: {}",
+                                rec_count,
+                                path.display()
+                            );
+                        } else {
+                            log::info!("Loaded project from CLI: {}", path.display());
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to load project from CLI path {}: {}",
+                            path.display(),
+                            e
+                        );
+                    }
                 }
             } else {
                 ed.project.name = path
@@ -1070,35 +1353,69 @@ impl ApplicationHandler for ReddartApp {
 
 /// Render a frame: handle playback time advancement, run egui UI, then submit GPU commands.
 fn render_frame(state: &mut AppState) {
-    // 1. Playback time advancement (supports forward & reverse J/K/L shuttle)
+    // 1. Playback time advancement (slaved to hardware audio clock at 1x; fallback to high-res timer)
     if state.editor.is_playing {
-        let now = Instant::now();
-        let dt = now.duration_since(state.editor.last_frame_time);
-        state.editor.last_frame_time = now;
-        let delta_us = (dt.as_micros() as f32 * state.editor.shuttle_speed) as i64;
         let total_us = state.editor.project.timeline.duration_us();
+        let mut synced_to_audio = false;
 
-        if delta_us >= 0 {
-            state.editor.project.timeline.playhead_us += delta_us;
-            if total_us > 0 && state.editor.project.timeline.playhead_us >= total_us {
-                // Loop back to start
-                state.editor.project.timeline.playhead_us = 0;
+        if (state.editor.shuttle_speed - 1.0).abs() < 0.05 {
+            if let Some(ref audio) = state.editor.audio_engine {
+                if audio.has_hardware_stream() && audio.is_playing() {
+                    let audio_time_us = audio.clock().now_us();
+                    if total_us > 0 && audio_time_us >= total_us {
+                        state.editor.seek_to_time_us(0);
+                    } else {
+                        state.editor.project.timeline.playhead_us = audio_time_us;
+                    }
+                    synced_to_audio = true;
+                    state.editor.last_frame_time = Instant::now();
+                }
             }
-        } else {
-            let abs_delta = delta_us.unsigned_abs() as i64;
-            state.editor.project.timeline.playhead_us = state
-                .editor
-                .project
-                .timeline
-                .playhead_us
-                .saturating_sub(abs_delta);
-            if state.editor.project.timeline.playhead_us == 0 {
-                state.editor.is_playing = false;
-                state.editor.shuttle_speed = 1.0;
+        }
+
+        if !synced_to_audio {
+            let now = Instant::now();
+            let dt = now.duration_since(state.editor.last_frame_time);
+            state.editor.last_frame_time = now;
+            let delta_us = (dt.as_micros() as f32 * state.editor.shuttle_speed) as i64;
+
+            if delta_us >= 0 {
+                state.editor.project.timeline.playhead_us += delta_us;
+                if total_us > 0 && state.editor.project.timeline.playhead_us >= total_us {
+                    // Loop back to start
+                    state.editor.project.timeline.playhead_us = 0;
+                }
+            } else {
+                let abs_delta = delta_us.unsigned_abs() as i64;
+                state.editor.project.timeline.playhead_us = state
+                    .editor
+                    .project
+                    .timeline
+                    .playhead_us
+                    .saturating_sub(abs_delta);
+                if state.editor.project.timeline.playhead_us == 0 {
+                    state.editor.is_playing = false;
+                    state.editor.shuttle_speed = 1.0;
+                }
             }
         }
     } else {
         state.editor.last_frame_time = Instant::now();
+    }
+
+    // Drain async decoder responses
+    let cur_gen = state.editor.async_decoder.current_generation();
+    for resp in state.editor.async_decoder.drain_responses() {
+        match resp {
+            FrameResponse::Ready { generation, .. } => {
+                if generation == cur_gen {
+                    state.editor.needs_monitor_update = true;
+                }
+            }
+            FrameResponse::Error { error, .. } => {
+                log::debug!("Async decoder notice: {}", error);
+            }
+        }
     }
 
     // 2. Periodic autosave with WAL checkpointing (every 30 seconds)
@@ -1457,11 +1774,43 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 ed.status_message = Some(("Deleted Clip [Del]".into(), Instant::now()));
             }
         }
-        if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) {
-            let _ = ed.history.undo(&mut ed.project);
+        if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) && !i.modifiers.shift {
+            let _ = ed.undo();
         }
-        if i.modifiers.ctrl && i.key_pressed(egui::Key::Y) {
-            let _ = ed.history.redo(&mut ed.project);
+        if (i.modifiers.ctrl && i.key_pressed(egui::Key::Y))
+            || (i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::Z))
+        {
+            let _ = ed.redo();
+        }
+        if i.modifiers.ctrl && i.key_pressed(egui::Key::E) {
+            ed.show_export_modal = true;
+            ed.status_message = Some(("Export Media Modal [Ctrl+E]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::Escape) {
+            ed.selected_clip = None;
+            ed.selected_track = None;
+            ed.drag_gesture = TimelineDragGesture::None;
+        }
+        if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
+            ed.zoom_px_per_sec = (ed.zoom_px_per_sec * 1.25).min(500.0);
+            ed.status_message = Some((
+                format!("Zoom: {:.0} px/s", ed.zoom_px_per_sec),
+                Instant::now(),
+            ));
+        }
+        if i.key_pressed(egui::Key::Minus) {
+            ed.zoom_px_per_sec = (ed.zoom_px_per_sec / 1.25).max(10.0);
+            ed.status_message = Some((
+                format!("Zoom: {:.0} px/s", ed.zoom_px_per_sec),
+                Instant::now(),
+            ));
+        }
+        if i.modifiers.shift && i.key_pressed(egui::Key::Z) && !i.modifiers.ctrl {
+            let dur_sec = ed.project.timeline.duration_us() as f32 / 1_000_000.0;
+            if dur_sec > 0.1 {
+                ed.zoom_px_per_sec = (1000.0 / dur_sec).clamp(15.0, 300.0);
+                ed.status_message = Some(("Zoom Fit Sequence [Shift+Z]".into(), Instant::now()));
+            }
         }
         if i.modifiers.ctrl && i.key_pressed(egui::Key::S) {
             let target = ed.last_save_path.clone().unwrap_or_else(|| {
@@ -1472,12 +1821,19 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             } else {
                 ed.project.save_atomic(&target)
             };
-            if let Ok(()) = save_res {
-                ed.last_save_path = Some(target.clone());
-                ed.status_message = Some((
-                    format!("Saved & Checkpointed to {}", target.display()),
-                    Instant::now(),
-                ));
+            match save_res {
+                Ok(()) => {
+                    ed.last_save_path = Some(target.clone());
+                    ed.status_message = Some((
+                        format!("Saved & Checkpointed to {}", target.display()),
+                        Instant::now(),
+                    ));
+                }
+                Err(e) => {
+                    ed.status_message =
+                        Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                    log::error!("Checkpoint save failed: {}", e);
+                }
             }
         }
         if (i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::N))
@@ -1485,13 +1841,57 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
         {
             ed.show_template_modal = true;
         }
+        // Frame stepping & Cut navigation
+        let frame_step = (1_000_000.0 / ed.project.frame_rate.as_f64()) as i64;
         if i.key_pressed(egui::Key::ArrowLeft) {
-            let step = if i.modifiers.shift { 33_333 } else { 1_000_000 };
-            ed.project.timeline.playhead_us = ed.project.timeline.playhead_us.saturating_sub(step);
+            let step = if i.modifiers.shift {
+                1_000_000
+            } else {
+                frame_step
+            };
+            ed.seek_to_time_us(ed.project.timeline.playhead_us.saturating_sub(step));
         }
         if i.key_pressed(egui::Key::ArrowRight) {
-            let step = if i.modifiers.shift { 33_333 } else { 1_000_000 };
-            ed.project.timeline.playhead_us += step;
+            let step = if i.modifiers.shift {
+                1_000_000
+            } else {
+                frame_step
+            };
+            ed.seek_to_time_us(ed.project.timeline.playhead_us + step);
+        }
+        if i.key_pressed(egui::Key::ArrowUp) {
+            let current = ed.project.timeline.playhead_us;
+            let mut prev_cut = 0;
+            for t in ed.project.timeline.tracks() {
+                for c in t.clips() {
+                    if c.position_us < current && c.position_us > prev_cut {
+                        prev_cut = c.position_us;
+                    }
+                    let end_us = c.position_us + c.duration_us();
+                    if end_us < current && end_us > prev_cut {
+                        prev_cut = end_us;
+                    }
+                }
+            }
+            ed.seek_to_time_us(prev_cut);
+            ed.status_message = Some(("Jump to Previous Cut [Up]".into(), Instant::now()));
+        }
+        if i.key_pressed(egui::Key::ArrowDown) {
+            let current = ed.project.timeline.playhead_us;
+            let mut next_cut = ed.project.timeline.duration_us();
+            for t in ed.project.timeline.tracks() {
+                for c in t.clips() {
+                    if c.position_us > current && c.position_us < next_cut {
+                        next_cut = c.position_us;
+                    }
+                    let end_us = c.position_us + c.duration_us();
+                    if end_us > current && end_us < next_cut {
+                        next_cut = end_us;
+                    }
+                }
+            }
+            ed.seek_to_time_us(next_cut);
+            ed.status_message = Some(("Jump to Next Cut [Down]".into(), Instant::now()));
         }
     });
 
@@ -1546,12 +1946,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                                 proj.name, report.valid_records_replayed
                             );
                         }
-                        ed.missing_media = proj.find_missing_media();
+                        ed.missing_media = proj.find_missing_media_items();
                         ed.last_save_path = Some(path.clone());
                         ed.project = proj;
                         ed.journal = journal;
                         ed.history.clear();
                         ed.selected_clip = None;
+                        ed.sync_audio_timeline();
+                        ed.needs_monitor_update = true;
                         ed.status_message = Some((msg, Instant::now()));
                         log::info!("Loaded project: {}", ed.project.name);
                     }
@@ -1567,13 +1969,20 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     } else {
                         ed.project.save_atomic(&target)
                     };
-                    if let Ok(()) = save_res {
-                        ed.last_save_path = Some(target.clone());
-                        ed.status_message = Some((
-                            format!("Checkpoint Saved: {}", target.display()),
-                            Instant::now(),
-                        ));
-                        log::info!("Checkpoint saved project to {}", target.display());
+                    match save_res {
+                        Ok(()) => {
+                            ed.last_save_path = Some(target.clone());
+                            ed.status_message = Some((
+                                format!("Checkpoint Saved: {}", target.display()),
+                                Instant::now(),
+                            ));
+                            log::info!("Checkpoint saved project to {}", target.display());
+                        }
+                        Err(e) => {
+                            ed.status_message =
+                                Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                            log::error!("Checkpoint save failed: {}", e);
+                        }
                     }
                     ui.close_menu();
                 }
@@ -1589,14 +1998,21 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         } else {
                             ed.project.save_atomic(&path)
                         };
-                        if let Ok(()) = save_res {
-                            ed.last_save_path = Some(path.clone());
-                            ed.journal = journal;
-                            ed.status_message = Some((
-                                format!("Saved As & Checkpointed: {}", path.display()),
-                                Instant::now(),
-                            ));
-                            log::info!("Saved project as {}", path.display());
+                        match save_res {
+                            Ok(()) => {
+                                ed.last_save_path = Some(path.clone());
+                                ed.journal = journal;
+                                ed.status_message = Some((
+                                    format!("Saved As & Checkpointed: {}", path.display()),
+                                    Instant::now(),
+                                ));
+                                log::info!("Saved project as {}", path.display());
+                            }
+                            Err(e) => {
+                                ed.status_message =
+                                    Some((format!("Checkpoint save error: {}", e), Instant::now()));
+                                log::error!("Checkpoint save failed: {}", e);
+                            }
                         }
                     }
                     ui.close_menu();
@@ -1610,11 +2026,11 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
             ui.menu_button("Edit", |ui| {
                 if ui.button("Undo (Ctrl+Z)").clicked() {
-                    let _ = ed.history.undo(&mut ed.project);
+                    let _ = ed.undo();
                     ui.close_menu();
                 }
                 if ui.button("Redo (Ctrl+Y)").clicked() {
-                    let _ = ed.history.redo(&mut ed.project);
+                    let _ = ed.redo();
                     ui.close_menu();
                 }
                 ui.separator();
@@ -3187,36 +3603,54 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
 
     // 4. Central Panel: Video Preview (Program Monitor)
     egui::CentralPanel::default().show(ctx, |ui| {
-        // Missing Media Alert Banner
+        // Missing Media Alert Banner with per-clip itemization and safe relinking
         if !ed.missing_media.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(format!(
-                        "[!] Offline Media: {} file(s) detached",
+                        "⚠️ OFFLINE MEDIA: {} detached clip reference(s) detected",
                         ed.missing_media.len()
                     ))
-                    .color(egui::Color32::from_rgb(245, 158, 11))
+                    .color(egui::Color32::from_rgb(239, 68, 68))
                     .strong(),
                 );
-                if studio_btn(
-                    ui,
-                    "Relink Media Files...",
-                    Some(egui::Color32::from_rgb(217, 119, 6)),
-                    false,
-                )
-                .clicked()
-                    && let Some(new_file) = rfd::FileDialog::new().pick_file()
-                    && let Some(first_missing) = ed.missing_media.first().cloned()
-                {
-                    let count = ed.project.relink_media(
-                        &first_missing.to_string_lossy(),
-                        &new_file.to_string_lossy(),
-                    );
-                    ed.status_message =
-                        Some((format!("Relinked {} clip(s)", count), Instant::now()));
-                    ed.missing_media = ed.project.find_missing_media();
-                }
             });
+            let mut relink_pair: Option<(String, PathBuf)> = None;
+            for item in &ed.missing_media {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "  • Clip {} [Track {}]: {}",
+                            item.clip_id.0, item.track_id.0, item.source_path
+                        ))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(209, 213, 219)),
+                    );
+                    if studio_btn(
+                        ui,
+                        "Relink...",
+                        Some(egui::Color32::from_rgb(217, 119, 6)),
+                        false,
+                    )
+                    .clicked()
+                    {
+                        if let Some(new_file) = rfd::FileDialog::new().pick_file() {
+                            relink_pair = Some((item.source_path.clone(), new_file));
+                        }
+                    }
+                });
+            }
+            if let Some((old_path, new_file)) = relink_pair {
+                let new_path_str = new_file.to_string_lossy().to_string();
+                let count = ed.project.relink_media(&old_path, &new_path_str);
+                ed.record_mutation(rd_core::JournalMutation::RelinkMedia {
+                    old_path,
+                    new_path: new_path_str,
+                });
+                ed.status_message = Some((format!("Relinked {} clip(s)", count), Instant::now()));
+                ed.missing_media = ed.project.find_missing_media_items();
+                ed.needs_monitor_update = true;
+            }
             ui.separator();
         }
 
@@ -3898,23 +4332,6 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             let timeline_x_start = rect.left() + track_header_width;
             let timeline_width = rect.width() - track_header_width;
 
-            // Handle scrubbing clicks & drags with intelligent snapping
-            if (response.clicked() || response.dragged())
-                && let Some(pos) = response.interact_pointer_pos()
-                && pos.x >= timeline_x_start
-            {
-                let rel_x = (pos.x - timeline_x_start).max(0.0);
-                let raw_time_us = (rel_x / ed.zoom_px_per_sec * 1_000_000.0) as i64;
-                let threshold_us = ((12.0 / ed.zoom_px_per_sec) * 1_000_000.0) as i64;
-                let target_us = if ed.snapping_enabled {
-                    ed.project.timeline.snap_to(raw_time_us, threshold_us)
-                } else {
-                    raw_time_us
-                };
-                ed.project.timeline.playhead_us = target_us.max(0);
-            }
-
-            // Draw Time Ruler (ticks every 1s / 5s)
             let ruler_height = 24.0;
             let ruler_rect = egui::Rect::from_min_size(
                 egui::pos2(timeline_x_start, rect.top()),
@@ -4044,20 +4461,452 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 }
             }
 
-            // Contextual studio cursor feedback
-            if response.hovered() {
-                match ed.active_tool {
-                    EditTool::Select => ctx.set_cursor_icon(egui::CursorIcon::Default),
-                    EditTool::Razor => ctx.set_cursor_icon(egui::CursorIcon::Crosshair),
-                    EditTool::RippleTrim => ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
-                    EditTool::Roll => ctx.set_cursor_icon(egui::CursorIcon::ResizeColumn),
-                    EditTool::Slip | EditTool::Slide => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+            // Contextual studio cursor feedback & hover testing
+            let hover_pos = response.hover_pos();
+            let interact_pos = response.interact_pointer_pos();
+            let frame_dur_us = (1_000_000.0 / ed.project.frame_rate.as_f64()) as i64;
+            let track_lane_height = 44.0;
+            let handle_width = 8.0_f32;
+
+            let mut hovered_head_handle = None;
+            let mut hovered_tail_handle = None;
+            let mut hovered_clip_info = None;
+
+            // Pre-calculate track vertical layouts
+            let mut track_positions = Vec::new();
+            let mut curr_y = rect.top() + ruler_height + 4.0;
+            for track in ed.project.timeline.tracks() {
+                track_positions.push((track.id, curr_y));
+                curr_y += track_lane_height + 4.0;
+            }
+
+            if let Some(pos) = hover_pos {
+                if pos.x >= timeline_x_start && pos.y > rect.top() + ruler_height {
+                    for track in ed.project.timeline.tracks() {
+                        let track_y = track_positions
+                            .iter()
+                            .find(|(tid, _)| *tid == track.id)
+                            .map(|(_, ty)| *ty)
+                            .unwrap_or(0.0);
+                        let lane_rect = egui::Rect::from_min_size(
+                            egui::pos2(timeline_x_start, track_y),
+                            egui::vec2(timeline_width, track_lane_height),
+                        );
+                        if lane_rect.contains(pos) {
+                            for clip in track.clips() {
+                                let clip_start_x = timeline_x_start
+                                    + (clip.position_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                                let clip_w = ((clip.duration_us() as f32 / 1_000_000.0)
+                                    * ed.zoom_px_per_sec)
+                                    .max(6.0);
+                                let clip_rect = egui::Rect::from_min_size(
+                                    egui::pos2(clip_start_x, track_y + 2.0),
+                                    egui::vec2(clip_w, track_lane_height - 4.0),
+                                );
+                                let head_handle_rect = egui::Rect::from_min_max(
+                                    egui::pos2(clip_rect.left() - 4.0, clip_rect.top()),
+                                    egui::pos2(clip_rect.left() + handle_width, clip_rect.bottom()),
+                                );
+                                let tail_handle_rect = egui::Rect::from_min_max(
+                                    egui::pos2(clip_rect.right() - handle_width, clip_rect.top()),
+                                    egui::pos2(clip_rect.right() + 4.0, clip_rect.bottom()),
+                                );
+
+                                if head_handle_rect.contains(pos) {
+                                    hovered_head_handle = Some((clip.id, track.id));
+                                    break;
+                                } else if tail_handle_rect.contains(pos) {
+                                    hovered_tail_handle = Some((clip.id, track.id));
+                                    break;
+                                } else if clip_rect.contains(pos) {
+                                    hovered_clip_info = Some((clip.id, track.id));
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
-            // Draw Track Lanes and Clips
-            let track_lane_height = 44.0;
-            let mut y = rect.top() + ruler_height + 4.0;
+            if response.hovered() {
+                if hovered_head_handle.is_some() {
+                    ctx.set_cursor_icon(egui::CursorIcon::ResizeWest);
+                } else if hovered_tail_handle.is_some() {
+                    ctx.set_cursor_icon(egui::CursorIcon::ResizeEast);
+                } else if hovered_clip_info.is_some() {
+                    match ed.active_tool {
+                        EditTool::Select => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+                        EditTool::Razor => ctx.set_cursor_icon(egui::CursorIcon::Crosshair),
+                        EditTool::RippleTrim => ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
+                        EditTool::Roll => ctx.set_cursor_icon(egui::CursorIcon::ResizeColumn),
+                        EditTool::Slip | EditTool::Slide => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+                    }
+                } else {
+                    ctx.set_cursor_icon(egui::CursorIcon::Default);
+                }
+            }
+
+            // 1. Gesture Initiation (Drag Started)
+            if response.drag_started()
+                && let Some(pos) = interact_pos
+            {
+                if pos.y <= ruler_rect.bottom() {
+                    ed.drag_gesture = TimelineDragGesture::ScrubPlayhead;
+                } else if pos.x >= timeline_x_start {
+                    let mut hit_anything = false;
+                    for track in ed.project.timeline.tracks() {
+                        let track_y = track_positions
+                            .iter()
+                            .find(|(tid, _)| *tid == track.id)
+                            .map(|(_, ty)| *ty)
+                            .unwrap_or(0.0);
+                        for clip in track.clips() {
+                            let clip_start_x = timeline_x_start
+                                + (clip.position_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                            let clip_w = ((clip.duration_us() as f32 / 1_000_000.0)
+                                * ed.zoom_px_per_sec)
+                                .max(6.0);
+                            let clip_rect = egui::Rect::from_min_size(
+                                egui::pos2(clip_start_x, track_y + 2.0),
+                                egui::vec2(clip_w, track_lane_height - 4.0),
+                            );
+                            let head_handle_rect = egui::Rect::from_min_max(
+                                egui::pos2(clip_rect.left() - 4.0, clip_rect.top()),
+                                egui::pos2(clip_rect.left() + handle_width, clip_rect.bottom()),
+                            );
+                            let tail_handle_rect = egui::Rect::from_min_max(
+                                egui::pos2(clip_rect.right() - handle_width, clip_rect.top()),
+                                egui::pos2(clip_rect.right() + 4.0, clip_rect.bottom()),
+                            );
+
+                            let alt_held = ctx.input(|i| i.modifiers.alt);
+                            if head_handle_rect.contains(pos) {
+                                ed.selected_clip = Some(clip.id);
+                                ed.selected_track = Some(track.id);
+                                ed.drag_gesture = TimelineDragGesture::TrimHead {
+                                    clip_id: clip.id,
+                                    track_id: track.id,
+                                    initial_position_us: clip.position_us,
+                                    initial_duration_us: clip.duration_us(),
+                                    initial_trim_in_us: clip.source_in_us,
+                                    drag_start_pointer_x: pos.x,
+                                    current_delta_us: 0,
+                                    snapped_guide_x: None,
+                                    is_ripple: ed.active_tool == EditTool::RippleTrim || alt_held,
+                                };
+                                hit_anything = true;
+                                break;
+                            } else if tail_handle_rect.contains(pos) {
+                                ed.selected_clip = Some(clip.id);
+                                ed.selected_track = Some(track.id);
+                                ed.drag_gesture = TimelineDragGesture::TrimTail {
+                                    clip_id: clip.id,
+                                    track_id: track.id,
+                                    initial_position_us: clip.position_us,
+                                    initial_duration_us: clip.duration_us(),
+                                    drag_start_pointer_x: pos.x,
+                                    current_delta_us: 0,
+                                    snapped_guide_x: None,
+                                    is_ripple: ed.active_tool == EditTool::RippleTrim || alt_held,
+                                };
+                                hit_anything = true;
+                                break;
+                            } else if clip_rect.contains(pos) {
+                                ed.selected_clip = Some(clip.id);
+                                ed.selected_track = Some(track.id);
+                                if ed.active_tool == EditTool::Select {
+                                    ed.drag_gesture = TimelineDragGesture::MoveClip {
+                                        clip_id: clip.id,
+                                        source_track_id: track.id,
+                                        target_track_id: track.id,
+                                        initial_position_us: clip.position_us,
+                                        clip_duration_us: clip.duration_us(),
+                                        drag_start_pointer_x: pos.x,
+                                        drag_start_pointer_y: pos.y,
+                                        current_delta_us: 0,
+                                        snapped_time_us: clip.position_us,
+                                        snapped_guide_x: None,
+                                    };
+                                }
+                                hit_anything = true;
+                                break;
+                            }
+                        }
+                        if hit_anything {
+                            break;
+                        }
+                    }
+                    if !hit_anything {
+                        ed.drag_gesture = TimelineDragGesture::ScrubPlayhead;
+                        ed.selected_clip = None;
+                    }
+                }
+            }
+
+            // 2. Active Gesture Execution
+            if response.dragged()
+                && let Some(pos) = interact_pos
+            {
+                match &mut ed.drag_gesture {
+                    TimelineDragGesture::ScrubPlayhead => {
+                        let rel_x = (pos.x - timeline_x_start).max(0.0);
+                        let raw_time_us = (rel_x / ed.zoom_px_per_sec * 1_000_000.0) as i64;
+                        let threshold_us = ((12.0 / ed.zoom_px_per_sec) * 1_000_000.0) as i64;
+                        let target_us = if ed.snapping_enabled {
+                            ed.project.timeline.snap_to(raw_time_us, threshold_us)
+                        } else {
+                            raw_time_us
+                        };
+                        ed.seek_to_time_us(target_us.max(0));
+                    }
+                    TimelineDragGesture::MoveClip {
+                        clip_id: _,
+                        source_track_id,
+                        target_track_id,
+                        initial_position_us,
+                        clip_duration_us,
+                        drag_start_pointer_x,
+                        drag_start_pointer_y: _,
+                        current_delta_us,
+                        snapped_time_us,
+                        snapped_guide_x,
+                    } => {
+                        let dx = pos.x - *drag_start_pointer_x;
+                        let raw_delta = (dx / ed.zoom_px_per_sec * 1_000_000.0) as i64;
+                        let raw_target_pos = (*initial_position_us + raw_delta).max(0);
+                        let threshold_us = ((12.0 / ed.zoom_px_per_sec) * 1_000_000.0) as i64;
+
+                        let mut best_target = raw_target_pos;
+                        let mut guide_x = None;
+                        if ed.snapping_enabled {
+                            let snap_head = ed.project.timeline.snap_to(raw_target_pos, threshold_us);
+                            if snap_head != raw_target_pos {
+                                best_target = snap_head;
+                                guide_x = Some(timeline_x_start + (snap_head as f32 / 1_000_000.0) * ed.zoom_px_per_sec);
+                            } else {
+                                let raw_tail = raw_target_pos + *clip_duration_us;
+                                let snap_tail = ed.project.timeline.snap_to(raw_tail, threshold_us);
+                                if snap_tail != raw_tail {
+                                    best_target = (snap_tail - *clip_duration_us).max(0);
+                                    guide_x = Some(timeline_x_start + (snap_tail as f32 / 1_000_000.0) * ed.zoom_px_per_sec);
+                                }
+                            }
+                        }
+
+                        *current_delta_us = best_target - *initial_position_us;
+                        *snapped_time_us = best_target;
+                        *snapped_guide_x = guide_x;
+
+                        // Check hovered track lane for vertical movement
+                        for (tid, ty) in &track_positions {
+                            let lane_rect = egui::Rect::from_min_size(
+                                egui::pos2(rect.left(), *ty),
+                                egui::vec2(rect.width(), track_lane_height),
+                            );
+                            if lane_rect.contains(pos) {
+                                if let Some(src_t) = ed.project.timeline.track(*source_track_id)
+                                    && let Some(dest_t) = ed.project.timeline.track(*tid)
+                                    && src_t.kind == dest_t.kind
+                                {
+                                    *target_track_id = *tid;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    TimelineDragGesture::TrimHead {
+                        clip_id: _,
+                        track_id: _,
+                        initial_position_us,
+                        initial_duration_us,
+                        initial_trim_in_us,
+                        drag_start_pointer_x,
+                        current_delta_us,
+                        snapped_guide_x,
+                        is_ripple: _,
+                    } => {
+                        let dx = pos.x - *drag_start_pointer_x;
+                        let raw_delta = (dx / ed.zoom_px_per_sec * 1_000_000.0) as i64;
+                        let max_delta = *initial_duration_us - frame_dur_us;
+                        let min_delta = -*initial_trim_in_us;
+                        let clamped_delta = raw_delta.clamp(min_delta, max_delta);
+
+                        let mut target_head_pos = *initial_position_us + clamped_delta;
+                        let mut guide_x = None;
+                        if ed.snapping_enabled {
+                            let threshold_us = ((12.0 / ed.zoom_px_per_sec) * 1_000_000.0) as i64;
+                            let snapped = ed.project.timeline.snap_to(target_head_pos, threshold_us);
+                            if snapped != target_head_pos {
+                                target_head_pos = snapped;
+                                guide_x = Some(timeline_x_start + (snapped as f32 / 1_000_000.0) * ed.zoom_px_per_sec);
+                            }
+                        }
+                        *current_delta_us = (target_head_pos - *initial_position_us).clamp(min_delta, max_delta);
+                        *snapped_guide_x = guide_x;
+                    }
+                    TimelineDragGesture::TrimTail {
+                        clip_id: _,
+                        track_id: _,
+                        initial_position_us,
+                        initial_duration_us,
+                        drag_start_pointer_x,
+                        current_delta_us,
+                        snapped_guide_x,
+                        is_ripple: _,
+                    } => {
+                        let dx = pos.x - *drag_start_pointer_x;
+                        let raw_delta = (dx / ed.zoom_px_per_sec * 1_000_000.0) as i64;
+                        let min_delta = -(*initial_duration_us - frame_dur_us);
+                        let clamped_delta = raw_delta.max(min_delta);
+
+                        let mut target_tail_pos = *initial_position_us + *initial_duration_us + clamped_delta;
+                        let mut guide_x = None;
+                        if ed.snapping_enabled {
+                            let threshold_us = ((12.0 / ed.zoom_px_per_sec) * 1_000_000.0) as i64;
+                            let snapped = ed.project.timeline.snap_to(target_tail_pos, threshold_us);
+                            if snapped != target_tail_pos {
+                                target_tail_pos = snapped;
+                                guide_x = Some(timeline_x_start + (snapped as f32 / 1_000_000.0) * ed.zoom_px_per_sec);
+                            }
+                        }
+                        *current_delta_us = (target_tail_pos - (*initial_position_us + *initial_duration_us)).max(min_delta);
+                        *snapped_guide_x = guide_x;
+                    }
+                    TimelineDragGesture::None => {}
+                }
+            }
+
+            // 3. Gesture Completion / Release
+            if (response.drag_stopped() || (!response.dragged() && ed.drag_gesture != TimelineDragGesture::None))
+                && ed.drag_gesture != TimelineDragGesture::ScrubPlayhead
+            {
+                match ed.drag_gesture {
+                    TimelineDragGesture::MoveClip {
+                        clip_id,
+                        source_track_id,
+                        target_track_id,
+                        initial_position_us,
+                        clip_duration_us: _,
+                        drag_start_pointer_x: _,
+                        drag_start_pointer_y: _,
+                        current_delta_us: _,
+                        snapped_time_us,
+                        snapped_guide_x: _,
+                    } => {
+                        if source_track_id == target_track_id {
+                            if snapped_time_us != initial_position_us {
+                                let cmd = rd_core::Command::MoveClip {
+                                    track_id: source_track_id,
+                                    clip_id,
+                                    old_position_us: initial_position_us,
+                                    new_position_us: snapped_time_us,
+                                };
+                                let _ = ed.execute_command(cmd);
+                                ed.status_message = Some((
+                                    format!("Moved Clip -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
+                                    Instant::now(),
+                                ));
+                            }
+                        } else {
+                            let cmd = rd_core::Command::MoveClipTrack {
+                                source_track_id,
+                                target_track_id,
+                                clip_id,
+                                old_position_us: initial_position_us,
+                                new_position_us: snapped_time_us,
+                            };
+                            let _ = ed.execute_command(cmd);
+                            ed.selected_track = Some(target_track_id);
+                            ed.status_message = Some((
+                                format!("Moved Clip between Tracks -> {}", format_smpte(snapped_time_us, ed.project.frame_rate.as_f64())),
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                    TimelineDragGesture::TrimHead {
+                        clip_id,
+                        track_id,
+                        initial_position_us,
+                        initial_duration_us: _,
+                        initial_trim_in_us,
+                        drag_start_pointer_x: _,
+                        current_delta_us,
+                        snapped_guide_x: _,
+                        is_ripple,
+                    } => {
+                        if current_delta_us != 0 {
+                            if is_ripple {
+                                let cmd = rd_core::Command::RippleTrimIn {
+                                    track_id,
+                                    clip_id,
+                                    delta_us: current_delta_us,
+                                };
+                                let _ = ed.execute_command(cmd);
+                                ed.status_message = Some((
+                                    format!("Ripple Trimmed In ({:+} frames)", current_delta_us / frame_dur_us),
+                                    Instant::now(),
+                                ));
+                            } else {
+                                let cmd = rd_core::Command::TrimIn {
+                                    track_id,
+                                    clip_id,
+                                    old_source_in_us: initial_trim_in_us,
+                                    new_source_in_us: initial_trim_in_us + current_delta_us,
+                                    old_position_us: initial_position_us,
+                                    new_position_us: initial_position_us + current_delta_us,
+                                };
+                                let _ = ed.execute_command(cmd);
+                                ed.status_message = Some((
+                                    format!("Trimmed In-Point ({:+} frames)", current_delta_us / frame_dur_us),
+                                    Instant::now(),
+                                ));
+                            }
+                        }
+                    }
+                    TimelineDragGesture::TrimTail {
+                        clip_id,
+                        track_id,
+                        initial_position_us,
+                        initial_duration_us,
+                        drag_start_pointer_x: _,
+                        current_delta_us,
+                        snapped_guide_x: _,
+                        is_ripple,
+                    } => {
+                        if current_delta_us != 0 {
+                            if is_ripple {
+                                let cmd = rd_core::Command::RippleTrimOut {
+                                    track_id,
+                                    clip_id,
+                                    delta_us: current_delta_us,
+                                };
+                                let _ = ed.execute_command(cmd);
+                                ed.status_message = Some((
+                                    format!("Ripple Trimmed Out ({:+} frames)", current_delta_us / frame_dur_us),
+                                    Instant::now(),
+                                ));
+                            } else {
+                                let cmd = rd_core::Command::TrimOut {
+                                    track_id,
+                                    clip_id,
+                                    old_source_out_us: initial_position_us + initial_duration_us,
+                                    new_source_out_us: initial_position_us + initial_duration_us + current_delta_us,
+                                };
+                                let _ = ed.execute_command(cmd);
+                                ed.status_message = Some((
+                                    format!("Trimmed Out-Point ({:+} frames)", current_delta_us / frame_dur_us),
+                                    Instant::now(),
+                                ));
+                            }
+                        }
+                    }
+                    TimelineDragGesture::None | TimelineDragGesture::ScrubPlayhead => {}
+                }
+                ed.drag_gesture = TimelineDragGesture::None;
+            } else if response.drag_stopped() {
+                ed.drag_gesture = TimelineDragGesture::None;
+            }
 
             enum PendingClipOp {
                 Select(ClipId, TrackId),
@@ -4068,6 +4917,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 Slide(ClipId, TrackId),
             }
 
+            // Draw Track Lanes and Clips
             let mut pending_clip_op = None;
             let mut clicked_track = None;
             let mut toggled_mute_track = None;
@@ -4075,6 +4925,12 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
             let mut toggled_lock_track = None;
 
             for track in ed.project.timeline.tracks() {
+                let y = track_positions
+                    .iter()
+                    .find(|(tid, _)| *tid == track.id)
+                    .map(|(_, ty)| *ty)
+                    .unwrap_or(rect.top() + ruler_height + 4.0);
+
                 // Header lane
                 let header_rect = egui::Rect::from_min_size(
                     egui::pos2(rect.left(), y),
@@ -4174,7 +5030,7 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 );
 
                 if response.clicked()
-                    && let Some(pos) = response.interact_pointer_pos()
+                    && let Some(pos) = interact_pos
                 {
                     if mute_rect.contains(pos) {
                         toggled_mute_track = Some(track.id);
@@ -4211,8 +5067,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         egui::vec2(clip_w, track_lane_height - 4.0),
                     );
 
+                    let is_missing = ed.missing_media.iter().any(|m| m.clip_id == clip.id);
                     let is_selected = ed.selected_clip == Some(clip.id);
-                    let (clip_color, top_accent) = if is_selected {
+                    let (clip_color, top_accent) = if is_missing {
+                        (
+                            egui::Color32::from_rgb(60, 24, 20),
+                            egui::Color32::from_rgb(239, 68, 68),
+                        )
+                    } else if is_selected {
                         (
                             egui::Color32::from_rgb(37, 99, 235),
                             egui::Color32::from_rgb(96, 165, 250),
@@ -4246,7 +5108,14 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     );
                     painter.rect_filled(accent_rect, 0.0, top_accent);
 
-                    if is_selected {
+                    if is_missing {
+                        painter.rect_stroke(
+                            clip_rect,
+                            2.0,
+                            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(239, 68, 68)),
+                            egui::StrokeKind::Inside,
+                        );
+                    } else if is_selected {
                         painter.rect_stroke(
                             clip_rect,
                             2.0,
@@ -4255,19 +5124,84 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         );
                     }
 
+                    // Genuine Visual Trim Handle Brackets on edges when selected or hovered
+                    let is_clip_hovered = hover_pos.is_some_and(|hp| clip_rect.contains(hp));
+                    if is_selected || is_clip_hovered {
+                        let bracket_color = if is_selected {
+                            egui::Color32::from_rgb(147, 197, 253)
+                        } else {
+                            egui::Color32::from_rgb(180, 190, 210)
+                        };
+                        // Head Handle Bracket [
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.left() + 2.0, clip_rect.top() + 4.0),
+                                egui::pos2(clip_rect.left() + 2.0, clip_rect.bottom() - 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.left() + 2.0, clip_rect.top() + 4.0),
+                                egui::pos2(clip_rect.left() + 6.0, clip_rect.top() + 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.left() + 2.0, clip_rect.bottom() - 4.0),
+                                egui::pos2(clip_rect.left() + 6.0, clip_rect.bottom() - 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+
+                        // Tail Handle Bracket ]
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.right() - 2.0, clip_rect.top() + 4.0),
+                                egui::pos2(clip_rect.right() - 2.0, clip_rect.bottom() - 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.right() - 2.0, clip_rect.top() + 4.0),
+                                egui::pos2(clip_rect.right() - 6.0, clip_rect.top() + 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+                        painter.line_segment(
+                            [
+                                egui::pos2(clip_rect.right() - 2.0, clip_rect.bottom() - 4.0),
+                                egui::pos2(clip_rect.right() - 6.0, clip_rect.bottom() - 4.0),
+                            ],
+                            egui::Stroke::new(2.0_f32, bracket_color),
+                        );
+                    }
+
                     // Clip duration label formatted in SMPTE or seconds
-                    let label = format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64());
+                    let dur_smpte = format_smpte(clip.duration_us(), ed.project.frame_rate.as_f64());
+                    let label = if is_missing {
+                        format!("⚠️ OFFLINE | {}", dur_smpte)
+                    } else {
+                        dur_smpte
+                    };
                     painter.text(
-                        egui::pos2(clip_start_x + 6.0, y + track_lane_height / 2.0),
+                        egui::pos2(clip_start_x + 8.0, y + track_lane_height / 2.0),
                         egui::Align2::LEFT_CENTER,
                         label,
                         egui::FontId::monospace(10.0),
-                        egui::Color32::from_rgb(220, 225, 235),
+                        if is_missing {
+                            egui::Color32::from_rgb(252, 165, 165)
+                        } else {
+                            egui::Color32::from_rgb(220, 225, 235)
+                        },
                     );
 
-                    // Check click on clip based on active studio tool
+                    // Check single click on clip when not dragging
                     if response.clicked()
-                        && let Some(pos) = response.interact_pointer_pos()
+                        && ed.drag_gesture == TimelineDragGesture::None
+                        && let Some(pos) = interact_pos
                         && clip_rect.contains(pos)
                     {
                         let click_time_us = (clip.position_us as f64
@@ -4298,8 +5232,195 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                         }
                     }
                 }
+            }
 
-                y += track_lane_height + 4.0;
+            // 4. Render Active Drag Feedback (Ghost Box, Trim Indicators & Floating HUD)
+            match ed.drag_gesture {
+                TimelineDragGesture::MoveClip {
+                    clip_id: _,
+                    source_track_id: _,
+                    target_track_id,
+                    initial_position_us: _,
+                    clip_duration_us,
+                    drag_start_pointer_x: _,
+                    drag_start_pointer_y: _,
+                    current_delta_us,
+                    snapped_time_us,
+                    snapped_guide_x,
+                } => {
+                    let target_y = track_positions
+                        .iter()
+                        .find(|(tid, _)| *tid == target_track_id)
+                        .map(|(_, ty)| *ty)
+                        .unwrap_or(rect.top() + ruler_height + 4.0);
+
+                    let ghost_x = timeline_x_start + (snapped_time_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                    let ghost_w = ((clip_duration_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec).max(6.0);
+                    let ghost_rect = egui::Rect::from_min_size(
+                        egui::pos2(ghost_x, target_y + 2.0),
+                        egui::vec2(ghost_w, track_lane_height - 4.0),
+                    );
+
+                    painter.rect_filled(
+                        ghost_rect,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(59, 130, 246, 85),
+                    );
+                    painter.rect_stroke(
+                        ghost_rect,
+                        2.0,
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(147, 197, 253)),
+                        egui::StrokeKind::Inside,
+                    );
+
+                    let delta_f = current_delta_us / frame_dur_us;
+                    painter.text(
+                        ghost_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("Δ {:+} frames", delta_f),
+                        egui::FontId::monospace(10.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    // Floating cursor HUD
+                    if let Some(pos) = interact_pos {
+                        let hud_text = format!(
+                            "Move: {} (Δ {:+}f)",
+                            format_smpte(snapped_time_us, ed.project.frame_rate.as_f64()),
+                            delta_f
+                        );
+                        painter.text(
+                            pos + egui::vec2(14.0, -14.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            hud_text,
+                            egui::FontId::monospace(11.0),
+                            egui::Color32::from_rgb(250, 204, 21),
+                        );
+                    }
+
+                    if let Some(gx) = snapped_guide_x {
+                        painter.line_segment(
+                            [egui::pos2(gx, rect.top()), egui::pos2(gx, rect.bottom())],
+                            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(56, 189, 248)),
+                        );
+                    }
+                }
+                TimelineDragGesture::TrimHead {
+                    clip_id: _,
+                    track_id,
+                    initial_position_us,
+                    initial_duration_us,
+                    initial_trim_in_us: _,
+                    drag_start_pointer_x: _,
+                    current_delta_us,
+                    snapped_guide_x,
+                    is_ripple,
+                } => {
+                    let track_y = track_positions
+                        .iter()
+                        .find(|(tid, _)| *tid == track_id)
+                        .map(|(_, ty)| *ty)
+                        .unwrap_or(rect.top() + ruler_height + 4.0);
+
+                    let ghost_head_x = timeline_x_start
+                        + ((initial_position_us + current_delta_us) as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                    let new_dur = initial_duration_us - current_delta_us;
+                    let ghost_w = ((new_dur as f32 / 1_000_000.0) * ed.zoom_px_per_sec).max(6.0);
+                    let ghost_rect = egui::Rect::from_min_size(
+                        egui::pos2(ghost_head_x, track_y + 2.0),
+                        egui::vec2(ghost_w, track_lane_height - 4.0),
+                    );
+
+                    painter.rect_stroke(
+                        ghost_rect,
+                        2.0,
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(250, 204, 21)),
+                        egui::StrokeKind::Inside,
+                    );
+
+                    let delta_f = current_delta_us / frame_dur_us;
+                    if let Some(pos) = interact_pos {
+                        let title = if is_ripple { "Ripple Trim In" } else { "Trim In" };
+                        let hud_text = format!(
+                            "{}: {} (Δ {:+}f)",
+                            title,
+                            format_smpte(new_dur, ed.project.frame_rate.as_f64()),
+                            delta_f
+                        );
+                        painter.text(
+                            pos + egui::vec2(14.0, -14.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            hud_text,
+                            egui::FontId::monospace(11.0),
+                            egui::Color32::from_rgb(250, 204, 21),
+                        );
+                    }
+
+                    if let Some(gx) = snapped_guide_x {
+                        painter.line_segment(
+                            [egui::pos2(gx, rect.top()), egui::pos2(gx, rect.bottom())],
+                            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(56, 189, 248)),
+                        );
+                    }
+                }
+                TimelineDragGesture::TrimTail {
+                    clip_id: _,
+                    track_id,
+                    initial_position_us,
+                    initial_duration_us,
+                    drag_start_pointer_x: _,
+                    current_delta_us,
+                    snapped_guide_x,
+                    is_ripple,
+                } => {
+                    let track_y = track_positions
+                        .iter()
+                        .find(|(tid, _)| *tid == track_id)
+                        .map(|(_, ty)| *ty)
+                        .unwrap_or(rect.top() + ruler_height + 4.0);
+
+                    let ghost_head_x = timeline_x_start
+                        + (initial_position_us as f32 / 1_000_000.0) * ed.zoom_px_per_sec;
+                    let new_dur = initial_duration_us + current_delta_us;
+                    let ghost_w = ((new_dur as f32 / 1_000_000.0) * ed.zoom_px_per_sec).max(6.0);
+                    let ghost_rect = egui::Rect::from_min_size(
+                        egui::pos2(ghost_head_x, track_y + 2.0),
+                        egui::vec2(ghost_w, track_lane_height - 4.0),
+                    );
+
+                    painter.rect_stroke(
+                        ghost_rect,
+                        2.0,
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(250, 204, 21)),
+                        egui::StrokeKind::Inside,
+                    );
+
+                    let delta_f = current_delta_us / frame_dur_us;
+                    if let Some(pos) = interact_pos {
+                        let title = if is_ripple { "Ripple Trim Out" } else { "Trim Out" };
+                        let hud_text = format!(
+                            "{}: {} (Δ {:+}f)",
+                            title,
+                            format_smpte(new_dur, ed.project.frame_rate.as_f64()),
+                            delta_f
+                        );
+                        painter.text(
+                            pos + egui::vec2(14.0, -14.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            hud_text,
+                            egui::FontId::monospace(11.0),
+                            egui::Color32::from_rgb(250, 204, 21),
+                        );
+                    }
+
+                    if let Some(gx) = snapped_guide_x {
+                        painter.line_segment(
+                            [egui::pos2(gx, rect.top()), egui::pos2(gx, rect.bottom())],
+                            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(56, 189, 248)),
+                        );
+                    }
+                }
+                TimelineDragGesture::None | TimelineDragGesture::ScrubPlayhead => {}
             }
 
             if let Some(tid) = toggled_mute_track
@@ -4308,6 +5429,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                 t.enabled = !t.enabled;
                 let st = if t.enabled { "Unmuted" } else { "Muted" };
                 ed.status_message = Some((format!("{} {}", t.name, st), Instant::now()));
+                ed.sync_audio_timeline();
+                ed.needs_monitor_update = true;
             }
             if let Some(tid) = toggled_solo_track {
                 if ed.solo_track == Some(tid) {
@@ -4317,6 +5440,8 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                     ed.solo_track = Some(tid);
                     ed.status_message = Some(("Track solo activated".into(), Instant::now()));
                 }
+                ed.sync_audio_timeline();
+                ed.needs_monitor_update = true;
             }
             if let Some(tid) = toggled_lock_track
                 && let Some(t) = ed.project.timeline.track_mut(tid)
@@ -4676,8 +5801,11 @@ fn build_editor_ui(ctx: &egui::Context, ed: &mut EditorData) {
                             {
                                 let grade = rd_export::ColorGradeSettings {
                                     exposure: ed.color_exposure,
-                                    contrast: ed.color_contrast,
+                                    contrast: 1.0 + ed.color_contrast,
                                     saturation: ed.color_saturation,
+                                    temperature: ed.color_temperature,
+                                    tint: ed.color_tint,
+                                    lut_idx: ed.color_lut_idx,
                                 };
                                 ed.active_export = Some(rd_export::start_export_project(
                                     ed.project.clone(),
@@ -4931,4 +6059,193 @@ pub fn run_with_project(initial_project: Option<PathBuf>) -> Result<()> {
 /// Run the application event loop with default project.
 pub fn run() -> Result<()> {
     run_with_project(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rd_core::{Clip, ClipId, ClipKind, Command, TrackKind, VideoClip};
+
+    fn make_test_clip(position_us: i64) -> Clip {
+        Clip {
+            id: ClipId::new(),
+            kind: ClipKind::Video(VideoClip {
+                source_path: "assets/sample_project/footage/shot_01.mp4".into(),
+                proxy_path: None,
+                has_audio: true,
+            }),
+            position_us,
+            source_in_us: 0,
+            source_out_us: 2_000_000,
+            speed: 1.0,
+            opacity: 1.0,
+            transform: rd_core::clip::Transform2D::default(),
+            effects: Vec::new(),
+            volume: 1.0,
+            pan: 0.0,
+            keyframes: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_editor_initialization_and_color_grading_defaults() {
+        let ed = EditorData::new();
+        assert_eq!(ed.color_exposure, 0.0);
+        assert_eq!(ed.color_contrast, 0.0);
+        assert_eq!(ed.color_saturation, 1.0);
+        assert_eq!(ed.color_temperature, 0.0);
+        assert_eq!(ed.color_tint, 0.0);
+        assert_eq!(ed.color_lut_idx, 0);
+        assert_eq!(ed.drag_gesture, TimelineDragGesture::None);
+        assert!(ed.snapping_enabled);
+    }
+
+    #[test]
+    fn test_editor_command_execution_and_undo_redo() {
+        let mut ed = EditorData::new();
+        let track_id = ed.project.timeline.tracks()[0].id;
+        let initial_count = ed.project.timeline.track(track_id).unwrap().clips().len();
+
+        let clip = make_test_clip(100_000_000);
+        let clip_id = clip.id;
+
+        // Execute AddClip
+        assert!(
+            ed.execute_command(Command::AddClip {
+                track_id,
+                clip: clip.clone(),
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            ed.project.timeline.track(track_id).unwrap().clips().len(),
+            initial_count + 1
+        );
+
+        // Execute MoveClip
+        assert!(
+            ed.execute_command(Command::MoveClip {
+                track_id,
+                clip_id,
+                old_position_us: 100_000_000,
+                new_position_us: 105_000_000,
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            ed.project
+                .timeline
+                .track(track_id)
+                .unwrap()
+                .clip(clip_id)
+                .unwrap()
+                .position_us,
+            105_000_000
+        );
+
+        // Undo MoveClip
+        assert!(ed.history.can_undo());
+        let _ = ed.history.undo(&mut ed.project);
+        assert_eq!(
+            ed.project
+                .timeline
+                .track(track_id)
+                .unwrap()
+                .clip(clip_id)
+                .unwrap()
+                .position_us,
+            100_000_000
+        );
+
+        // Undo AddClip
+        let _ = ed.history.undo(&mut ed.project);
+        assert_eq!(
+            ed.project.timeline.track(track_id).unwrap().clips().len(),
+            initial_count
+        );
+
+        // Redo AddClip
+        assert!(ed.history.can_redo());
+        let _ = ed.history.redo(&mut ed.project);
+        assert_eq!(
+            ed.project.timeline.track(track_id).unwrap().clips().len(),
+            initial_count + 1
+        );
+    }
+
+    #[test]
+    fn test_editor_cross_track_movement_command() {
+        let mut ed = EditorData::new();
+        let t1_id = ed.project.timeline.tracks()[0].id;
+        let initial_count_t1 = ed.project.timeline.track(t1_id).unwrap().clips().len();
+        let t2_id = ed.project.timeline.add_track(TrackKind::Video, "V2");
+
+        let clip = make_test_clip(100_000_000);
+        let clip_id = clip.id;
+
+        assert!(
+            ed.execute_command(Command::AddClip {
+                track_id: t1_id,
+                clip
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            ed.project.timeline.track(t1_id).unwrap().clips().len(),
+            initial_count_t1 + 1
+        );
+        assert_eq!(ed.project.timeline.track(t2_id).unwrap().clips().len(), 0);
+
+        // Move clip across tracks from V1 to V2
+        assert!(
+            ed.execute_command(Command::MoveClipTrack {
+                source_track_id: t1_id,
+                target_track_id: t2_id,
+                clip_id,
+                old_position_us: 100_000_000,
+                new_position_us: 105_000_000,
+            })
+            .is_ok()
+        );
+
+        assert_eq!(
+            ed.project.timeline.track(t1_id).unwrap().clips().len(),
+            initial_count_t1
+        );
+        let t2 = ed.project.timeline.track(t2_id).unwrap();
+        assert_eq!(t2.clips().len(), 1);
+        assert_eq!(t2.clip(clip_id).unwrap().position_us, 105_000_000);
+
+        // Undo cross-track move
+        let _ = ed.history.undo(&mut ed.project);
+        assert_eq!(
+            ed.project.timeline.track(t1_id).unwrap().clips().len(),
+            initial_count_t1 + 1
+        );
+        assert_eq!(ed.project.timeline.track(t2_id).unwrap().clips().len(), 0);
+    }
+
+    #[test]
+    fn test_nle_keyboard_frame_step_math() {
+        let fps = 30.0_f64;
+        let frame_step_us = (1_000_000.0_f64 / fps).round() as i64;
+        let second_step_us = 1_000_000i64;
+
+        assert_eq!(frame_step_us, 33_333);
+        assert_eq!(second_step_us, 1_000_000);
+
+        // 1 frame advance
+        let mut playhead = 0i64;
+        playhead += frame_step_us;
+        assert_eq!(playhead, 33_333);
+
+        // 1 second advance (Shift+Right)
+        playhead += second_step_us;
+        assert_eq!(playhead, 1_033_333);
+
+        // Clamp to 0
+        playhead -= 2_000_000;
+        let clamped = playhead.max(0);
+        assert_eq!(clamped, 0);
+    }
 }

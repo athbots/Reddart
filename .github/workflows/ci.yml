@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, develop, "integration/*", "feat/*"]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,31 +27,36 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy (Workspace & All Targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Build release binary
-        run: cargo build --release -p reddart-windows
+      - name: Build locked release binary
+        run: cargo build --release --locked -p reddart-windows
 
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+  test-windows:
+    name: Windows App & Integration Suite
+    runs-on: windows-latest
+    needs: check
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Linux audio and media dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg
+      - name: Install FFmpeg on Windows
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify FFmpeg availability
+        shell: pwsh
+        run: |
+          ffmpeg -version
+          ffprobe -version
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -60,12 +65,47 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run Windows Workspace Tests
-        if: runner.os == 'Windows'
-        run: cargo test --workspace
+      - name: Run Windows Workspace Tests (Enforced FFmpeg)
+        env:
+          CI: "true"
+          REDDART_REQUIRE_FFMPEG: "1"
+        run: cargo test --workspace -- --nocapture
 
-      - name: Run Linux/macOS Core Engine Tests
-        if: runner.os != 'Windows'
-        run: cargo test --workspace --exclude reddart-windows
+      - name: Verify Package & Bit-for-Bit Reproducibility
+        shell: pwsh
+        run: |
+          ./scripts/package_windows.ps1 -VerifyReproducibility
+
+  test-cross-platform:
+    name: Core Engine (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux audio and media dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config ffmpeg
+
+      - name: Install macOS media dependencies
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-cross-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Core Engine Tests
+        run: cargo test --workspace --exclude reddart-windows -- --nocapture

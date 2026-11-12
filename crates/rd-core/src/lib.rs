@@ -21,10 +21,10 @@ pub mod track;
 pub use clip::{
     AudioClip, Clip, ClipEffect, ClipId, ClipKind, TextClip, Transform2D, Vec2, VideoClip,
 };
-pub use command::{Command, CommandHistory};
+pub use command::{Command, CommandError, CommandHistory};
 pub use journal::{JournalEntry, JournalMutation, ProjectJournal, ReplayReport, crc32_checksum};
 pub use keyframe::{Easing, Keyframe, KeyframeTrack};
-pub use project::Project;
+pub use project::{MissingMediaItem, Project};
 pub use timeline::{Timeline, TimelineMarker};
 pub use track::{Track, TrackId, TrackKind};
 

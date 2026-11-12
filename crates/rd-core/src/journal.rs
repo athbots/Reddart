@@ -68,6 +68,12 @@ pub enum JournalMutation {
         clip_id: ClipId,
         new_position_us: i64,
     },
+    MoveClipTrack {
+        source_track_id: TrackId,
+        target_track_id: TrackId,
+        clip_id: ClipId,
+        new_position_us: i64,
+    },
     SplitClip {
         track_id: TrackId,
         clip_id: ClipId,
@@ -134,6 +140,10 @@ pub enum JournalMutation {
         clip_id: ClipId,
         new_opacity: f32,
     },
+    RelinkMedia {
+        old_path: String,
+        new_path: String,
+    },
     Checkpoint {
         sequence: u64,
         snapshot_time_ms: i64,
@@ -153,6 +163,9 @@ impl JournalMutation {
                 Ok(())
             }
             JournalMutation::RemoveTrack { id } => {
+                if project.timeline.track(*id).is_none() {
+                    return Err("Track not found");
+                }
                 project.timeline.remove_track(*id);
                 project.touch();
                 Ok(())
@@ -162,6 +175,9 @@ impl JournalMutation {
                     .timeline
                     .track_mut(*track_id)
                     .ok_or("Track not found")?;
+                if track.clip(clip.id).is_some() {
+                    return Err("Clip with this ID already exists on track");
+                }
                 track.add_clip(clip.clone());
                 project.touch();
                 Ok(())
@@ -171,7 +187,9 @@ impl JournalMutation {
                     .timeline
                     .track_mut(*track_id)
                     .ok_or("Track not found")?;
-                track.remove_clip(*clip_id);
+                track
+                    .remove_clip(*clip_id)
+                    .ok_or("Clip not found on track")?;
                 project.touch();
                 Ok(())
             }
@@ -188,6 +206,29 @@ impl JournalMutation {
                 clip.position_us = *new_position_us;
                 project.touch();
                 Ok(())
+            }
+            JournalMutation::MoveClipTrack {
+                source_track_id,
+                target_track_id,
+                clip_id,
+                new_position_us,
+            } => {
+                let clip_opt = project
+                    .timeline
+                    .track_mut(*source_track_id)
+                    .and_then(|t| t.remove_clip(*clip_id));
+                if let Some(mut clip) = clip_opt {
+                    clip.position_us = *new_position_us;
+                    let target_track = project
+                        .timeline
+                        .track_mut(*target_track_id)
+                        .ok_or("Target track not found")?;
+                    target_track.add_clip(clip);
+                    project.touch();
+                    Ok(())
+                } else {
+                    Err("Clip or source track not found")
+                }
             }
             JournalMutation::SplitClip {
                 track_id,
@@ -279,6 +320,9 @@ impl JournalMutation {
                     .timeline
                     .track_mut(*track_id)
                     .ok_or("Track not found")?;
+                if track.clip(*clip_id).is_none() {
+                    return Err("Clip not found for ripple delete");
+                }
                 track.ripple_delete(*clip_id);
                 project.touch();
                 Ok(())
@@ -298,6 +342,9 @@ impl JournalMutation {
                 name,
                 color_rgb,
             } => {
+                if project.timeline.markers.iter().any(|m| m.id == *id) {
+                    return Err("Marker with this ID already exists");
+                }
                 project.timeline.markers.push(TimelineMarker {
                     id: *id,
                     time_us: *time_us,
@@ -308,7 +355,11 @@ impl JournalMutation {
                 Ok(())
             }
             JournalMutation::RemoveMarker { id } => {
+                let initial_len = project.timeline.markers.len();
                 project.timeline.remove_marker(*id);
+                if project.timeline.markers.len() == initial_len {
+                    return Err("Marker not found to remove");
+                }
                 project.touch();
                 Ok(())
             }
@@ -341,6 +392,9 @@ impl JournalMutation {
                 clip_id,
                 new_speed,
             } => {
+                if *new_speed <= 0.0 || !new_speed.is_finite() {
+                    return Err("Invalid clip speed");
+                }
                 let track = project
                     .timeline
                     .track_mut(*track_id)
@@ -355,12 +409,20 @@ impl JournalMutation {
                 clip_id,
                 new_opacity,
             } => {
+                if *new_opacity < 0.0 || *new_opacity > 1.0 || !new_opacity.is_finite() {
+                    return Err("Invalid clip opacity");
+                }
                 let track = project
                     .timeline
                     .track_mut(*track_id)
                     .ok_or("Track not found")?;
                 let clip = track.clip_mut(*clip_id).ok_or("Clip not found")?;
                 clip.opacity = *new_opacity;
+                project.touch();
+                Ok(())
+            }
+            JournalMutation::RelinkMedia { old_path, new_path } => {
+                project.relink_media(old_path, new_path);
                 project.touch();
                 Ok(())
             }
@@ -417,6 +479,8 @@ impl JournalEntry {
 pub struct ReplayReport {
     pub total_records_scanned: usize,
     pub valid_records_replayed: usize,
+    pub failed_mutations: usize,
+    pub corrupt_records_detected: usize,
     pub torn_tail_bytes_truncated: usize,
     pub last_seq: u64,
 }
@@ -483,7 +547,8 @@ impl ProjectJournal {
         Ok(entry)
     }
 
-    /// Replay uncommitted journal entries into a project with torn-tail fault tolerance.
+    /// Replay uncommitted journal entries into a project with strict sequence continuity,
+    /// CRC32 integrity validation, and torn-tail fault tolerance.
     pub fn replay_into(&mut self, project: &mut Project) -> std::io::Result<ReplayReport> {
         if !self.wal_path.exists() {
             return Ok(ReplayReport::default());
@@ -498,6 +563,7 @@ impl ProjectJournal {
         let mut last_valid_offset = 0u64;
         let mut reader = BufReader::new(&mut file);
         let mut buffer = String::new();
+        let mut expected_seq: Option<u64> = None;
 
         loop {
             let start_offset = last_valid_offset;
@@ -516,20 +582,76 @@ impl ProjectJournal {
             report.total_records_scanned += 1;
 
             match serde_json::from_str::<JournalEntry>(trimmed) {
-                Ok(entry) if entry.verify_checksum() => {
-                    let _ = entry.mutation.apply(project);
-                    report.valid_records_replayed += 1;
-                    report.last_seq = entry.seq;
-                    self.current_seq = self.current_seq.max(entry.seq);
-                    last_valid_offset += bytes_read as u64;
+                Ok(entry) => {
+                    // 1. Verify CRC32 checksum
+                    if !entry.verify_checksum() {
+                        log::warn!(
+                            "Project WAL recovery detected corrupted checksum at offset {}. Truncating tail.",
+                            start_offset
+                        );
+                        report.corrupt_records_detected += 1;
+                        let total_len = file.metadata()?.len();
+                        report.torn_tail_bytes_truncated = (total_len - start_offset) as usize;
+                        file.set_len(start_offset)?;
+                        file.seek(SeekFrom::Start(start_offset))?;
+                        file.flush()?;
+                        file.sync_all()?;
+                        break;
+                    }
+
+                    // 2. Verify sequence continuity (strictly monotonic without regressions or unexpected gaps)
+                    if let Some(exp) = expected_seq {
+                        if entry.seq != exp {
+                            log::warn!(
+                                "Project WAL sequence discontinuity at byte offset {}: expected seq {}, encountered {}. Halting replay to preserve valid project state.",
+                                start_offset,
+                                exp,
+                                entry.seq
+                            );
+                            report.corrupt_records_detected += 1;
+                            let total_len = file.metadata()?.len();
+                            report.torn_tail_bytes_truncated = (total_len - start_offset) as usize;
+                            file.set_len(start_offset)?;
+                            file.seek(SeekFrom::Start(start_offset))?;
+                            file.flush()?;
+                            file.sync_all()?;
+                            break;
+                        }
+                    }
+
+                    // 3. Apply mutation with transactional validation
+                    let is_checkpoint =
+                        matches!(entry.mutation, JournalMutation::Checkpoint { .. });
+                    match entry.mutation.apply(project) {
+                        Ok(()) => {
+                            if !is_checkpoint {
+                                report.valid_records_replayed += 1;
+                            }
+                            report.last_seq = entry.seq;
+                            self.current_seq = self.current_seq.max(entry.seq);
+                            expected_seq = Some(entry.seq + 1);
+                            last_valid_offset += bytes_read as u64;
+                        }
+                        Err(err) => {
+                            report.failed_mutations += 1;
+                            log::warn!(
+                                "Project WAL mutation at seq {} rejected by timeline: {}. Preserving project state.",
+                                entry.seq,
+                                err
+                            );
+                            expected_seq = Some(entry.seq + 1);
+                            last_valid_offset += bytes_read as u64;
+                        }
+                    }
                 }
-                _ => {
-                    // Encountered a corrupt or torn record (e.g. power lost mid-write).
-                    // Safe recovery policy: truncate the WAL at the last valid record offset.
+                Err(err) => {
+                    // Encountered a malformed or torn JSON record
                     log::warn!(
-                        "Project WAL recovery detected torn/corrupt record at byte offset {}. Truncating tail.",
-                        start_offset
+                        "Project WAL recovery detected torn/malformed record at byte offset {}: {}. Truncating tail.",
+                        start_offset,
+                        err
                     );
+                    report.corrupt_records_detected += 1;
                     let total_len = file.metadata()?.len();
                     report.torn_tail_bytes_truncated = (total_len - start_offset) as usize;
                     file.set_len(start_offset)?;
