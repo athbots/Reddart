@@ -367,9 +367,14 @@ impl Command {
                 Ok(())
             }
             Command::AddTrack {
-                kind, name, index, ..
+                track_id,
+                kind,
+                name,
+                index,
             } => {
-                project.timeline.insert_track(*index, *kind, name.clone());
+                project
+                    .timeline
+                    .insert_track_with_id(*track_id, *index, *kind, name.clone());
                 Ok(())
             }
             Command::RemoveTrack { track, .. } => {
@@ -888,6 +893,7 @@ impl CommandHistory {
 
     /// Execute a command and push it onto the undo stack.
     /// Clears the redo stack (forward history is lost).
+    #[must_use = "command execution result must be handled"]
     pub fn execute(&mut self, command: Command, project: &mut Project) -> Result<(), CommandError> {
         command.apply(project)?;
         self.undo_stack.push(command);
@@ -903,6 +909,7 @@ impl CommandHistory {
     }
 
     /// Undo the last command.
+    #[must_use = "undo result must be checked to confirm if a command was undone"]
     pub fn undo(&mut self, project: &mut Project) -> Result<bool, CommandError> {
         if let Some(command) = self.undo_stack.pop() {
             let inverse = command.inverse();
@@ -916,6 +923,7 @@ impl CommandHistory {
     }
 
     /// Redo the last undone command.
+    #[must_use = "redo result must be checked to confirm if a command was redone"]
     pub fn redo(&mut self, project: &mut Project) -> Result<bool, CommandError> {
         if let Some(command) = self.redo_stack.pop() {
             command.apply(project)?;
@@ -935,6 +943,7 @@ impl CommandHistory {
     /// 2. Corresponding mutations are appended and synced to the durable WAL journal.
     /// 3. If journal append fails, the in-memory mutation is rolled back via the inverse command,
     ///    no entry is pushed to the undo stack, and `Err(CommandError::JournalError)` is returned.
+    #[must_use = "execute_with_journal result must be handled to ensure WAL persistence"]
     pub fn execute_with_journal(
         &mut self,
         command: Command,
@@ -944,11 +953,13 @@ impl CommandHistory {
         command.apply(project)?;
 
         let mutations = command.to_mutations();
-        if let Err(e) = journal.append_batch(&mutations) {
-            // WAL failed: Roll back in-memory application so project state is preserved
-            let _ = command.inverse().apply(project);
-            log::error!("WAL append failed during execute_with_journal: {}", e);
-            return Err(CommandError::JournalError(e));
+        for mutation in &mutations {
+            if let Err(e) = journal.append(mutation.clone()) {
+                // WAL failed: Roll back in-memory application so project state is preserved
+                let _ = command.inverse().apply(project);
+                log::error!("WAL append failed during execute_with_journal: {}", e);
+                return Err(CommandError::JournalError(e));
+            }
         }
 
         self.undo_stack.push(command);
@@ -967,6 +978,7 @@ impl CommandHistory {
     /// Transaction semantics:
     /// If journal persistence fails, the in-memory undo is rolled back by reapplying the command,
     /// the command remains on the undo stack, and `Err(CommandError::JournalError)` is returned.
+    #[must_use = "undo_with_journal result must be handled to ensure WAL persistence"]
     pub fn undo_with_journal(
         &mut self,
         project: &mut Project,
@@ -979,13 +991,14 @@ impl CommandHistory {
                 return Err(e);
             }
 
-            let mutations = inverse.to_mutations();
-            if let Err(e) = journal.append_batch(&mutations) {
-                // Roll back in-memory inverse by reapplying original command
-                let _ = command.apply(project);
-                self.undo_stack.push(command);
-                log::error!("WAL append failed during undo_with_journal: {}", e);
-                return Err(CommandError::JournalError(e));
+            for mutation in inverse.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back in-memory inverse by reapplying original command
+                    let _ = command.apply(project);
+                    self.undo_stack.push(command);
+                    log::error!("WAL append failed during undo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
             }
 
             self.redo_stack.push(command);
@@ -1001,6 +1014,7 @@ impl CommandHistory {
     /// Transaction semantics:
     /// If journal persistence fails, the in-memory redo is rolled back by applying the inverse,
     /// the command remains on the redo stack, and `Err(CommandError::JournalError)` is returned.
+    #[must_use = "redo_with_journal result must be handled to ensure WAL persistence"]
     pub fn redo_with_journal(
         &mut self,
         project: &mut Project,
@@ -1012,13 +1026,14 @@ impl CommandHistory {
                 return Err(e);
             }
 
-            let mutations = command.to_mutations();
-            if let Err(e) = journal.append_batch(&mutations) {
-                // Roll back by applying inverse
-                let _ = command.inverse().apply(project);
-                self.redo_stack.push(command);
-                log::error!("WAL append failed during redo_with_journal: {}", e);
-                return Err(CommandError::JournalError(e));
+            for mutation in command.to_mutations() {
+                if let Err(e) = journal.append(mutation) {
+                    // Roll back by applying inverse
+                    let _ = command.inverse().apply(project);
+                    self.redo_stack.push(command);
+                    log::error!("WAL append failed during redo_with_journal: {}", e);
+                    return Err(CommandError::JournalError(e));
+                }
             }
 
             self.undo_stack.push(command);

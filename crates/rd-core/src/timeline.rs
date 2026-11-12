@@ -131,6 +131,21 @@ impl Timeline {
         id
     }
 
+    /// Insert a track with an explicit ID at a specific index.
+    pub fn insert_track_with_id(
+        &mut self,
+        id: TrackId,
+        index: usize,
+        kind: TrackKind,
+        name: impl Into<String>,
+    ) {
+        if id.0 >= self.next_track_id {
+            self.next_track_id = id.0 + 1;
+        }
+        let index = index.min(self.tracks.len());
+        self.tracks.insert(index, Track::new(id, kind, name));
+    }
+
     /// Remove a track by ID. Returns the removed track if found.
     pub fn remove_track(&mut self, id: TrackId) -> Option<Track> {
         if let Some(pos) = self.tracks.iter().position(|t| t.id == id) {
