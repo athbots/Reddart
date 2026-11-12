@@ -245,6 +245,64 @@ impl Compositor {
         })
     }
 
+    /// Attempt to initialize a headless GPU Compositor.
+    ///
+    /// Probes for a high-performance GPU adapter first, falling back to a software adapter
+    /// if available, ensuring headless test and benchmark execution.
+    pub async fn create_headless(
+        target_format: wgpu::TextureFormat,
+        cache_bytes: usize,
+    ) -> Result<Self> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+        {
+            Some(a) => a,
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::None,
+                    force_fallback_adapter: true,
+                    compatible_surface: None,
+                })
+                .await
+                .context("No available wgpu adapter (hardware or software fallback)")?,
+        };
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Headless Compositor Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
+            .await?;
+
+        Self::new(
+            Arc::new(device),
+            Arc::new(queue),
+            target_format,
+            cache_bytes,
+        )
+    }
+
+    /// Access the underlying wgpu device.
+    pub fn device(&self) -> &Arc<wgpu::Device> {
+        &self.device
+    }
+
+    /// Access the underlying wgpu queue.
+    pub fn queue(&self) -> &Arc<wgpu::Queue> {
+        &self.queue
+    }
+
     /// Create an intermediate render target texture.
     pub fn create_texture(
         &self,
@@ -449,5 +507,65 @@ impl Compositor {
         pass.set_pipeline(&self.blend_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    /// Execute a multi-layer composite pass across multiple GPU layer textures.
+    ///
+    /// Layers are provided in bottom-to-top order: `&[(&wgpu::TextureView, f32, u32)]` (texture_view, opacity, blend_mode).
+    /// Compositing starts with layer 0 as the base, ping-ponging subsequent blends between `ping_pong_view`
+    /// and `output_view` such that the final blended frame always lands in `output_view`.
+    pub fn render_multi_track(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        layers: &[(&wgpu::TextureView, f32, u32)],
+        ping_pong_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+    ) {
+        if layers.is_empty() {
+            return;
+        }
+
+        if layers.len() == 1 {
+            let (view, opacity, blend_mode) = layers[0];
+            self.render_blend(
+                encoder,
+                ping_pong_view,
+                view,
+                output_view,
+                opacity,
+                blend_mode,
+            );
+            return;
+        }
+
+        let total_blends = layers.len() - 1;
+        let first_target_is_output = total_blends % 2 == 1;
+
+        let mut current_base = layers[0].0;
+
+        for (idx, &(overlay_view, opacity, blend_mode)) in layers.iter().skip(1).enumerate() {
+            let target = if first_target_is_output {
+                if idx % 2 == 0 {
+                    output_view
+                } else {
+                    ping_pong_view
+                }
+            } else if idx % 2 == 0 {
+                ping_pong_view
+            } else {
+                output_view
+            };
+
+            self.render_blend(
+                encoder,
+                current_base,
+                overlay_view,
+                target,
+                opacity,
+                blend_mode,
+            );
+
+            current_base = target;
+        }
     }
 }
