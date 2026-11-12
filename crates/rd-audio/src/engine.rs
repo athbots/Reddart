@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::clock::AudioClock;
+use crate::eq::ParametricEqualizer;
 use crate::mixer::AudioMixer;
+use crate::spectrum::{AudioSampleRing, SpectrumAnalyzer};
 use crate::{CHANNELS, SAMPLE_RATE};
 use rd_core::TimestampUs;
 
@@ -104,6 +106,9 @@ pub struct AudioEngine {
     telemetry: Arc<AudioTelemetry>,
     is_playing: Arc<AtomicBool>,
     sample_rate: u32,
+    pub eq: Arc<Mutex<ParametricEqualizer>>,
+    sample_ring: Arc<Mutex<AudioSampleRing>>,
+    spectrum_analyzer: Arc<Mutex<SpectrumAnalyzer>>,
 }
 
 impl AudioEngine {
@@ -112,12 +117,21 @@ impl AudioEngine {
         let mixer = Arc::new(Mutex::new(AudioMixer::new(clock.clone())));
         let telemetry = AudioTelemetry::new();
         let is_playing = Arc::new(AtomicBool::new(false));
+        let actual_sample_rate = SAMPLE_RATE;
+        let eq = Arc::new(Mutex::new(ParametricEqualizer::new(
+            actual_sample_rate as f32,
+        )));
+        let sample_ring = Arc::new(Mutex::new(AudioSampleRing::new(4096)));
+        let spectrum_analyzer = Arc::new(Mutex::new(SpectrumAnalyzer::new(
+            1024,
+            actual_sample_rate as f32,
+            128,
+        )));
 
         let host = cpal::default_host();
         let device_opt = host.default_output_device();
 
         let mut stream_opt = None;
-        let actual_sample_rate = SAMPLE_RATE;
 
         if let Some(device) = device_opt {
             let device_name = device.name().unwrap_or_else(|_| "Unknown Device".into());
@@ -133,6 +147,8 @@ impl AudioEngine {
             let mixer_clone = mixer.clone();
             let telemetry_clone = telemetry.clone();
             let playing_clone = is_playing.clone();
+            let eq_clone = eq.clone();
+            let ring_clone = sample_ring.clone();
 
             let err_fn = |err| {
                 warn!("CPAL audio stream error: {:?}", err);
@@ -149,6 +165,16 @@ impl AudioEngine {
                         }
                     } else {
                         data.fill(0.0);
+                    }
+
+                    // Apply real-time parametric equalizer
+                    if let Ok(mut eq_proc) = eq_clone.try_lock() {
+                        eq_proc.process_interleaved(data);
+                    }
+
+                    // Push post-EQ audio samples to spectrum analyzer circular buffer
+                    if let Ok(mut ring) = ring_clone.try_lock() {
+                        ring.push_interleaved(data, 2);
                     }
 
                     // Compute true peak and RMS metrics per channel without allocation
@@ -234,6 +260,9 @@ impl AudioEngine {
             telemetry,
             is_playing,
             sample_rate: actual_sample_rate,
+            eq,
+            sample_ring,
+            spectrum_analyzer,
         })
     }
 
@@ -342,6 +371,59 @@ impl AudioEngine {
     /// Access reference to the master clock.
     pub fn clock(&self) -> Arc<AudioClock> {
         self.clock.clone()
+    }
+
+    /// Read real-time spectrum telemetry (31-band ISO dBFS and smooth 128-point log curve).
+    pub fn read_spectrum(&self, dt_s: f32) -> ([f32; 31], Vec<f32>) {
+        let mut ring_samples = [0.0f32; 1024];
+        if let Ok(ring) = self.sample_ring.lock() {
+            ring.read_latest(&mut ring_samples);
+        }
+        if let Ok(mut analyzer) = self.spectrum_analyzer.lock() {
+            analyzer.process_samples(&ring_samples, dt_s);
+            (*analyzer.bands(), analyzer.curve().to_vec())
+        } else {
+            ([-120.0; 31], vec![-120.0; 128])
+        }
+    }
+
+    /// Update a specific band of the parametric equalizer.
+    pub fn set_eq_band(&self, index: usize, freq_hz: f32, gain_db: f32, q: f32, enabled: bool) {
+        if let Ok(mut eq) = self.eq.lock() {
+            eq.set_band_params(index, freq_hz, gain_db, q, enabled);
+        }
+    }
+
+    /// Set master parametric EQ enabled/bypass state.
+    pub fn set_eq_enabled(&self, enabled: bool) {
+        if let Ok(mut eq) = self.eq.lock() {
+            eq.enabled = enabled;
+        }
+    }
+
+    /// Set master parametric EQ output trim in decibels.
+    pub fn set_eq_output_gain(&self, gain_db: f32) {
+        if let Ok(mut eq) = self.eq.lock() {
+            eq.output_gain_db = gain_db;
+        }
+    }
+
+    /// Retrieve the composite frequency response curve for the parametric equalizer across `num_points`.
+    pub fn get_eq_composite_curve(&self, num_points: usize) -> Vec<f32> {
+        if let Ok(eq) = self.eq.lock() {
+            eq.compute_composite_curve(num_points)
+        } else {
+            vec![0.0; num_points]
+        }
+    }
+
+    /// Get a clone of the parametric equalizer state for inspection or serialization.
+    pub fn get_eq(&self) -> ParametricEqualizer {
+        if let Ok(eq) = self.eq.lock() {
+            eq.clone()
+        } else {
+            ParametricEqualizer::new(self.sample_rate as f32)
+        }
     }
 }
 
