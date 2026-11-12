@@ -1,7 +1,7 @@
 # Reproducible Release Builds Protocol
 
-**Target Version:** Reddart v0.2.1+  
-**Target Platform:** Windows x86_64 (`x86_64-pc-windows-msvc`)  
+**Target Version:** Reddart v1.0.0+  
+**Target Platform:** Windows x86_64 (`x86_64-pc-windows-msvc`), Linux (`x86_64-unknown-linux-gnu`), macOS (`universal2`)  
 **Toolchain:** Rust 1.85.0+ (stable)  
 
 ---
@@ -14,6 +14,7 @@ To ensure independent verification of Reddart binaries without third-party tampe
 2. **Deterministic Optimization:** Release profile sets `codegen-units = 1` and `opt-level = 3` to prevent non-deterministic code generation across parallel compiler workers.
 3. **Locked Dependency Resolution:** Builds enforce `Cargo.lock` exact semantic versions via `cargo build --locked`.
 4. **Normalized Archive Timestamps:** ZIP files embed deterministic file timestamps (`2026-01-01T00:00:00Z`), preventing filesystem creation/modification dates from altering archive checksums.
+5. **Genuinely Independent Multi-Pass Clean-Build Verification:** The packaging validation suite (`scripts/package_windows.ps1 -VerifyReproducibility` and `scripts/package_linux.sh --verify-reproducibility`) executes two distinct compilation passes from clean source trees in isolated target directories, validating that both the compiled binary and the resulting distribution archive achieve bit-for-bit identical SHA-256 checksums.
 
 ---
 
@@ -25,12 +26,12 @@ Execute the following in PowerShell from the repository root:
 # 1. Clean previous build artifacts
 cargo clean
 
-# 2. Package and validate Windows release
-powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1
+# 2. Package and validate Windows release with multi-pass clean-build verification
+powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1 -VerifyReproducibility
 
 # 3. Verify generated SHA-256 checksums
 Get-FileHash ready_to_use\windows\Reddart.exe -Algorithm SHA256
-Get-FileHash ready_to_use\windows\Reddart-v0.2.1-Windows-x86_64.zip -Algorithm SHA256
+Get-FileHash ready_to_use\windows\Reddart-v1.0.0-Windows-x86_64.zip -Algorithm SHA256
 
 # 4. Compare against recorded checksums
 Get-Content ready_to_use\windows\SHA256SUMS.txt
