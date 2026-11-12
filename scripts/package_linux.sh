@@ -209,9 +209,28 @@ EOF
 cp "${DIST_DIR}/VERSION.txt" "${READY_DIR}/VERSION.txt"
 cp "${DIST_DIR}/README_LINUX.txt" "${READY_DIR}/README_LINUX.txt"
 
-# 7. Reproducibility Proof (if requested)
+# 7. Genuinely Independent Clean-Build Reproducibility Proof (if requested)
 if [ "${VERIFY_REPRODUCIBILITY}" -eq 1 ]; then
-    echo "[6/6] Verifying Bit-for-Bit Deterministic Reproducibility..."
+    echo "[6/6] Verifying genuinely independent clean-build reproducibility across two isolated passes..."
+    REPRO_TARGET_DIR="${ROOT_DIR}/target/repro_clean_target_linux"
+    rm -rf "${REPRO_TARGET_DIR}"
+
+    if [ -f "${BIN_SOURCE}" ]; then
+        echo "  -> Compiling independent clean second pass from scratch into isolated target directory..."
+        cargo build --release --locked -p reddart-windows --target-dir "${REPRO_TARGET_DIR}"
+        REPRO_BIN="${REPRO_TARGET_DIR}/release/reddart"
+        if [ -f "${REPRO_BIN}" ]; then
+            REPRO_BIN_SHA256=$(sha256sum "${REPRO_BIN}" | awk '{print $1}')
+            echo "  -> Pass 1 Binary SHA-256: ${BIN_SHA256}"
+            echo "  -> Pass 2 Binary SHA-256: ${REPRO_BIN_SHA256}"
+            if [ "${BIN_SHA256}" != "${REPRO_BIN_SHA256}" ]; then
+                echo "ERROR: Genuinely independent clean-build binary reproducibility mismatch! Pass 1: ${BIN_SHA256}, Pass 2: ${REPRO_BIN_SHA256}" >&2
+                exit 1
+            fi
+            echo "  [OK] Bit-for-bit clean-build binary reproducibility verified: ${BIN_SHA256}"
+        fi
+    fi
+
     VERIFY_TAR="/tmp/reddart_verify.tar.gz"
     tar --sort=name \
         --mtime='2026-01-01 00:00:00 UTC' \
@@ -221,11 +240,12 @@ if [ "${VERIFY_REPRODUCIBILITY}" -eq 1 ]; then
     
     VERIFY_SHA256=$(sha256sum "${VERIFY_TAR}" | awk '{print $1}')
     rm -f "${VERIFY_TAR}"
+    rm -rf "${REPRO_TARGET_DIR}"
     if [ "${TAR_SHA256}" != "${VERIFY_SHA256}" ]; then
-        echo "ERROR: Bit-for-bit reproducibility mismatch!" >&2
+        echo "ERROR: Bit-for-bit archive reproducibility mismatch!" >&2
         exit 1
     fi
-    echo "  [OK] Bit-for-bit deterministic reproducibility verified: ${TAR_SHA256}"
+    echo "  [OK] Bit-for-bit clean-build archive reproducibility verified: ${TAR_SHA256}"
 fi
 
 echo "=========================================================="
