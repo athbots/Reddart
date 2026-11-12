@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use rd_core::{ClipId, TimestampUs};
 
+use crate::prefetch::PlayDirection;
 use crate::{DecodedFrame, FfmpegDecoder};
 
 /// A request to asynchronously decode a frame for a clip at a given timestamp.
@@ -347,6 +348,94 @@ impl AsyncDecoderService {
             c.clear();
         }
     }
+
+    /// Predictive lookahead: queue background decode requests for upcoming frames along the playhead's path.
+    /// Skips any timestamp that is already present in the frame cache.
+    /// Returns the number of prefetch requests actually queued.
+    pub fn prefetch_lookahead(
+        &self,
+        clip_id: ClipId,
+        source_path: PathBuf,
+        base_time_us: TimestampUs,
+        step_us: i64,
+        count: usize,
+    ) -> usize {
+        if count == 0 || step_us == 0 {
+            return 0;
+        }
+
+        let cache = match self.cache.lock() {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+
+        let mut queued = 0;
+        let generation = self.generation.load(Ordering::Acquire);
+        let tolerance_us = (step_us.abs() / 2).max(10_000);
+
+        for i in 1..=count {
+            let target_time_us = base_time_us + (i as i64 * step_us);
+            if target_time_us < 0 {
+                continue;
+            }
+
+            if cache
+                .get(&source_path, target_time_us, tolerance_us)
+                .is_none()
+            {
+                let request_id = self.next_req_id.fetch_add(1, Ordering::Relaxed);
+                let req = FrameRequest {
+                    request_id,
+                    generation,
+                    clip_id,
+                    source_path: source_path.clone(),
+                    source_time_us: target_time_us,
+                };
+                if self.req_tx.send(req).is_ok() {
+                    queued += 1;
+                }
+            }
+        }
+
+        queued
+    }
+
+    /// Predictively prefetch ahead of the playhead based on playhead direction.
+    /// When forward, prefetches next frames (+step_us).
+    /// When reverse, prefetches previous frames (-step_us).
+    /// When stationary, prefetches immediate surrounding frames (+/- step_us).
+    pub fn prefetch_directional(
+        &self,
+        clip_id: ClipId,
+        source_path: PathBuf,
+        current_time_us: TimestampUs,
+        direction: PlayDirection,
+        step_us: i64,
+        count: usize,
+    ) -> usize {
+        let abs_step = step_us.abs();
+        match direction {
+            PlayDirection::Forward => {
+                self.prefetch_lookahead(clip_id, source_path, current_time_us, abs_step, count)
+            }
+            PlayDirection::Reverse => {
+                self.prefetch_lookahead(clip_id, source_path, current_time_us, -abs_step, count)
+            }
+            PlayDirection::Stationary => {
+                let half = (count / 2).max(1);
+                let forward = self.prefetch_lookahead(
+                    clip_id,
+                    source_path.clone(),
+                    current_time_us,
+                    abs_step,
+                    half,
+                );
+                let reverse =
+                    self.prefetch_lookahead(clip_id, source_path, current_time_us, -abs_step, half);
+                forward + reverse
+            }
+        }
+    }
 }
 
 impl Drop for AsyncDecoderService {
@@ -355,5 +444,130 @@ impl Drop for AsyncDecoderService {
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frame_cache_lru() {
+        let mut cache = FrameCache::new(2);
+        let path = PathBuf::from("video.mp4");
+
+        let frame1 = Arc::new(DecodedFrame {
+            frame_index: 0,
+            pts_us: 0,
+            width: 1920,
+            height: 1080,
+            rgba_data: Some(vec![1; 16]),
+            is_keyframe: true,
+        });
+
+        let frame2 = Arc::new(DecodedFrame {
+            frame_index: 1,
+            pts_us: 33_333,
+            width: 1920,
+            height: 1080,
+            rgba_data: Some(vec![2; 16]),
+            is_keyframe: false,
+        });
+
+        let frame3 = Arc::new(DecodedFrame {
+            frame_index: 2,
+            pts_us: 66_666,
+            width: 1920,
+            height: 1080,
+            rgba_data: Some(vec![3; 16]),
+            is_keyframe: false,
+        });
+
+        cache.insert(path.clone(), frame1);
+        cache.insert(path.clone(), frame2);
+        assert_eq!(cache.len(), 2);
+
+        // Frame 1 is evicted when Frame 3 is added
+        cache.insert(path.clone(), frame3);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&path, 0, 5_000).is_none());
+        assert!(cache.get(&path, 33_333, 5_000).is_some());
+        assert!(cache.get(&path, 66_666, 5_000).is_some());
+    }
+
+    #[test]
+    fn test_prefetch_lookahead_queues_and_skips_cached() {
+        let service = AsyncDecoderService::new(16);
+        let path = PathBuf::from("test_clip.mp4");
+        let clip_id = ClipId::new();
+
+        // Prefetch 4 frames ahead starting from 0 us at 33.3ms intervals
+        let queued = service.prefetch_lookahead(clip_id, path.clone(), 0, 33_333, 4);
+        assert_eq!(queued, 4);
+
+        // Insert a frame at 33_333 into the cache manually
+        let frame = Arc::new(DecodedFrame {
+            frame_index: 1,
+            pts_us: 33_333,
+            width: 1920,
+            height: 1080,
+            rgba_data: None,
+            is_keyframe: false,
+        });
+        service.cache.lock().unwrap().insert(path.clone(), frame);
+
+        // Prefetching again should skip the frame at 33_333
+        let queued_again = service.prefetch_lookahead(clip_id, path.clone(), 0, 33_333, 2);
+        // Frame 1 (33_333) is skipped, Frame 2 (66_666) is queued
+        assert_eq!(queued_again, 1);
+    }
+
+    #[test]
+    fn test_prefetch_directional() {
+        let service = AsyncDecoderService::new(16);
+        let path = PathBuf::from("test_clip.mp4");
+        let clip_id = ClipId::new();
+
+        let queued_forward = service.prefetch_directional(
+            clip_id,
+            path.clone(),
+            100_000,
+            PlayDirection::Forward,
+            33_333,
+            3,
+        );
+        assert_eq!(queued_forward, 3);
+
+        let queued_reverse = service.prefetch_directional(
+            clip_id,
+            path.clone(),
+            100_000,
+            PlayDirection::Reverse,
+            33_333,
+            2,
+        );
+        assert_eq!(queued_reverse, 2);
+
+        let queued_stationary = service.prefetch_directional(
+            clip_id,
+            path,
+            100_000,
+            PlayDirection::Stationary,
+            33_333,
+            4,
+        );
+        // Half forward (2) + half reverse (2) = 4
+        assert_eq!(queued_stationary, 4);
+    }
+
+    #[test]
+    fn test_bump_generation_lifecycle() {
+        let service = AsyncDecoderService::new(16);
+        let gen1 = service.current_generation();
+        assert_eq!(gen1, 1);
+
+        let gen2 = service.bump_generation();
+        assert_eq!(gen2, 2);
+        assert_eq!(service.current_generation(), 2);
     }
 }

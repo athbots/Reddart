@@ -596,6 +596,18 @@ impl EditorData {
                         let maybe_frame =
                             self.async_decoder.get_cached(&path, source_time_us, 33_333);
 
+                        // If playback is running, predictively prefetch upcoming frames ahead of the playhead
+                        if self.is_playing {
+                            let step_us = (33_333.0 / clip.speed.max(0.1)) as i64;
+                            self.async_decoder.prefetch_lookahead(
+                                clip.id,
+                                path.clone(),
+                                source_time_us,
+                                step_us,
+                                4,
+                            );
+                        }
+
                         let rgba_opt = if let Some(frame) = maybe_frame {
                             frame.rgba_data.clone()
                         } else {
