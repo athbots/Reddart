@@ -528,23 +528,69 @@ impl ProjectJournal {
         self.current_seq
     }
 
-    /// Append a new mutation to the journal, syncing it to physical storage.
-    pub fn append(&mut self, mutation: JournalMutation) -> std::io::Result<JournalEntry> {
-        self.current_seq += 1;
-        let entry = JournalEntry::new(self.current_seq, mutation);
-        let line = serde_json::to_string(&entry)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    /// Append a batch of mutations to the journal atomically.
+    ///
+    /// Durability & Consistency guarantees:
+    /// 1. Entries are serialized in-memory first; any serialization error fails before touching disk.
+    /// 2. If file write, flush, or sync fails, the file on disk is rolled back (truncated)
+    ///    to its pre-write length and synced.
+    /// 3. In-memory sequence counter `self.current_seq` is advanced ONLY AFTER physical
+    ///    durability (`file.sync_all()`) is confirmed. On any failure, `self.current_seq` is
+    ///    unmodified, guaranteeing zero sequence holes or gaps in subsequent operations.
+    pub fn append_batch(
+        &mut self,
+        mutations: &[JournalMutation],
+    ) -> std::io::Result<Vec<JournalEntry>> {
+        if mutations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = Vec::with_capacity(mutations.len());
+        let mut buffer = Vec::new();
+        let mut next_seq = self.current_seq;
+
+        for mutation in mutations {
+            next_seq += 1;
+            let entry = JournalEntry::new(next_seq, mutation.clone());
+            let line = serde_json::to_string(&entry)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            buffer.extend_from_slice(line.as_bytes());
+            buffer.push(b'\n');
+            entries.push(entry);
+        }
 
         let mut file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
             .open(&self.wal_path)?;
 
-        writeln!(file, "{}", line)?;
-        file.flush()?;
-        file.sync_all()?;
+        let start_len = file.metadata()?.len();
+        file.seek(SeekFrom::End(0))?;
 
-        Ok(entry)
+        let write_res = (|| -> std::io::Result<()> {
+            file.write_all(&buffer)?;
+            file.flush()?;
+            file.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_res {
+            let _ = file.set_len(start_len);
+            let _ = file.sync_all();
+            return Err(e);
+        }
+
+        // Monotonic sequence only advances upon verified physical sync
+        self.current_seq = next_seq;
+        Ok(entries)
+    }
+
+    /// Append a new mutation to the journal, syncing it to physical storage.
+    pub fn append(&mut self, mutation: JournalMutation) -> std::io::Result<JournalEntry> {
+        let mut entries = self.append_batch(&[mutation])?;
+        Ok(entries.remove(0))
     }
 
     /// Replay uncommitted journal entries into a project with strict sequence continuity,

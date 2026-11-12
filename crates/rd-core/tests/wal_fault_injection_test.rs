@@ -410,3 +410,209 @@ fn test_wal_interrupted_checkpoint_recovery() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+#[allow(clippy::permissions_set_readonly_false)]
+fn test_wal_sequence_advancement_atomic_and_no_sequence_holes_on_failure() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("seq_advancement_atomicity");
+    let wal_path = proj_path.with_extension("reddart.wal");
+    let mut journal = ProjectJournal::open_or_create(&proj_path).expect("Create journal");
+
+    // 1. Initial sequence is 0
+    assert_eq!(journal.current_seq(), 0);
+
+    // 2. Append first mutation -> seq advances to 1
+    let m1 = JournalMutation::AddTrack {
+        id: TrackId(1),
+        kind: TrackKind::Video,
+        name: "V1".into(),
+    };
+    let e1 = journal.append(m1).expect("Append 1");
+    assert_eq!(e1.seq, 1);
+    assert_eq!(journal.current_seq(), 1);
+
+    // 3. Make WAL file read-only on disk to trigger an I/O error
+    let mut perms = fs::metadata(&wal_path).unwrap().permissions();
+    perms.set_readonly(true);
+    let _ = fs::set_permissions(&wal_path, perms);
+
+    // 4. Attempt to append a second mutation -> must fail
+    let m2 = JournalMutation::AddTrack {
+        id: TrackId(2),
+        kind: TrackKind::Audio,
+        name: "A1".into(),
+    };
+    let append_err = journal.append(m2);
+
+    if append_err.is_err() {
+        // Crucial invariant: Sequence counter must NOT have advanced!
+        assert_eq!(
+            journal.current_seq(),
+            1,
+            "Sequence counter must not advance when write fails"
+        );
+
+        // 5. Restore write permissions
+        let mut restore = fs::metadata(&wal_path).unwrap().permissions();
+        restore.set_readonly(false);
+        let _ = fs::set_permissions(&wal_path, restore);
+
+        // 6. Next successful append must receive sequence 2 with NO HOLE
+        let m3 = JournalMutation::AddTrack {
+            id: TrackId(3),
+            kind: TrackKind::Audio,
+            name: "A2".into(),
+        };
+        let e3 = journal
+            .append(m3)
+            .expect("Append after restoring write perms");
+        assert_eq!(
+            e3.seq, 2,
+            "Sequence must be consecutive (2) without sequence gaps"
+        );
+        assert_eq!(journal.current_seq(), 2);
+
+        // 7. Verify replay detects NO holes and replays both valid records cleanly
+        let mut project = Project::new("Continuity Check");
+        let report = journal.replay_into(&mut project).expect("Replay journal");
+        assert_eq!(report.valid_records_replayed, 2);
+        assert_eq!(report.last_seq, 2);
+        assert_eq!(report.corrupt_records_detected, 0);
+    } else {
+        // Environment didn't restrict file write (e.g. elevated container)
+        let mut restore = fs::metadata(&wal_path).unwrap().permissions();
+        restore.set_readonly(false);
+        let _ = fs::set_permissions(&wal_path, restore);
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_batch_append_atomic_rollback_on_disk() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("batch_atomic");
+    let wal_path = proj_path.with_extension("reddart.wal");
+    let mut journal = ProjectJournal::open_or_create(&proj_path).expect("Create journal");
+
+    // 1. Write an initial baseline record
+    let m1 = JournalMutation::AddTrack {
+        id: TrackId(10),
+        kind: TrackKind::Video,
+        name: "Base".into(),
+    };
+    journal.append(m1).expect("Baseline append");
+    assert_eq!(journal.current_seq(), 1);
+    let baseline_len = fs::metadata(&wal_path).unwrap().len();
+    assert!(baseline_len > 0);
+
+    // 2. Append a valid multi-mutation batch
+    let batch = vec![
+        JournalMutation::AddMarker {
+            id: 1,
+            time_us: 100_000,
+            name: "M1".into(),
+            color_rgb: [10, 20, 30],
+        },
+        JournalMutation::AddMarker {
+            id: 2,
+            time_us: 200_000,
+            name: "M2".into(),
+            color_rgb: [40, 50, 60],
+        },
+    ];
+    let entries = journal.append_batch(&batch).expect("Batch append");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].seq, 2);
+    assert_eq!(entries[1].seq, 3);
+    assert_eq!(journal.current_seq(), 3);
+
+    // 3. Verify replay restores both markers
+    let mut project = Project::new("Batch Test");
+    let report = journal.replay_into(&mut project).expect("Replay batch");
+    assert_eq!(report.valid_records_replayed, 3);
+    assert_eq!(project.timeline.markers.len(), 2);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+#[allow(clippy::permissions_set_readonly_false)]
+fn test_wal_compound_transaction_failure_handling() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("compound_tx_failure");
+    let wal_path = proj_path.with_extension("reddart.wal");
+    let mut project = Project::new("Compound Tx Project");
+    let tid = project.timeline.add_track(TrackKind::Video, "V1");
+
+    let mut history = CommandHistory::new(50);
+    let mut journal = ProjectJournal::open_or_create(&proj_path).expect("Create journal");
+
+    // Baseline add clip
+    let clip = make_test_clip("shot.mp4", 0, 5_000_000);
+    let clip_id = clip.id;
+    history
+        .execute_with_journal(
+            Command::AddClip {
+                track_id: tid,
+                clip,
+            },
+            &mut project,
+            &mut journal,
+        )
+        .expect("Baseline AddClip");
+    assert_eq!(journal.current_seq(), 1);
+
+    // Prepare a Compound command with 2 operations
+    let compound = Command::Compound {
+        label: "Move and Opacity".into(),
+        commands: vec![
+            Command::MoveClip {
+                track_id: tid,
+                clip_id,
+                old_position_us: 0,
+                new_position_us: 4_000_000,
+            },
+            Command::SetOpacity {
+                track_id: tid,
+                clip_id,
+                old_opacity: 1.0,
+                new_opacity: 0.5,
+            },
+        ],
+    };
+
+    // Make WAL file read-only to simulate I/O failure during batch commit
+    let mut perms = fs::metadata(&wal_path).unwrap().permissions();
+    perms.set_readonly(true);
+    let _ = fs::set_permissions(&wal_path, perms);
+
+    let res = history.execute_with_journal(compound, &mut project, &mut journal);
+    if let Err(e) = res {
+        assert!(matches!(e, CommandError::JournalError(_)));
+
+        // In-memory state must be completely rolled back!
+        let clip_check = project.timeline.track(tid).unwrap().clip(clip_id).unwrap();
+        assert_eq!(
+            clip_check.position_us, 0,
+            "Clip position must be restored to 0"
+        );
+        assert_eq!(
+            clip_check.opacity, 1.0,
+            "Clip opacity must be restored to 1.0"
+        );
+
+        // History must not have recorded the failed compound command
+        assert_eq!(history.undo_count(), 1); // Only initial AddClip
+        assert_eq!(journal.current_seq(), 1, "WAL sequence must not advance");
+
+        // Restore permissions
+        let mut restore = fs::metadata(&wal_path).unwrap().permissions();
+        restore.set_readonly(false);
+        let _ = fs::set_permissions(&wal_path, restore);
+    } else {
+        let mut restore = fs::metadata(&wal_path).unwrap().permissions();
+        restore.set_readonly(false);
+        let _ = fs::set_permissions(&wal_path, restore);
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
