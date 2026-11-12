@@ -31,7 +31,7 @@ Reddart is designed with a strict isolation boundary between its proprietary/ope
 
 1. **No Static or Dynamic C Symbol Linking:** Reddart does not compile or link against `libavcodec`, `libavformat`, `libavutil`, or `libswscale` via C FFI (`extern "C"`). The compiled `Reddart.exe` binary contains zero FFmpeg object code.
 2. **Subprocess Invocation:** Interfacing with FFmpeg and ffprobe occurs strictly through standard OS process execution (`std::process::Command`), passing command-line arguments and reading structured streams via standard pipes (`stdin`, `stdout`, `stderr`).
-3. **Pure-Rust Fallback Invariant:** If `ffmpeg` and `ffprobe` are not installed or discoverable on the host environment, Reddart maintains full operational integrity for editing, UI playback, timeline manipulation, and synthetic test-pattern rendering via `rd-decode`.
+3. **Pure-Rust Fallback Invariant:** If `ffmpeg` and `ffprobe` are not installed or discoverable on the host environment, Reddart maintains basic operational integrity for editing, UI playback, timeline manipulation, and synthetic test-pattern rendering via `rd-decode`. However, importing real container media (MP4, MOV, MKV, WebM), decoding real video/audio bitstreams, and exporting rendered video files strictly require FFmpeg and FFprobe. When missing, real media assets are flagged as offline with clear UI notices directing the user to install FFmpeg.
 
 ---
 
@@ -109,5 +109,6 @@ To maintain complete legal compliance with both copyright licensing (LGPL/GPL) a
 
 Reddart's CI and automated test suites verify compliance:
 - `rd-export` verifies encoder discovery dynamically at runtime without hardcoded binary paths.
-- `cargo test --workspace` validates that all tests pass even in completely isolated environments without FFmpeg present on disk.
+- Standalone unit tests pass in completely isolated environments without FFmpeg present on disk.
+- Integration tests (`sample_project_render_test.rs`, `release_suite.rs`) strictly enforce FFmpeg and FFprobe availability when `CI="true"` or `REDDART_REQUIRE_FFMPEG="1"`, guaranteeing genuine decoding, muxing, and rendering validation in automated CI pipelines.
 

@@ -253,8 +253,54 @@ Reddart/
 
 ### Prerequisites
 - [Rust toolchain](https://rustup.rs/) (version 1.85.0 or later for Rust 2024 Edition support).
-- Windows 10/11 with MSVC C++ Build Tools installed.
-- Optional: `ffmpeg` and `ffprobe` installed on system `PATH` for video container probing and software encoding fallback.
+- Windows 10/11 with MSVC C++ Build Tools installed (or GCC/Clang on Linux / Xcode CLI on macOS).
+- **FFmpeg & FFprobe (v5.0+ required, v6.0+ recommended):** Required for importing, probing, and decoding real video/audio files (MP4, MOV, MKV, WebM, etc.) and exporting rendered video deliverables. *(Synthetic test patterns and timeline editing run in pure standalone mode, but real media workflows require FFmpeg on PATH or in the `bin/` directory).*
+
+#### Installing FFmpeg
+
+- **Windows:**
+  ```powershell
+  winget install Gyan.FFmpeg
+  # or via Chocolatey:
+  choco install ffmpeg
+  ```
+  *Alternatively, download an official static build from Gyan.dev or BtbN and place `ffmpeg.exe` and `ffprobe.exe` into a `bin/` subdirectory next to `Reddart.exe` or add to your system `PATH`.*
+
+- **macOS:**
+  ```bash
+  brew install ffmpeg
+  ```
+
+- **Linux (Ubuntu / Debian / Mint):**
+  ```bash
+  sudo apt update && sudo apt install -y ffmpeg libasound2-dev pkg-config
+  ```
+
+- **Linux (Fedora / RHEL):**
+  ```bash
+  sudo dnf install -y ffmpeg
+  ```
+
+- **Linux (Arch Linux / Manjaro):**
+  ```bash
+  sudo pacman -S ffmpeg
+  ```
+
+#### Executable Discovery Order
+
+Reddart locates `ffmpeg` and `ffprobe` by checking the following paths in priority order:
+1. `<current_exe_dir>/bin/ffmpeg.exe` (or `ffmpeg` on Unix)
+2. `<current_exe_dir>/ffmpeg.exe`
+3. Local workspace `bin/ffmpeg.exe`
+4. `ready_to_use/windows/bin/ffmpeg.exe`
+5. System `PATH` (e.g. `where ffmpeg` / `which ffmpeg`)
+
+Verify installation:
+```bash
+ffmpeg -version
+ffprobe -version
+reddart probe <media_file>
+```
 
 ### Compilation
 

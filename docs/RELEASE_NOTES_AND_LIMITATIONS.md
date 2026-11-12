@@ -33,12 +33,15 @@ Reddart v1.0.0 is officially released for production use by creators on Windows 
 - **Memory:** 8 GB DDR4 RAM.
 - **Graphics Card:** DirectX 12 Feature Level 11_0 or Vulkan 1.2 compatible GPU (NVIDIA GTX 900 series+, AMD Radeon RX 400 series+, Intel HD Graphics 500+).
 - **Audio Output:** WASAPI-compatible stereo output device (built-in speakers, headphone jack, or USB DAC).
+- **External Media Engine:** FFmpeg 5.0+ (FFmpeg 6.0+ recommended) with `ffmpeg` and `ffprobe` in system `PATH` or `<app_dir>/bin/`. Required for importing, probing, and decoding real container formats (MP4, MOV, MKV, WebM) and exporting rendered videos.
+  - Quick Install (Windows): `winget install Gyan.FFmpeg` or `choco install ffmpeg`.
 
 ### Recommended Studio Specifications:
 - **Processor:** 8-core CPU (Intel Core i7/i9 12th+ Gen, AMD Ryzen 7/9 5000+ series).
 - **Memory:** 32 GB DDR4/DDR5 RAM.
 - **Graphics Card:** NVIDIA RTX 3060+ (for 4K NVENC export) or AMD Radeon RX 6700XT+.
 - **Storage:** Dedicated NVMe SSD for high-bandwidth media caching.
+- **Media Engine:** FFmpeg 6.0+ with NVENC / AMF / QSV hardware codec support.
 
 ---
 
