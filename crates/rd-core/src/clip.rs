@@ -136,6 +136,18 @@ pub struct ClipEffect {
     pub enabled: bool,
 }
 
+/// Motion retiming method when clip playback speed != 1.0 or during speed ramps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RetimeMode {
+    /// Frame hold / repetition (nearest neighbor temporal sampling).
+    Nearest,
+    /// Linear frame blending between adjacent decoded frames.
+    #[default]
+    Blend,
+    /// Cinema-grade dense optical flow estimation and bidirectional motion-compensated warping.
+    OpticalFlow,
+}
+
 fn default_volume() -> f32 {
     1.0
 }
@@ -159,6 +171,9 @@ pub struct Clip {
     pub source_out_us: crate::TimestampUs,
     /// Playback speed multiplier (1.0 = normal, 2.0 = double, 0.5 = half).
     pub speed: f64,
+    /// Motion retiming method for speed adjustments and slow-motion playback.
+    #[serde(default)]
+    pub retime_mode: RetimeMode,
     /// Opacity (0.0 = transparent, 1.0 = opaque).
     pub opacity: f32,
     /// Spatial 2D transform (position, scale, rotation).
@@ -201,6 +216,7 @@ impl Clip {
             source_in_us,
             source_out_us,
             speed: 1.0,
+            retime_mode: RetimeMode::default(),
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
@@ -228,6 +244,7 @@ impl Clip {
             source_in_us: 0,
             source_out_us: duration_us,
             speed: 1.0,
+            retime_mode: RetimeMode::default(),
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
@@ -258,6 +275,7 @@ impl Clip {
             source_in_us: 0,
             source_out_us: duration_us,
             speed: 1.0,
+            retime_mode: RetimeMode::default(),
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
@@ -286,6 +304,7 @@ impl Clip {
             source_in_us: 0,
             source_out_us: duration_us,
             speed: 1.0,
+            retime_mode: RetimeMode::default(),
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),
@@ -528,6 +547,7 @@ mod tests {
             source_in_us: 0,
             source_out_us: 5_000_000,
             speed: 1.0,
+            retime_mode: RetimeMode::default(),
             opacity: 1.0,
             transform: Transform2D::default(),
             effects: Vec::new(),

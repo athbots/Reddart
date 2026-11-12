@@ -6185,6 +6185,7 @@ mod tests {
             pan: 0.0,
             pan_surround: 0.0,
             lfe_send: 0.0,
+            retime_mode: rd_core::RetimeMode::Blend,
             keyframes: std::collections::HashMap::new(),
         }
     }

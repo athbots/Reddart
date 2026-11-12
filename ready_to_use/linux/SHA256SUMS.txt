@@ -1,4 +1,4 @@
 # Reddart Video Editor v1.0.0 - Linux Release Checksums
-# Generated: 2026-11-12T14:35:56Z
+# Generated: 2026-11-12T15:17:01Z
 
-7960ccd59d41ecbd2e0b68f5907dfa7c3eb639afd86f54367805051c1e76da3d  Reddart-v1.0.0-Linux-x86_64.zip
+a8f69a99f9a3ca7a53e8ec6171a241a3d3c4302071bfa5b2d2d2eb68a6b6c84f  Reddart-v1.0.0-Linux-x86_64.zip

@@ -58,7 +58,7 @@ Copy-Item (Join-Path $RootDir "platforms\linux\reddart.desktop") -Destination "$
 Copy-Item (Join-Path $RootDir "platforms\linux\app.reddart.Reddart.metainfo.xml") -Destination "$DistDir\share\metainfo\app.reddart.Reddart.metainfo.xml" -Force
 Copy-Item (Join-Path $RootDir "platforms\linux\reddart.svg") -Destination "$DistDir\share\icons\hicolor\scalable\apps\reddart.svg" -Force
 
-# Copy all 10 effects
+# Copy all 11 effects
 Copy-Item -Recurse (Join-Path $RootDir "effects\*") -Destination "$DistDir\share\reddart\effects\" -Force
 
 # Copy samples if present
@@ -172,7 +172,7 @@ $manifestObj = [ordered]@{
     desktop_entry = "share/applications/reddart.desktop"
     appstream_id = "app.reddart.Reddart"
     icon = "share/icons/hicolor/scalable/apps/reddart.svg"
-    effects_count = 10
+    effects_count = 11
 }
 $manifestJson = ($manifestObj | ConvertTo-Json -Depth 5) + "`r`n"
 [System.IO.File]::WriteAllText($ManifestOut, $manifestJson, $utf8NoBom)

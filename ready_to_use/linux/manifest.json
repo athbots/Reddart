@@ -2,14 +2,14 @@
     "product":  "Reddart Video Editor",
     "version":  "1.0.0",
     "platform":  "linux-x86_64",
-    "generated_at":  "2026-11-12T14:35:56Z",
+    "generated_at":  "2026-11-12T15:17:01Z",
     "archive":  {
                     "filename":  "Reddart-v1.0.0-Linux-x86_64.zip",
-                    "sha256":  "7960ccd59d41ecbd2e0b68f5907dfa7c3eb639afd86f54367805051c1e76da3d",
-                    "bytes":  6228546
+                    "sha256":  "a8f69a99f9a3ca7a53e8ec6171a241a3d3c4302071bfa5b2d2d2eb68a6b6c84f",
+                    "bytes":  6230263
                 },
     "desktop_entry":  "share/applications/reddart.desktop",
     "appstream_id":  "app.reddart.Reddart",
     "icon":  "share/icons/hicolor/scalable/apps/reddart.svg",
-    "effects_count":  10
+    "effects_count":  11
 }

@@ -37,6 +37,7 @@ fn make_test_clip(source: &str, pos_us: i64, dur_us: i64) -> Clip {
         source_in_us: 0,
         source_out_us: dur_us,
         speed: 1.0,
+        retime_mode: rd_core::RetimeMode::default(),
         opacity: 1.0,
         transform: Transform2D::default(),
         effects: Vec::new(),

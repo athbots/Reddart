@@ -1,0 +1,44 @@
+{
+  "id": "optical_flow",
+  "name": "Optical Flow Retiming",
+  "category": "Time & Motion",
+  "version": 1,
+  "cost_class": "high",
+  "parameters": [
+    {
+      "id": "retime_speed",
+      "name": "Playback Speed",
+      "param_type": "float",
+      "default": 0.5,
+      "min": 0.01,
+      "max": 10.0
+    },
+    {
+      "id": "blend_time",
+      "name": "Interpolation Phase",
+      "param_type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "id": "flow_smoothness",
+      "name": "Motion Regularization",
+      "param_type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "id": "occlusion_suppression",
+      "name": "Occlusion Suppression",
+      "param_type": "float",
+      "default": 0.8,
+      "min": 0.0,
+      "max": 1.0
+    }
+  ],
+  "shader": "effects/optical_flow/shader.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_main"
+}

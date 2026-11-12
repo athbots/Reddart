@@ -201,7 +201,7 @@ cat <<EOF > "${MANIFEST_OUT}"
   "desktop_entry": "share/applications/reddart.desktop",
   "appstream_id": "app.reddart.Reddart",
   "icon": "share/icons/hicolor/scalable/apps/reddart.svg",
-  "effects_count": 10
+  "effects_count": 11
 }
 EOF
 
