@@ -54,6 +54,7 @@ pub const CHROMA_KEY_WGSL: &str = include_str!("../../../effects/chroma_key/shad
 pub const LUT_3D_WGSL: &str = include_str!("../../../effects/lut_3d/shader.wgsl");
 pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shader.wgsl");
 pub const NEURAL_MATTE_WGSL: &str = include_str!("../../../effects/neural_matte/shader.wgsl");
+pub const AUTO_REFRAME_WGSL: &str = include_str!("../../../effects/auto_reframe/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -489,6 +490,92 @@ impl EffectRegistry {
             },
             NEURAL_MATTE_WGSL.into(),
         );
+
+        // 10. AI Auto Reframe
+        self.register(
+            EffectManifest {
+                id: "auto_reframe".into(),
+                name: "AI Auto Reframe".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "target_aspect".into(),
+                        name: "Target Aspect".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 3.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "pan_x".into(),
+                        name: "Horizontal Pan".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -0.5,
+                        max: 0.5,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "pan_y".into(),
+                        name: "Vertical Pan".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -0.5,
+                        max: 0.5,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "zoom".into(),
+                        name: "Crop Zoom Scale".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 0.5,
+                        max: 3.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "fill_mode".into(),
+                        name: "Fill Mode".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 2.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "background_blur".into(),
+                        name: "Background Blur Radius".into(),
+                        param_type: ParamType::Float,
+                        default: 8.0,
+                        min: 0.0,
+                        max: 20.0,
+                        step: 0.5,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "background_dim".into(),
+                        name: "Background Dim Factor".into(),
+                        param_type: ParamType::Float,
+                        default: 0.45,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            AUTO_REFRAME_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -536,6 +623,12 @@ mod tests {
         assert!(registry.get("lut_3d").is_some());
         assert!(registry.get("mask_shape").is_some());
         assert!(registry.get("neural_matte").is_some());
+        assert!(registry.get("auto_reframe").is_some());
+
+        let ar = registry.get("auto_reframe").unwrap();
+        assert_eq!(ar.manifest.cost_class, CostClass::Low);
+        assert_eq!(ar.manifest.parameters.len(), 7);
+        assert!(ar.wgsl_source.contains("fn fs_main"));
 
         let nm = registry.get("neural_matte").unwrap();
         assert_eq!(nm.manifest.cost_class, CostClass::Medium);

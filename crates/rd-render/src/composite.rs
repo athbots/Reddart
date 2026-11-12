@@ -5,7 +5,7 @@
 //! - Keyframed opacity, spatial transforms (translation, scale), and blend modes.
 //! - Direct pixel alpha blending and effect integration.
 
-use rd_effects::{NeuralMatteParams, ShapeMaskParams};
+use rd_effects::{AutoReframeParams, NeuralMatteParams, ShapeMaskParams};
 
 /// Parameters defining a video layer to be composited into a multi-track frame.
 #[derive(Debug, Clone)]
@@ -32,6 +32,8 @@ pub struct CompositorLayer {
     pub shape_mask: Option<ShapeMaskParams>,
     /// Optional AI neural portrait matte parameters.
     pub neural_matte: Option<NeuralMatteParams>,
+    /// Optional AI auto-reframe parameters.
+    pub auto_reframe: Option<AutoReframeParams>,
 }
 
 impl CompositorLayer {
@@ -49,6 +51,7 @@ impl CompositorLayer {
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            auto_reframe: None,
         }
     }
 
@@ -77,6 +80,7 @@ impl CompositorLayer {
             blend_mode,
             shape_mask: None,
             neural_matte: None,
+            auto_reframe: None,
         }
     }
 }
@@ -143,31 +147,74 @@ fn composite_single_layer(
             let norm_x = x as f32 / target_w as f32;
 
             // Compute source coordinates
-            let (sx, sy) =
-                if is_identity_transform && layer.width == target_w && layer.height == target_h {
-                    (x as f32, y as f32)
-                } else {
-                    let rel_x = (x as f32 - center_x) * inv_scale_x;
-                    let rel_y = (y as f32 - center_y) * inv_scale_y;
-                    (rel_x + src_cx, rel_y + src_cy)
+            let (sx, sy) = if let Some(ref reframe) = layer.auto_reframe {
+                let dst_aspect = match reframe.target_aspect {
+                    1 => 1.0_f32,
+                    2 => 4.0 / 5.0,
+                    3 => 21.0 / 9.0,
+                    _ => 9.0 / 16.0,
                 };
+                let src_aspect = layer.width as f32 / layer.height as f32;
+                let aspect_ratio = dst_aspect / src_aspect;
+                let mut crop_u = (norm_x - 0.5) / reframe.zoom.max(0.001);
+                let mut crop_v = (norm_y - 0.5) / reframe.zoom.max(0.001);
+                if aspect_ratio < 1.0 {
+                    crop_u *= aspect_ratio;
+                } else {
+                    crop_v /= aspect_ratio;
+                }
+                crop_u += 0.5 + reframe.pan_x;
+                crop_v += 0.5 + reframe.pan_y;
+                (crop_u * layer.width as f32, crop_v * layer.height as f32)
+            } else if is_identity_transform && layer.width == target_w && layer.height == target_h {
+                (x as f32, y as f32)
+            } else {
+                let rel_x = (x as f32 - center_x) * inv_scale_x;
+                let rel_y = (y as f32 - center_y) * inv_scale_y;
+                (rel_x + src_cx, rel_y + src_cy)
+            };
 
-            if sx < 0.0 || sx >= layer.width as f32 || sy < 0.0 || sy >= layer.height as f32 {
-                continue;
-            }
+            let (sr, sg, sb, mut sa) =
+                if sx < 0.0 || sx >= layer.width as f32 || sy < 0.0 || sy >= layer.height as f32 {
+                    if let Some(ref reframe) = layer.auto_reframe {
+                        if reframe.fill_mode == 1 {
+                            let bg_x = ((norm_x * layer.width as f32) as u32).min(layer.width - 1);
+                            let bg_y =
+                                ((norm_y * layer.height as f32) as u32).min(layer.height - 1);
+                            let bg_idx = ((bg_y * layer.width + bg_x) * 4) as usize;
+                            if bg_idx + 3 < layer.rgba.len() {
+                                let dim = reframe.background_dim.clamp(0.0, 1.0);
+                                (
+                                    layer.rgba[bg_idx] as f32 * dim,
+                                    layer.rgba[bg_idx + 1] as f32 * dim,
+                                    layer.rgba[bg_idx + 2] as f32 * dim,
+                                    (layer.rgba[bg_idx + 3] as f32 / 255.0) * layer.opacity,
+                                )
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    let src_x = (sx as u32).min(layer.width - 1);
+                    let src_y = (sy as u32).min(layer.height - 1);
+                    let src_idx = ((src_y * layer.width + src_x) * 4) as usize;
 
-            let src_x = (sx as u32).min(layer.width - 1);
-            let src_y = (sy as u32).min(layer.height - 1);
-            let src_idx = ((src_y * layer.width + src_x) * 4) as usize;
+                    if src_idx + 3 >= layer.rgba.len() {
+                        continue;
+                    }
 
-            if src_idx + 3 >= layer.rgba.len() {
-                continue;
-            }
-
-            let sr = layer.rgba[src_idx] as f32;
-            let sg = layer.rgba[src_idx + 1] as f32;
-            let sb = layer.rgba[src_idx + 2] as f32;
-            let mut sa = (layer.rgba[src_idx + 3] as f32 / 255.0) * layer.opacity;
+                    (
+                        layer.rgba[src_idx] as f32,
+                        layer.rgba[src_idx + 1] as f32,
+                        layer.rgba[src_idx + 2] as f32,
+                        (layer.rgba[src_idx + 3] as f32 / 255.0) * layer.opacity,
+                    )
+                };
 
             // Apply shape mask if present
             if let Some(ref mask) = layer.shape_mask {
@@ -396,6 +443,51 @@ mod tests {
             target[corner_idx + 2] > 200,
             "Corner blue expected high, got {}",
             target[corner_idx + 2]
+        );
+    }
+
+    #[test]
+    fn test_auto_reframe_layer_compositing() {
+        let sw = 16u32;
+        let sh = 9u32;
+        let target_w = 9u32;
+        let target_h = 16u32;
+
+        let mut target = vec![0u8; (target_w * target_h * 4) as usize];
+
+        // 16:9 source frame with red on left half, blue on right half
+        let mut src_pixels = vec![0u8; (sw * sh * 4) as usize];
+        for y in 0..sh {
+            for x in 0..sw {
+                let idx = ((y * sw + x) * 4) as usize;
+                if x < 8 {
+                    src_pixels[idx] = 255;
+                } else {
+                    src_pixels[idx + 2] = 255;
+                }
+                src_pixels[idx + 3] = 255;
+            }
+        }
+
+        let mut layer = CompositorLayer::new(src_pixels, sw, sh);
+        layer.auto_reframe = Some(AutoReframeParams {
+            target_aspect: 0, // 9:16 vertical
+            pan_x: -0.25,     // Pan left onto red subject
+            pan_y: 0.0,
+            zoom: 1.0,
+            fill_mode: 0,
+            background_blur: 0.0,
+            background_dim: 0.5,
+        });
+
+        composite_layers_over(&mut target, target_w, target_h, &[layer]);
+
+        // Center of target vertical frame must be red
+        let mid_idx = ((target_h / 2 * target_w + target_w / 2) * 4) as usize;
+        assert!(
+            target[mid_idx] > 200,
+            "Reframe panned left must render red in center, got: {:?}",
+            &target[mid_idx..mid_idx + 4]
         );
     }
 }
