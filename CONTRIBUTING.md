@@ -13,7 +13,10 @@ Reddart is built in modern Rust utilizing the **2024 Edition**.
   - **Windows:** Visual Studio 2022 C++ Build Tools (MSVC) + Windows SDK.
   - **Linux:** GCC/Clang, `libasound2-dev`, `libvulkan-dev`, `pkg-config`.
   - **macOS:** Xcode Command Line Tools.
-- **Optional Tools:** `ffmpeg` and `ffprobe` on system `PATH` for video container probing and software fallback encoding.
+- **Media Engine Dependencies:** `ffmpeg` and `ffprobe` (v5.0+ required, v6.0+ recommended) in system `PATH` or placed in `bin/`. Required for importing real video/audio media assets, decoding, and hardware/software video export. Full integration tests (`cargo test --workspace` with `REDDART_REQUIRE_FFMPEG=1` in CI) enforce FFmpeg presence.
+  - Windows: `winget install Gyan.FFmpeg` or `choco install ffmpeg`
+  - macOS: `brew install ffmpeg`
+  - Linux: `sudo apt install ffmpeg libasound2-dev pkg-config`
 
 ---
 
@@ -49,7 +52,7 @@ Before submitting any Pull Request, your changes MUST satisfy the following qual
 ```bash
 cargo test --workspace
 ```
-*Current test suite enforces 90 unit and integration tests across timeline correctness, fuzzing, journal recovery, audio mixing, and export pipelines.*
+*Current test suite enforces over 130 unit and integration tests across timeline correctness, fuzzing, journal recovery, audio mixing, optical flow, and export pipelines.*
 
 ### 2. Strict Clippy Compliance (Zero warnings allowed)
 ```bash
