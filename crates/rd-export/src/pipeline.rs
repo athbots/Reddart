@@ -814,6 +814,16 @@ pub fn render_project_to_file(
         std::io::Error::other("Failed to capture FFmpeg stdin")
     })?;
 
+    let mut stderr_pipe = child.stderr.take();
+    let stderr_handle = std::thread::spawn(move || {
+        let mut err_str = String::new();
+        if let Some(mut stream) = stderr_pipe.take() {
+            use std::io::Read;
+            let _ = stream.read_to_string(&mut err_str);
+        }
+        err_str
+    });
+
     let mut decoders: HashMap<PathBuf, Option<FfmpegDecoder>> = HashMap::new();
     let mut frame_buffer = vec![0u8; (req.preset.width * req.preset.height * 4) as usize];
     let start_time = Instant::now();
@@ -824,6 +834,7 @@ pub fn render_project_to_file(
         {
             let _ = child.kill();
             let _ = std::fs::remove_file(&temp_audio_path);
+            let _ = stderr_handle.join();
             return Err(std::io::Error::other("Export cancelled by user"));
         }
 
@@ -1135,9 +1146,12 @@ pub fn render_project_to_file(
         if let Err(e) = stdin.write_all(&frame_buffer) {
             let _ = child.kill();
             let _ = std::fs::remove_file(&temp_audio_path);
+            let stderr_output = stderr_handle.join().unwrap_or_default();
             return Err(std::io::Error::other(format!(
-                "Failed to write frame {} to encoder stdin: {}",
-                frame_idx, e
+                "Failed to write frame {} to encoder stdin: {}. FFmpeg stderr: {}",
+                frame_idx,
+                e,
+                stderr_output.trim()
             )));
         }
 
@@ -1175,13 +1189,16 @@ pub fn render_project_to_file(
 
     let status = child.wait()?;
     let _ = std::fs::remove_file(&temp_audio_path);
+    let stderr_output = stderr_handle.join().unwrap_or_default();
 
     if status.success() {
         Ok(())
     } else {
-        Err(std::io::Error::other(
-            "FFmpeg export pipeline exited with error",
-        ))
+        Err(std::io::Error::other(format!(
+            "FFmpeg export pipeline exited with error: {}. FFmpeg stderr: {}",
+            status,
+            stderr_output.trim()
+        )))
     }
 }
 

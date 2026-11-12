@@ -391,10 +391,23 @@ fn test_render_all_five_starter_templates() {
             .instantiate(&media_paths)
             .expect("Template instantiation must succeed");
 
-        // Clamp timeline duration to 0.5s for fast test execution
-        if let Some(track) = project.timeline.tracks_mut().get_mut(0) {
+        // Clamp timeline duration to 0.5s for fast test execution across all tracks
+        for track in project.timeline.tracks_mut() {
+            let to_remove: Vec<_> = track
+                .clips()
+                .iter()
+                .filter(|c| c.position_us >= 500_000)
+                .map(|c| c.id)
+                .collect();
+            for id in to_remove {
+                track.remove_clip(id);
+            }
             for clip in track.clips_mut() {
-                clip.source_out_us = clip.source_in_us + 500_000;
+                if clip.position_us + clip.duration_us() > 500_000 {
+                    let available = 500_000 - clip.position_us;
+                    clip.source_out_us =
+                        clip.source_in_us + (available as f64 * clip.speed).round() as i64;
+                }
             }
         }
 
