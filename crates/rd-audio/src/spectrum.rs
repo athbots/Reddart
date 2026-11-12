@@ -319,8 +319,7 @@ impl SpectrumAnalyzer {
 
             // Maximum peak or energy average in the band
             let mut band_max_db = -120.0_f32;
-            for k in k_start..=k_end {
-                let db = self.raw_bins_dbfs[k];
+            for &db in &self.raw_bins_dbfs[k_start..=k_end] {
                 if db > band_max_db {
                     band_max_db = db;
                 }

@@ -944,13 +944,11 @@ impl CommandHistory {
         command.apply(project)?;
 
         let mutations = command.to_mutations();
-        for mutation in &mutations {
-            if let Err(e) = journal.append(mutation.clone()) {
-                // WAL failed: Roll back in-memory application so project state is preserved
-                let _ = command.inverse().apply(project);
-                log::error!("WAL append failed during execute_with_journal: {}", e);
-                return Err(CommandError::JournalError(e));
-            }
+        if let Err(e) = journal.append_batch(&mutations) {
+            // WAL failed: Roll back in-memory application so project state is preserved
+            let _ = command.inverse().apply(project);
+            log::error!("WAL append failed during execute_with_journal: {}", e);
+            return Err(CommandError::JournalError(e));
         }
 
         self.undo_stack.push(command);
@@ -981,14 +979,13 @@ impl CommandHistory {
                 return Err(e);
             }
 
-            for mutation in inverse.to_mutations() {
-                if let Err(e) = journal.append(mutation) {
-                    // Roll back in-memory inverse by reapplying original command
-                    let _ = command.apply(project);
-                    self.undo_stack.push(command);
-                    log::error!("WAL append failed during undo_with_journal: {}", e);
-                    return Err(CommandError::JournalError(e));
-                }
+            let mutations = inverse.to_mutations();
+            if let Err(e) = journal.append_batch(&mutations) {
+                // Roll back in-memory inverse by reapplying original command
+                let _ = command.apply(project);
+                self.undo_stack.push(command);
+                log::error!("WAL append failed during undo_with_journal: {}", e);
+                return Err(CommandError::JournalError(e));
             }
 
             self.redo_stack.push(command);
@@ -1015,14 +1012,13 @@ impl CommandHistory {
                 return Err(e);
             }
 
-            for mutation in command.to_mutations() {
-                if let Err(e) = journal.append(mutation) {
-                    // Roll back by applying inverse
-                    let _ = command.inverse().apply(project);
-                    self.redo_stack.push(command);
-                    log::error!("WAL append failed during redo_with_journal: {}", e);
-                    return Err(CommandError::JournalError(e));
-                }
+            let mutations = command.to_mutations();
+            if let Err(e) = journal.append_batch(&mutations) {
+                // Roll back by applying inverse
+                let _ = command.inverse().apply(project);
+                self.redo_stack.push(command);
+                log::error!("WAL append failed during redo_with_journal: {}", e);
+                return Err(CommandError::JournalError(e));
             }
 
             self.undo_stack.push(command);

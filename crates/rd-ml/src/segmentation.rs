@@ -518,19 +518,19 @@ pub fn composite_segmented_frame(
 
     match bg {
         CompositeBackground::Transparent => {
-            for i in 0..n {
+            for (i, &mask_a) in mask.alpha_bytes[..n].iter().enumerate() {
                 let px = i * 4;
                 out_rgba[px] = fg_rgba[px];
                 out_rgba[px + 1] = fg_rgba[px + 1];
                 out_rgba[px + 2] = fg_rgba[px + 2];
-                let alpha = (fg_rgba[px + 3] as u32 * mask.alpha_bytes[i] as u32 / 255) as u8;
+                let alpha = (fg_rgba[px + 3] as u32 * mask_a as u32 / 255) as u8;
                 out_rgba[px + 3] = alpha;
             }
         }
         CompositeBackground::SolidColor(c) => {
-            for i in 0..n {
+            for (i, &mask_a) in mask.alpha_bytes[..n].iter().enumerate() {
                 let px = i * 4;
-                let a = mask.alpha_bytes[i] as f32 / 255.0;
+                let a = mask_a as f32 / 255.0;
                 let inv_a = 1.0 - a;
                 out_rgba[px] = (fg_rgba[px] as f32 * a + c[0] as f32 * inv_a) as u8;
                 out_rgba[px + 1] = (fg_rgba[px + 1] as f32 * a + c[1] as f32 * inv_a) as u8;
@@ -540,9 +540,9 @@ pub fn composite_segmented_frame(
         }
         CompositeBackground::CustomImage(bg_buf) => {
             let bg_len = bg_buf.len();
-            for i in 0..n {
+            for (i, &mask_a) in mask.alpha_bytes[..n].iter().enumerate() {
                 let px = i * 4;
-                let a = mask.alpha_bytes[i] as f32 / 255.0;
+                let a = mask_a as f32 / 255.0;
                 let inv_a = 1.0 - a;
                 let (br, bg_c, bb) = if px + 3 < bg_len {
                     (
