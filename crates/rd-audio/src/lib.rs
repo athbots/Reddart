@@ -8,6 +8,7 @@ pub mod decode;
 pub mod engine;
 pub mod eq;
 pub mod mixer;
+pub mod ring;
 pub mod spatial;
 pub mod spectrum;
 pub mod timeline;
@@ -17,6 +18,7 @@ pub use decode::decode_audio_to_pcm;
 pub use engine::{AudioEngine, AudioTelemetry, MeteringState, amp_to_dbfs};
 pub use eq::{BiquadCoeffs, BiquadState, EqBand, FilterType, ParametricEqualizer};
 pub use mixer::AudioMixer;
+pub use ring::{AtomicF32, PcmRingBuffer};
 pub use spatial::{
     ChannelLayout, ItuDownmixer, MultichannelMixer, MultichannelTelemetry, MultichannelTrack,
     SpatialPanner, SpatialParams,
