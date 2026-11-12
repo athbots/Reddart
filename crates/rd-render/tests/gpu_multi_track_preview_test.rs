@@ -52,7 +52,10 @@ fn test_gpu_multi_track_compositing_execution() {
             label: Some("Multi-Track 2-Layer Encoder"),
         });
 
-    let layers = [(&view_blue, 1.0f32, 0u32), (&view_yellow, 0.5f32, 0u32)];
+    let layers = [
+        (&view_blue, 1.0f32, 0u32),
+        (&view_yellow, 0.5f32, 0u32),
+    ];
 
     compositor.render_multi_track(&mut encoder, &layers, &view_ping, &view_out);
     compositor.queue().submit([encoder.finish()]);
@@ -63,19 +66,20 @@ fn test_gpu_multi_track_compositing_execution() {
     let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) & !(align - 1);
     let buffer_size = (padded_bytes_per_row * height) as u64;
 
-    let staging_buffer = compositor.device().create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Readback Buffer"),
-        size: buffer_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
+    let staging_buffer = compositor
+        .device()
+        .create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Readback Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
 
-    let mut copy_encoder =
-        compositor
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Copy Encoder"),
-            });
+    let mut copy_encoder = compositor
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Copy Encoder"),
+        });
 
     copy_encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -140,12 +144,11 @@ fn test_gpu_multi_track_compositing_execution() {
 
     // 3. Test 4-layer, 8-layer, and 16-layer GPU multi-track composite without errors
     for track_count in [4, 8, 16] {
-        let mut multi_encoder =
-            compositor
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Multi-Track Stress Encoder"),
-                });
+        let mut multi_encoder = compositor
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Multi-Track Stress Encoder"),
+            });
 
         let layer_refs: Vec<(&wgpu::TextureView, f32, u32)> = (0..track_count)
             .map(|i| {
@@ -158,7 +161,12 @@ fn test_gpu_multi_track_compositing_execution() {
             .collect();
 
         let t0 = Instant::now();
-        compositor.render_multi_track(&mut multi_encoder, &layer_refs, &view_ping, &view_out);
+        compositor.render_multi_track(
+            &mut multi_encoder,
+            &layer_refs,
+            &view_ping,
+            &view_out,
+        );
         compositor.queue().submit([multi_encoder.finish()]);
         compositor
             .device()
@@ -193,8 +201,11 @@ fn test_cpu_to_gpu_multi_track_preview_upload_latency() {
                 2 => [30, 30, 200, 255],
                 _ => [200, 200, 30, 255],
             };
-            let mut layer =
-                CompositorLayer::new(color.repeat((width * height) as usize), width, height);
+            let mut layer = CompositorLayer::new(
+                color.repeat((width * height) as usize),
+                width,
+                height,
+            );
             layer.opacity = 0.5;
             layer.pos_x = (i as f32 - 4.0) * 0.1;
             layer.scale_x = 0.8;
@@ -207,7 +218,10 @@ fn test_cpu_to_gpu_multi_track_preview_upload_latency() {
     composite_layers_over(&mut master_buffer, width, height, &layers);
     let composite_duration = t0.elapsed();
 
-    println!("8-layer 1080p composite duration: {:?}", composite_duration);
+    println!(
+        "8-layer 1080p composite duration: {:?}",
+        composite_duration
+    );
 
     // Verify non-zero blended output at center
     let center_idx = ((1080 / 2 * 1920 + 1920 / 2) * 4) as usize;

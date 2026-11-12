@@ -47,7 +47,8 @@ fn run_dag_benchmark(label: &str, track_count: usize, clips_per_track: usize, it
 
     // Measured iterations
     for i in 0..iterations {
-        let time_us = ((i as i64 * total_dur) / iterations as i64).min(total_dur.saturating_sub(1));
+        let time_us =
+            ((i as i64 * total_dur) / iterations as i64).min(total_dur.saturating_sub(1));
         let t0 = Instant::now();
 
         let graph = RenderGraph::compile_timeline(&project, time_us);
@@ -114,8 +115,11 @@ fn run_multitrack_preview_benchmark(
                 2 => [40, 40, 210, 255],
                 _ => [210, 210, 40, 255],
             };
-            let mut layer =
-                CompositorLayer::new(color.repeat((width * height) as usize), width, height);
+            let mut layer = CompositorLayer::new(
+                color.repeat((width * height) as usize),
+                width,
+                height,
+            );
             layer.opacity = 1.0 / (1.0 + i as f32 * 0.1);
             if i > 0 {
                 layer.scale_x = 0.85;
@@ -192,9 +196,7 @@ fn run_multitrack_preview_benchmark(
                     depth_or_array_layers: 1,
                 },
             );
-            comp.device()
-                .poll(wgpu::Maintain::wait())
-                .panic_on_timeout();
+            comp.device().poll(wgpu::Maintain::wait()).panic_on_timeout();
             let elapsed = t0.elapsed();
             upload_latencies_us.push(elapsed.as_secs_f64() * 1_000_000.0);
         }
@@ -215,11 +217,7 @@ fn run_multitrack_preview_benchmark(
         let (tex_out, view_out) = comp.create_texture(width, height, format, "Bench Out");
         let gpu_layer_textures: Vec<_> = (0..track_count)
             .map(|i| {
-                let col = if i % 2 == 0 {
-                    [200, 50, 50, 255]
-                } else {
-                    [50, 200, 50, 255]
-                };
+                let col = if i % 2 == 0 { [200, 50, 50, 255] } else { [50, 200, 50, 255] };
                 comp.create_solid_texture(width, height, format, col)
             })
             .collect();
@@ -231,17 +229,13 @@ fn run_multitrack_preview_benchmark(
 
         let mut gpu_shader_latencies_us: Vec<f64> = Vec::with_capacity(iterations);
         for _ in 0..iterations {
-            let mut encoder =
-                comp.device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Bench Multi-Track Encoder"),
-                    });
+            let mut encoder = comp.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Bench Multi-Track Encoder"),
+            });
             let t0 = Instant::now();
             comp.render_multi_track(&mut encoder, &gpu_layer_views, &view_ping, &view_out);
             comp.queue().submit([encoder.finish()]);
-            comp.device()
-                .poll(wgpu::Maintain::wait())
-                .panic_on_timeout();
+            comp.device().poll(wgpu::Maintain::wait()).panic_on_timeout();
             let elapsed = t0.elapsed();
             gpu_shader_latencies_us.push(elapsed.as_secs_f64() * 1_000_000.0);
         }
