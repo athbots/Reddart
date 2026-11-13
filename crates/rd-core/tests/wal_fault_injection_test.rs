@@ -10,7 +10,7 @@
 
 use rd_core::{
     Clip, ClipId, ClipKind, Command, CommandError, CommandHistory, JournalEntry, JournalMutation,
-    Project, ProjectJournal, TrackId, TrackKind, Transform2D, VideoClip,
+    Project, ProjectJournal, TimelineMarker, TrackId, TrackKind, Transform2D, VideoClip,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -612,6 +612,373 @@ fn test_wal_compound_transaction_failure_handling() {
         let mut restore = fs::metadata(&wal_path).unwrap().permissions();
         restore.set_readonly(false);
         let _ = fs::set_permissions(&wal_path, restore);
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_interrupted_writes_mid_record_truncation_and_continuation() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("interrupted_write");
+    let wal_path = proj_path.with_extension("reddart.wal");
+    let tid = TrackId(1);
+
+    // 1. Write 3 valid mutations
+    {
+        let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+        journal
+            .append(JournalMutation::AddTrack {
+                id: tid,
+                kind: TrackKind::Video,
+                name: "V1".into(),
+            })
+            .unwrap();
+        journal
+            .append(JournalMutation::AddMarker {
+                id: 1,
+                time_us: 1_000_000,
+                name: "M1".into(),
+                color_rgb: [10, 20, 30],
+            })
+            .unwrap();
+        journal
+            .append(JournalMutation::AddMarker {
+                id: 2,
+                time_us: 2_000_000,
+                name: "M2".into(),
+                color_rgb: [40, 50, 60],
+            })
+            .unwrap();
+    }
+
+    // 2. Inject interrupted partial record write without trailing newline
+    {
+        let mut f = OpenOptions::new().append(true).open(&wal_path).unwrap();
+        f.write_all(
+            b"{\"seq\":4,\"crc32\":987654321,\"mutation\":{\"type\":\"AddMarker\",\"id\":3,\"time_",
+        )
+        .unwrap();
+        f.flush().unwrap();
+    }
+
+    // 3. Open journal and replay: must truncate torn record, recover first 3 entries
+    let mut project = Project::new("Interrupted Write Test");
+    let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+    let report = journal.replay_into(&mut project).unwrap();
+
+    assert_eq!(report.valid_records_replayed, 3);
+    assert_eq!(report.corrupt_records_detected, 1);
+    assert!(report.torn_tail_bytes_truncated > 0);
+    assert_eq!(project.timeline.track_count(), 1);
+    assert_eq!(project.timeline.markers.len(), 2);
+    assert_eq!(journal.current_seq(), 3);
+
+    // 4. Continue writing: append valid entry with seq=4
+    let e4 = journal
+        .append(JournalMutation::AddMarker {
+            id: 4,
+            time_us: 4_000_000,
+            name: "M4 Valid".into(),
+            color_rgb: [100, 100, 100],
+        })
+        .unwrap();
+    assert_eq!(e4.seq, 4);
+    assert_eq!(journal.current_seq(), 4);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_interrupted_batch_commit_mid_write_recovery() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("interrupted_batch");
+    let wal_path = proj_path.with_extension("reddart.wal");
+    let tid = TrackId(2);
+
+    // 1. Initial valid baseline
+    {
+        let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+        journal
+            .append(JournalMutation::AddTrack {
+                id: tid,
+                kind: TrackKind::Video,
+                name: "V2".into(),
+            })
+            .unwrap();
+    }
+
+    // 2. Prepare a 3-item batch where the 3rd item is truncated midway through disk flush
+    let entry1 = JournalEntry::new(
+        2,
+        JournalMutation::AddMarker {
+            id: 10,
+            time_us: 100_000,
+            name: "B1".into(),
+            color_rgb: [1, 2, 3],
+        },
+    );
+    let entry2 = JournalEntry::new(
+        3,
+        JournalMutation::AddMarker {
+            id: 20,
+            time_us: 200_000,
+            name: "B2".into(),
+            color_rgb: [4, 5, 6],
+        },
+    );
+
+    {
+        let mut f = OpenOptions::new().append(true).open(&wal_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&entry1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&entry2).unwrap()).unwrap();
+        // Truncated third entry of batch
+        f.write_all(b"{\"seq\":4,\"crc32\":12345,\"mutation\":{\"type\":\"AddMarker\"")
+            .unwrap();
+        f.flush().unwrap();
+    }
+
+    // 3. Replay into project
+    let mut project = Project::new("Interrupted Batch Test");
+    let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+    let report = journal.replay_into(&mut project).unwrap();
+
+    assert_eq!(report.valid_records_replayed, 3); // Seq 1, 2, 3
+    assert_eq!(report.corrupt_records_detected, 1);
+    assert_eq!(project.timeline.markers.len(), 2);
+    assert_eq!(journal.current_seq(), 3);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_checkpoint_crash_with_orphaned_temp_file_recovery() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("checkpoint_temp_crash");
+
+    let mut project = Project::new("Base Project Before Checkpoint");
+    let tid = project.timeline.add_track(TrackKind::Video, "V1");
+    let clip = make_test_clip("original.mp4", 0, 5_000_000);
+    project.timeline.track_mut(tid).unwrap().add_clip(clip);
+    project.save_atomic(&proj_path).unwrap();
+
+    // Append uncommitted edits to WAL
+    {
+        let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+        journal
+            .append(JournalMutation::AddMarker {
+                id: 1,
+                time_us: 2_500_000,
+                name: "Uncommitted Cut".into(),
+                color_rgb: [255, 0, 0],
+            })
+            .unwrap();
+    }
+
+    // Simulate crash during checkpoint save_atomic: create orphaned partial temp file
+    let orphaned_tmp = temp_dir.join(format!(".project_{}.tmp", Uuid::new_v4()));
+    fs::write(&orphaned_tmp, b"{\"truncated_json\": true, incomplete").unwrap();
+
+    // Verify recovery loads project, replays uncommitted WAL edit, and ignores/survives orphaned temp file
+    let (recovered, report) = Project::load_file_with_recovery(&proj_path).unwrap();
+    assert!(report.is_some());
+    assert_eq!(report.unwrap().valid_records_replayed, 1);
+    assert_eq!(recovered.timeline.markers.len(), 1);
+    assert_eq!(recovered.timeline.markers[0].name, "Uncommitted Cut");
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_checkpoint_crash_mid_journal_compaction_recovery() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("checkpoint_compaction_crash");
+    let wal_path = proj_path.with_extension("reddart.wal");
+
+    let mut project = Project::new("Compacted Base");
+    let _ = project.timeline.add_track(TrackKind::Video, "V1");
+    project.timeline.insert_marker(TimelineMarker {
+        id: 10,
+        time_us: 1_000_000,
+        name: "Checkpoint Baseline".into(),
+        color_rgb: [0, 255, 0],
+    });
+    // Checkpoint project file is saved
+    project.save_atomic(&proj_path).unwrap();
+
+    // Simulate crash mid-compaction of .wal file (torn sentinel)
+    {
+        let mut f = File::create(&wal_path).unwrap();
+        f.write_all(b"{\"seq\":1,\"crc32\":0,\"mutation\":{\"type\":\"Checkpoint\",\"sequence\":1")
+            .unwrap();
+        f.flush().unwrap();
+    }
+
+    // Recover project: must safely truncate torn sentinel and load base project intact
+    let (recovered, report) = Project::load_file_with_recovery(&proj_path).unwrap();
+    let rep = report.expect("Replay report present");
+    assert_eq!(rep.corrupt_records_detected, 1);
+    assert_eq!(recovered.timeline.markers.len(), 1);
+    assert_eq!(recovered.timeline.markers[0].name, "Checkpoint Baseline");
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_wal_application_restart_full_lifecycle() {
+    let (temp_dir, proj_path) = create_temp_wal_dir("app_restart_lifecycle");
+
+    // -------------------------------------------------------------
+    // Session 1: Launch app, create project, perform edits, save checkpoint
+    // -------------------------------------------------------------
+    let tid_v1 = TrackId(1);
+    let tid_a1 = TrackId(2);
+    let clip1 = make_test_clip("intro.mp4", 0, 4_000_000);
+    let cid1 = clip1.id;
+
+    {
+        let mut project = Project::new("Production Documentary");
+        project
+            .timeline
+            .insert_track_with_id(tid_v1, 0, TrackKind::Video, "V1");
+        project
+            .timeline
+            .insert_track_with_id(tid_a1, 1, TrackKind::Audio, "A1");
+        project
+            .timeline
+            .track_mut(tid_v1)
+            .unwrap()
+            .add_clip(clip1.clone());
+        project.timeline.mark_in_us = Some(0);
+        project.timeline.mark_out_us = Some(10_000_000);
+
+        // Checkpoint project to disk
+        let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+        journal.checkpoint(&project, &proj_path).unwrap();
+
+        // Perform active edits recorded in WAL
+        let mut history = CommandHistory::new(50);
+
+        // 1. Add clip 2
+        let clip2 = make_test_clip("b_roll.mp4", 4_000_000, 3_000_000);
+        let cid2 = clip2.id;
+        history
+            .execute_with_journal(
+                Command::AddClip {
+                    track_id: tid_v1,
+                    clip: clip2,
+                },
+                &mut project,
+                &mut journal,
+            )
+            .unwrap();
+
+        // 2. Add marker
+        history
+            .execute_with_journal(
+                Command::AddMarker {
+                    marker: TimelineMarker {
+                        id: 50,
+                        time_us: 4_000_000,
+                        name: "Cut Point".into(),
+                        color_rgb: [255, 200, 0],
+                    },
+                },
+                &mut project,
+                &mut journal,
+            )
+            .unwrap();
+
+        // 3. Move clip 2
+        history
+            .execute_with_journal(
+                Command::MoveClip {
+                    track_id: tid_v1,
+                    clip_id: cid2,
+                    old_position_us: 4_000_000,
+                    new_position_us: 5_000_000,
+                },
+                &mut project,
+                &mut journal,
+            )
+            .unwrap();
+
+        // Abrupt crash: process exits immediately without checkpointing!
+        // `project`, `journal`, and `history` are dropped without cleanup.
+    }
+
+    // -------------------------------------------------------------
+    // Session 2: Application Restart after crash
+    // -------------------------------------------------------------
+    {
+        // Reopen project via load_file_with_recovery
+        let (mut recovered, report) = Project::load_file_with_recovery(&proj_path).unwrap();
+        let rep = report.expect("Recovery report generated");
+        assert_eq!(rep.valid_records_replayed, 3);
+        assert_eq!(rep.failed_mutations, 0);
+        assert_eq!(rep.corrupt_records_detected, 0);
+
+        // Assert all edits are fully restored
+        let v1 = recovered.timeline.track(tid_v1).unwrap();
+        assert_eq!(v1.clips().len(), 2);
+        assert_eq!(v1.clip(cid1).unwrap().position_us, 0);
+        // Clip 2 was moved to 5_000_000
+        let c2_recovered = v1
+            .clips()
+            .iter()
+            .find(|c| c.position_us == 5_000_000)
+            .unwrap();
+        assert_eq!(c2_recovered.duration_us(), 3_000_000);
+        assert_eq!(recovered.timeline.markers.len(), 1);
+        assert_eq!(recovered.timeline.markers[0].name, "Cut Point");
+
+        // Continue editing in the recovered session
+        let mut journal = ProjectJournal::open_or_create(&proj_path).unwrap();
+        let mut history = CommandHistory::new(50);
+
+        history
+            .execute_with_journal(
+                Command::SetSpeed {
+                    track_id: tid_v1,
+                    clip_id: cid1,
+                    old_speed: 1.0,
+                    new_speed: 2.0,
+                },
+                &mut recovered,
+                &mut journal,
+            )
+            .unwrap();
+
+        assert_eq!(
+            recovered
+                .timeline
+                .track(tid_v1)
+                .unwrap()
+                .clip(cid1)
+                .unwrap()
+                .speed,
+            2.0
+        );
+
+        // Perform clean checkpoint and shutdown
+        journal.checkpoint(&recovered, &proj_path).unwrap();
+    }
+
+    // -------------------------------------------------------------
+    // Session 3: Clean Launch
+    // -------------------------------------------------------------
+    {
+        let (clean_project, report) = Project::load_file_with_recovery(&proj_path).unwrap();
+        // Since session 2 clean checkpointed, WAL has 0 uncommitted edits
+        assert_eq!(
+            clean_project
+                .timeline
+                .track(tid_v1)
+                .unwrap()
+                .clip(cid1)
+                .unwrap()
+                .speed,
+            2.0
+        );
+        if let Some(rep) = report {
+            assert_eq!(rep.valid_records_replayed, 0);
+        }
     }
 
     let _ = fs::remove_dir_all(&temp_dir);
