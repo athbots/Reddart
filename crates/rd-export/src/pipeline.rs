@@ -437,6 +437,15 @@ pub fn resolve_media_path(raw_path: &str) -> Option<PathBuf> {
 
 /// Mix audio from all enabled tracks of the project into a 48 kHz stereo 32-bit float PCM file.
 pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<PathBuf> {
+    mix_project_audio_range(project, 0, duration_s)
+}
+
+/// Mix project audio over an explicit timeline time window [start_us, start_us + duration_s].
+pub fn mix_project_audio_range(
+    project: &Project,
+    start_us: i64,
+    duration_s: f64,
+) -> std::io::Result<PathBuf> {
     let temp_audio_path =
         std::env::temp_dir().join(format!("reddart_exp_audio_{}.pcm", uuid::Uuid::new_v4()));
     let total_frames = (duration_s.max(0.1) * 48000.0).round() as usize;
@@ -461,17 +470,28 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
                     .or_insert_with(|| rd_audio::decode_audio_to_pcm(&path).unwrap_or_default());
 
                 if !pcm.is_empty() {
-                    let clip_start_frame =
-                        ((clip.position_us.max(0) as f64 / 1_000_000.0) * 48000.0).round() as usize;
+                    let clip_end_us = clip.position_us + clip.duration_us();
+                    let end_us = start_us + (duration_s * 1_000_000.0).round() as i64;
+                    if clip_end_us <= start_us || clip.position_us >= end_us {
+                        continue;
+                    }
+
+                    let speed = clip.speed.abs().max(0.0001);
                     let source_start_frame = ((clip.source_in_us.max(0) as f64 / 1_000_000.0)
                         * 48000.0)
                         .round() as usize;
                     let clip_duration_frames =
                         ((clip.duration_us() as f64 / 1_000_000.0) * 48000.0).round() as usize;
-                    let speed = clip.speed.abs().max(0.0001);
 
                     for frame_i in 0..clip_duration_frames {
-                        let dst_frame = clip_start_frame + frame_i;
+                        let timeline_frame_time_us =
+                            clip.position_us + ((frame_i as f64 / 48000.0) * 1_000_000.0) as i64;
+                        if timeline_frame_time_us < start_us {
+                            continue;
+                        }
+                        let dst_frame = (((timeline_frame_time_us - start_us) as f64 / 1_000_000.0)
+                            * 48000.0)
+                            .round() as usize;
                         if dst_frame >= total_frames {
                             break;
                         }
@@ -483,9 +503,7 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
                             break;
                         }
 
-                        let time_us =
-                            clip.position_us + ((frame_i as f64 / 48000.0) * 1_000_000.0) as i64;
-                        let vol = clip.effective_volume(time_us);
+                        let vol = clip.effective_volume(timeline_frame_time_us);
                         let pan = clip.pan.clamp(-1.0, 1.0);
                         let pan_l = ((1.0 - pan) * 0.5).clamp(0.0, 1.0);
                         let pan_r = ((1.0 + pan) * 0.5).clamp(0.0, 1.0);
@@ -745,12 +763,27 @@ pub fn render_project_to_file(
     progress_tx: Option<&Sender<ExportProgress>>,
     cancel_flag: Option<&Arc<AtomicBool>>,
 ) -> std::io::Result<()> {
-    let duration_us = req.project.timeline.duration_us();
+    let (start_us, duration_us) = match (
+        req.project.timeline.mark_in_us,
+        req.project.timeline.mark_out_us,
+    ) {
+        (Some(in_us), Some(out_us)) if out_us > in_us => (in_us, out_us - in_us),
+        (Some(in_us), None) => {
+            let total = req.project.timeline.duration_us();
+            if total > in_us {
+                (in_us, total - in_us)
+            } else {
+                (0, total)
+            }
+        }
+        (None, Some(out_us)) => (0, out_us),
+        _ => (0, req.project.timeline.duration_us()),
+    };
     let duration_s = (duration_us as f64 / 1_000_000.0).max(0.1);
     let total_frames = ((duration_s * req.preset.fps).round() as u64).max(1);
 
     // 1. Mix project audio into temporary PCM file
-    let temp_audio_path = mix_project_audio(req.project, duration_s)?;
+    let temp_audio_path = mix_project_audio_range(req.project, start_us, duration_s)?;
 
     // 2. Select best encoder and spawn FFmpeg child process
     let encoder = select_encoder(&req.preset.video_codec);
@@ -838,7 +871,7 @@ pub fn render_project_to_file(
             return Err(std::io::Error::other("Export cancelled by user"));
         }
 
-        let time_us = ((frame_idx as f64 / req.preset.fps) * 1_000_000.0).round() as i64;
+        let time_us = start_us + ((frame_idx as f64 / req.preset.fps) * 1_000_000.0).round() as i64;
 
         // Collect all active video clips across all enabled video tracks (ordered bottom to top)
         let mut active_layers: Vec<rd_render::CompositorLayer> = Vec::new();
