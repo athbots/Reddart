@@ -3,3 +3,8 @@ rustflags = [
     "-C", "link-arg=/Brepro",
     "-C", "link-arg=/PDBALTPATH:%_PDB%",
 ]
+
+[target.'cfg(all(target_os = "windows", target_env = "gnu"))']
+rustflags = [
+    "-C", "link-arg=-Wl,--no-insert-timestamp",
+]

@@ -1,16 +1,16 @@
-# Reddart v1.0.0 Production Release: Integrated Editing Workflow & Media Engine
+# Reddart v1.1.0 Production Release: Integrated Editing Workflow & Media Engine
 
-**Release Tag:** `v1.0.0`  
-**Distribution Archive:** `Reddart-v1.0.0-Windows-x86_64.zip`  
-**Binary Checksum (SHA-256):** `ab848fbaa8113a18cefd86ce07570bf9b500a58180077988a23b885b79972cab`  
-**Archive Checksum (SHA-256):** `561209508533f0d8deb418a88d3348ac7a64aca23c92598be3f5c92994073e87`
+**Release Tag:** `v1.1.0`  
+**Distribution Archive:** `Reddart-v1.1.0-Windows-x86_64.zip`  
+**Binary Checksum (SHA-256):** `12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f`  
+**Archive Checksum (SHA-256):** `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
 **MSRV:** Rust 1.85.0 (2024 Edition)  
 
 ---
 
 ## 1. Verified Production Capabilities
 
-Reddart v1.0.0 is officially released for production use by creators on Windows 10 and Windows 11:
+Reddart v1.1.0 is officially released for production use by creators on Windows 10 and Windows 11:
 
 ### Core Editing & Timeline Deck
 - **NLE Editing Tools:** Full implementation of Selection (`V`), Razor Split (`C`), Ripple Trim Out (`B`), Roll Edit (`N`), Slip (`Y`), Slide (`U`), and Cue Marker (`M`) tools.
@@ -50,7 +50,7 @@ Reddart v1.0.0 is officially released for production use by creators on Windows 
 As a public beta release, creators should be aware of the following known architectural limitations:
 
 1. **Nested Compound Clips / Sub-Sequences:**  
-   *Current State:* The v1.0.0 timeline supports flat multi-track arrangements of video and audio tracks. Timeline nesting (placing a timeline inside another timeline) is scheduled for Phase II.  
+   *Current State:* The timeline supports flat multi-track arrangements of video and audio tracks. Nested timelines (placing a sequence inside another sequence) are scheduled for Phase II.  
    *Workaround:* Render sub-sequences headlessly to an intermediate MP4 (`reddart export sub.reddart -o sub.mp4`) and import into the main project.
 2. **Text / Title Generator Overlay:**  
    *Current State:* Subtitles and caption tracks render via `rd-ml` whisper integration; arbitrary rich-text graphical title animators are currently being migrated to WGSL signed distance field text rendering.  
