@@ -2780,6 +2780,7 @@ dependencies = [
  "rd-render",
  "rfd",
  "tokio",
+ "uuid",
  "wgpu",
  "winit",
 ]

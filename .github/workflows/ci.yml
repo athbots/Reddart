@@ -78,6 +78,25 @@ jobs:
         run: |
           ./scripts/package_windows.ps1 -VerifyReproducibility
 
+  clean-machine-qa:
+    name: Clean Machine QA (Zero Cache)
+    runs-on: windows-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Clean Machine FFmpeg Setup
+        shell: pwsh
+        run: |
+          ./scripts/setup_ffmpeg.ps1
+
+      - name: Execute Clean Machine QA Test Suite
+        env:
+          CI: "true"
+          REDDART_REQUIRE_FFMPEG: "1"
+        run: cargo test -p reddart-windows --test clean_machine_qa_test -- --nocapture
+
   test-cross-platform:
     name: Core Engine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
