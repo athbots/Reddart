@@ -121,6 +121,13 @@ function Stage-DistributionPackage ($StagingPath, $BinaryPath = $TargetRelease) 
 if (-not $SkipBuild) {
     Write-Host "[1/7] Building release binary via Cargo (cargo build --release --locked -p reddart-windows)..." -ForegroundColor Yellow
     Push-Location $RootDir
+    cargo clean -p reddart-windows
+    if (Test-Path (Join-Path $RootDir "target\release\reddart.exe")) {
+        Remove-Item -Force (Join-Path $RootDir "target\release\reddart.exe")
+    }
+    if (Test-Path (Join-Path $RootDir "target\release\deps\reddart*")) {
+        Remove-Item -Force (Join-Path $RootDir "target\release\deps\reddart*")
+    }
     cargo build --release --locked -p reddart-windows
     $BuildExitCode = $LASTEXITCODE
     Pop-Location
