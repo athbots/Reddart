@@ -1,9 +1,8 @@
-# Reddart — Remaining Task Backlog & Execution Ledger
+# Reddart — Production Milestone Completion & Future Roadmap Ledger
 
 > [!IMPORTANT]
-> **Execution Status:** Items 1 through 7 are **100% complete, verified with dedicated test suites, and merged into `master`**. All CI workflows are green across Windows, Ubuntu, and macOS.
->
-> The final remaining milestone is **Item 8: Reconcile and Publish Release**.
+> **Execution Status:** All 8 primary production launch and verification items are **100% COMPLETE, TESTED, MERGED INTO `master`, AND PUBLISHED AS OFFICIAL GITHUB RELEASE [v1.1.0](https://github.com/athbots/Reddart/releases/tag/v1.1.0)**.
+> All automated CI suites are green across Windows, Ubuntu, and macOS. Release assets have been verified bit-for-bit.
 
 ---
 
@@ -19,7 +18,7 @@
 | **—** | Website Unicode Mojibake & Asset Fix | ✅ **MERGED** | `fix/website-mojibake-and-assets` | [#30](https://github.com/athbots/Reddart/pull/30) | `2d85bde` | `43368037031` | 4/4 Pass |
 | **6** | Streaming Export Memory Bounds & Range Accuracy | ✅ **MERGED** | `test/streaming-export-verification` | [#31](https://github.com/athbots/Reddart/pull/31) | `5ad14d9` | `43370892515` | 4/4 Pass |
 | **7** | Clean-Machine QA (Zero-Cache Runner & CLI) | ✅ **MERGED** | `test/clean-machine-qa` | [#32](https://github.com/athbots/Reddart/pull/32) | `b219a10` | `43376327991` | 5/5 Pass |
-| **8** | Reconcile Checksums & Publish Release | 🟡 **IN PROGRESS** | `release/v1.1.0` | Submitting PR | `12cc0c6e...` | Local Repro Verified | 3/3 Tests Pass |
+| **8** | Reconcile Checksums & Publish Release v1.1.0 | ✅ **PUBLISHED** | `release/v1.1.0` | [#33](https://github.com/athbots/Reddart/pull/33) | `2bf85ea` | `43425796153` | 5/5 Pass |
 
 ---
 
@@ -51,7 +50,7 @@
 - **Result:** 9/9 stress tests pass; clock drift bounded under 0.02 µs after 30 minutes; instant recovery from buffer underruns with zero pops/clicks.
 
 ### Polish: Website Encoding & Mojibake Elimination (PR #30)
-- **Scope:** Removed all corrupted multi-byte UTF-8 sequences (`ÃƒÆ'Ã†â€™...`) from `website/index.html`.
+- **Scope:** Removed all corrupted multi-byte UTF-8 sequences from `website/index.html`.
 - **Result:** Validated clean W3C HTML5 compliance and deployed live to GitHub Pages.
 
 ### Item 6: Streaming Export Verification (PR #31)
@@ -72,28 +71,33 @@
 - **Result:** 4/4 integration tests pass; CI completed in 5m32s.
 - **Documentation:** `docs/CLEAN_MACHINE_QA_REPORT.md`
 
+### Item 8: Reconcile Checksums & Publish Release v1.1.0 (PR #33)
+- **Scope:** Packaged production binaries, verified dual-pass clean build determinism, synchronized all manifests and documentation, merged PR #33, and published official GitHub release.
+- **Release URL:** [https://github.com/athbots/Reddart/releases/tag/v1.1.0](https://github.com/athbots/Reddart/releases/tag/v1.1.0)
+- **Published Checksums:**
+  - `Reddart.exe`: `12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f`
+  - `Reddart-v1.1.0-Windows-x86_64.zip`: `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
+- **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
+
 ---
 
-## 🟡 Active Task: Item 8 — Reconcile and Publish Release v1.1.0
+## 🚀 Phase II Forward Roadmap (Future Milestones)
 
-### Objective
-Synchronize release metadata, package authoritative production binaries with verified cryptographic checksums from the passing build, and cut the official GitHub Release v1.1.0.
+With Phase I (v1.0.0 and v1.1.0) production-certified and sealed, the following architectural enhancements comprise the future engineering backlog:
 
-### Authoritative Build Telemetry (v1.1.0 Local Reproducible Build)
-- **Locked Target Executable:** `ready_to_use/windows/Reddart.exe`
-  - **SHA-256 Checksum:** `12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f`
-- **Deterministic Distribution Archive:** `ready_to_use/windows/Reddart-v1.1.0-Windows-x86_64.zip`
-  - **SHA-256 Checksum:** `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
-- **Bit-for-Bit Determinism:** Verified across dual isolated compilation passes in `package_windows.ps1 -VerifyReproducibility` (`[OK] Bit-for-bit clean-build binary reproducibility verified`).
-- **Release Integrity Tests:** `cargo test -p rd-export --test release_integrity_test` passed (3/3).
-- **Format & Clippy:** `cargo fmt` clean, `cargo clippy -D warnings` passed (0 warnings).
-
-### Step-by-Step Execution Plan for Item 8:
-1. **Branch Staging:** Stage all v1.1.0 release files on `release/v1.1.0`.
-2. **Commit and Push:** Commit with descriptive changelog and push to `origin/release/v1.1.0`.
-3. **Open Pull Request:** Create PR to `master`.
-4. **CI Validation:** Wait for all 5 CI checks to pass green.
-5. **Merge to Master:** Fast-forward/merge PR into `master`.
-6. **Publish GitHub Release:** Execute `gh release create v1.1.0` attaching `Reddart-v1.1.0-Windows-x86_64.zip`, `Reddart.exe`, `SHA256SUMS.txt`, `VERSION.txt` with `CHANGELOG.md`.
-7. **Post-Release Verification:** Download asset via `curl` and verify SHA-256 match.
+1. **Nested Timelines & Compound Sequences:**
+   - Multi-level timeline recursion allowing sequences to act as clips within other sequences.
+   - Dedicated timeline caching layer for pre-rendered sub-sequence DAG nodes.
+2. **GPU Signed Distance Field (SDF) Text Rendering:**
+   - Vector-sharp text rendering directly in WGSL shaders at arbitrary zoom levels.
+   - Rich typography controls (tracking, leading, stroke outlines, drop shadows).
+3. **Hardware-Accelerated Optical Flow Retiming:**
+   - Motion vector estimation for sub-frame interpolation and slow-motion synthesis.
+   - Integration with Vulkan Video / Direct3D 12 motion estimation features.
+4. **HDR / ACES Color Pipeline Expansion:**
+   - Full OCIO (OpenColorIO) configuration loading.
+   - 10-bit and 12-bit Rec.2020 / PQ / HLG monitoring on Windows HDR displays.
+5. **Cross-Platform Distribution Packaging:**
+   - macOS DMG and `.app` bundle notarization via Apple Developer CLI.
+   - Linux Flatpak and AppImage packaging with Wayland fractional scaling support.
 
