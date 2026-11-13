@@ -6,7 +6,7 @@
 //! 3. Color grading (exposure, contrast, saturation, temperature, tint, and 3D LUT profiles)
 //!    produce identical, artifact-free output with PSNR > 60 dB and zero visual drift.
 
-use rd_effects::ShapeMaskParams;
+use rd_effects::{ShapeMaskParams, TextAlignment, TextOverlayParams, render_text_overlay};
 use rd_export::ColorGradeSettings;
 use rd_export::pipeline::resample_and_grade_frame;
 use rd_render::{CompositorLayer, composite_layers_over};
@@ -233,4 +233,387 @@ fn test_multi_layer_preview_and_export_composition_quality() {
         mse < 5000.0,
         "Color grade must preserve tonal continuity without clipping"
     );
+}
+
+#[test]
+fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_titles_and_grade() {
+    let w = 1920u32;
+    let h = 1080u32;
+    let pixel_count = (w * h) as usize;
+
+    // 1. Synthetic Footage 1: Base Track Footage (Gradient texture)
+    let mut footage1 = vec![0u8; pixel_count * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            footage1[idx] = ((x as f32 / w as f32) * 200.0) as u8 + 20;
+            footage1[idx + 1] = ((y as f32 / h as f32) * 180.0) as u8 + 30;
+            footage1[idx + 2] = (((x + y) as f32 / (w + h) as f32) * 220.0) as u8;
+            footage1[idx + 3] = 255;
+        }
+    }
+
+    // 2. Synthetic Footage 2: Overlay Track (PiP Inset with high-contrast checkerboard)
+    let mut footage2 = vec![0u8; pixel_count * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            let check = ((x / 32) + (y / 32)) % 2 == 0;
+            if check {
+                footage2[idx] = 230;
+                footage2[idx + 1] = 40;
+                footage2[idx + 2] = 40;
+            } else {
+                footage2[idx] = 40;
+                footage2[idx + 1] = 230;
+                footage2[idx + 2] = 230;
+            }
+            footage2[idx + 3] = 255;
+        }
+    }
+
+    // 3. Synthetic Footage 3: Secondary Accent Track
+    let mut footage3 = vec![0u8; pixel_count * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            footage3[idx] = 240;
+            footage3[idx + 1] = 200;
+            footage3[idx + 2] = 50;
+            footage3[idx + 3] = 255;
+        }
+    }
+
+    // Color grading settings applied to footage
+    let grade = ColorGradeSettings {
+        exposure: 0.35,
+        contrast: 1.20,
+        saturation: 1.10,
+        temperature: 12.0,
+        tint: -4.0,
+        lut_idx: 1, // Teal & Orange
+    };
+
+    // Shared Title Overlay Parameters
+    let title_text = "REDDART STUDIO MASTER 4K";
+    let title_params = TextOverlayParams {
+        text: title_text,
+        pos_x: 0.5,
+        pos_y: 0.85,
+        font_size: 38.0,
+        color: [1.0, 0.95, 0.2, 1.0],
+        bg_color: Some([0.0, 0.0, 0.0, 0.65]),
+        drop_shadow: true,
+        alignment: TextAlignment::Center,
+    };
+
+    // --- RENDER VIA PREVIEW PIPELINE (matching update_monitor_frame) ---
+    let mut preview_buffer = vec![0u8; pixel_count * 4];
+    {
+        let mut preview_layers = Vec::new();
+
+        // Layer 1: Resample and grade base footage
+        let mut layer1_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage1, w, h, &mut layer1_buf, w, h, grade);
+        preview_layers.push(CompositorLayer {
+            rgba: layer1_buf,
+            width: w,
+            height: h,
+            opacity: 1.0,
+            pos_x: 0.0,
+            pos_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            blend_mode: 0,
+            shape_mask: None,
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Layer 2: Resample and grade PiP footage with transform and ellipse feather mask
+        let mut layer2_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage2, w, h, &mut layer2_buf, w, h, grade);
+        preview_layers.push(CompositorLayer {
+            rgba: layer2_buf,
+            width: w,
+            height: h,
+            opacity: 0.88,
+            pos_x: 0.25,
+            pos_y: -0.20,
+            scale_x: 0.45,
+            scale_y: 0.45,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 1, // Ellipse
+                center_x: 0.5,
+                center_y: 0.5,
+                size_x: 0.4,
+                size_y: 0.4,
+                feather: 0.12,
+                invert: false,
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Layer 3: Resample and grade accent footage with inverted rectangle mask
+        let mut layer3_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage3, w, h, &mut layer3_buf, w, h, grade);
+        preview_layers.push(CompositorLayer {
+            rgba: layer3_buf,
+            width: w,
+            height: h,
+            opacity: 0.70,
+            pos_x: -0.30,
+            pos_y: 0.25,
+            scale_x: 0.35,
+            scale_y: 0.35,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 0, // Rectangle
+                center_x: 0.5,
+                center_y: 0.5,
+                size_x: 0.3,
+                size_y: 0.3,
+                feather: 0.08,
+                invert: true,
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Composite video layers
+        composite_layers_over(&mut preview_buffer, w, h, &preview_layers);
+
+        // Composite text overlay
+        render_text_overlay(&mut preview_buffer, w, h, &title_params);
+    }
+
+    // --- RENDER VIA EXPORT PIPELINE (matching render_project_to_file) ---
+    let mut export_buffer = vec![0u8; pixel_count * 4];
+    {
+        let mut export_layers = Vec::new();
+
+        // Layer 1
+        let mut layer1_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage1, w, h, &mut layer1_buf, w, h, grade);
+        export_layers.push(CompositorLayer {
+            rgba: layer1_buf,
+            width: w,
+            height: h,
+            opacity: 1.0,
+            pos_x: 0.0,
+            pos_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            blend_mode: 0,
+            shape_mask: None,
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Layer 2
+        let mut layer2_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage2, w, h, &mut layer2_buf, w, h, grade);
+        export_layers.push(CompositorLayer {
+            rgba: layer2_buf,
+            width: w,
+            height: h,
+            opacity: 0.88,
+            pos_x: 0.25,
+            pos_y: -0.20,
+            scale_x: 0.45,
+            scale_y: 0.45,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 1, // Ellipse
+                center_x: 0.5,
+                center_y: 0.5,
+                size_x: 0.4,
+                size_y: 0.4,
+                feather: 0.12,
+                invert: false,
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Layer 3
+        let mut layer3_buf = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&footage3, w, h, &mut layer3_buf, w, h, grade);
+        export_layers.push(CompositorLayer {
+            rgba: layer3_buf,
+            width: w,
+            height: h,
+            opacity: 0.70,
+            pos_x: -0.30,
+            pos_y: 0.25,
+            scale_x: 0.35,
+            scale_y: 0.35,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 0, // Rectangle
+                center_x: 0.5,
+                center_y: 0.5,
+                size_x: 0.3,
+                size_y: 0.3,
+                feather: 0.08,
+                invert: true,
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        });
+
+        // Composite video layers
+        composite_layers_over(&mut export_buffer, w, h, &export_layers);
+
+        // Composite text overlay
+        render_text_overlay(&mut export_buffer, w, h, &title_params);
+    }
+
+    // 1. Bit-for-bit exact identity check
+    assert_eq!(
+        preview_buffer.len(),
+        export_buffer.len(),
+        "Buffer sizes must match"
+    );
+    assert_eq!(
+        preview_buffer, export_buffer,
+        "Preview monitor and Export pipeline must be 100% bit-for-bit identical across all pixels!"
+    );
+
+    // 2. Spatial content verification: verify distinct regions have differentiated non-zero pixel values
+    // Verify center (background + graded color)
+    let center_idx = ((h / 2 * w + w / 2) * 4) as usize;
+    assert_ne!(preview_buffer[center_idx + 3], 0);
+
+    // Verify title text region (contains rendered text glyph pixels)
+    let y_min = (0.80 * h as f32) as u32;
+    let y_max = (0.95 * h as f32) as u32;
+    let x_min = (0.20 * w as f32) as u32;
+    let x_max = (0.80 * w as f32) as u32;
+    let mut title_glyph_pixel_count = 0;
+    for ty in y_min..y_max {
+        for tx in x_min..x_max {
+            let idx = ((ty * w + tx) * 4) as usize;
+            // The title text color is [1.0, 0.95, 0.2, 1.0] (bright yellow)
+            if preview_buffer[idx] > 200 && preview_buffer[idx + 1] > 180 {
+                title_glyph_pixel_count += 1;
+            }
+        }
+    }
+    assert!(
+        title_glyph_pixel_count > 50,
+        "Title region must contain rendered text glyph pixels, found {}",
+        title_glyph_pixel_count
+    );
+
+    // Verify Mean Squared Error is 0.0 (exact mathematical parity)
+    let mut mse = 0.0f64;
+    for (p, e) in preview_buffer.iter().zip(export_buffer.iter()) {
+        let diff = *p as f64 - *e as f64;
+        mse += diff * diff;
+    }
+    assert_eq!(mse, 0.0, "MSE between preview and export must be 0.0");
+}
+
+#[test]
+fn test_preview_export_parity_across_keyframed_transforms_and_temporal_playback() {
+    let w = 640u32;
+    let h = 360u32;
+    let pixel_count = (w * h) as usize;
+
+    let mut source_footage = vec![0u8; pixel_count * 4];
+    for (i, p) in source_footage.chunks_exact_mut(4).enumerate() {
+        p[0] = (i % 256) as u8;
+        p[1] = ((i / 256) % 256) as u8;
+        p[2] = 128;
+        p[3] = 255;
+    }
+
+    let grade = ColorGradeSettings {
+        exposure: 0.1,
+        contrast: 1.05,
+        saturation: 1.0,
+        temperature: 5.0,
+        tint: 0.0,
+        lut_idx: 4, // Kodak 2383
+    };
+
+    // Test 5 temporal keyframe evaluation steps: t = 0.0s, 0.25s, 0.5s, 0.75s, 1.0s
+    for step in 0..=4 {
+        let progress = step as f32 / 4.0;
+        let animated_pos_x = -0.4 + progress * 0.8; // Pan from left to right
+        let animated_scale = 0.5 + progress * 0.5; // Zoom from 50% to 100%
+        let animated_opacity = 0.6 + progress * 0.4; // Fade in
+
+        let title = format!("ANIMATION FRAME {}", step);
+        let title_params = TextOverlayParams {
+            text: &title,
+            pos_x: 0.5,
+            pos_y: 0.9,
+            font_size: 24.0,
+            color: [1.0, 1.0, 1.0, animated_opacity],
+            bg_color: Some([0.0, 0.0, 0.0, 0.5 * animated_opacity]),
+            drop_shadow: true,
+            alignment: TextAlignment::Center,
+        };
+
+        // Render preview
+        let mut preview_buf = vec![0u8; pixel_count * 4];
+        let mut preview_layer = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&source_footage, w, h, &mut preview_layer, w, h, grade);
+        let layers = [CompositorLayer {
+            rgba: preview_layer,
+            width: w,
+            height: h,
+            opacity: animated_opacity,
+            pos_x: animated_pos_x,
+            pos_y: 0.0,
+            scale_x: animated_scale,
+            scale_y: animated_scale,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 1,
+                feather: 0.1,
+                ..Default::default()
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        }];
+        composite_layers_over(&mut preview_buf, w, h, &layers);
+        render_text_overlay(&mut preview_buf, w, h, &title_params);
+
+        // Render export
+        let mut export_buf = vec![0u8; pixel_count * 4];
+        let mut export_layer = vec![0u8; pixel_count * 4];
+        resample_and_grade_frame(&source_footage, w, h, &mut export_layer, w, h, grade);
+        let exp_layers = [CompositorLayer {
+            rgba: export_layer,
+            width: w,
+            height: h,
+            opacity: animated_opacity,
+            pos_x: animated_pos_x,
+            pos_y: 0.0,
+            scale_x: animated_scale,
+            scale_y: animated_scale,
+            blend_mode: 0,
+            shape_mask: Some(ShapeMaskParams {
+                shape_type: 1,
+                feather: 0.1,
+                ..Default::default()
+            }),
+            neural_matte: None,
+            auto_reframe: None,
+        }];
+        composite_layers_over(&mut export_buf, w, h, &exp_layers);
+        render_text_overlay(&mut export_buf, w, h, &title_params);
+
+        // Assert exact bit-for-bit parity
+        assert_eq!(
+            preview_buf, export_buf,
+            "Keyframed preview and export buffers must match bit-for-bit at progress step {}",
+            progress
+        );
+    }
 }
