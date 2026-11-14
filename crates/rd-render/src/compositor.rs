@@ -30,6 +30,16 @@ struct BlendUniforms {
     _padding: [f32; 2],
 }
 
+/// Uniform buffer layout for Optical Flow Retime shader.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct OpticalFlowUniforms {
+    pub retime_speed: f32,
+    pub blend_time: f32,
+    pub flow_smoothness: f32,
+    pub occlusion_suppression: f32,
+}
+
 /// GPU Compositor engine.
 pub struct Compositor {
     device: Arc<wgpu::Device>,
@@ -50,6 +60,11 @@ pub struct Compositor {
     blend_pipeline: wgpu::RenderPipeline,
     #[allow(dead_code)]
     blend_bind_group_layout: wgpu::BindGroupLayout,
+
+    #[allow(dead_code)]
+    optical_flow_pipeline: wgpu::RenderPipeline,
+    #[allow(dead_code)]
+    optical_flow_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Compositor {
@@ -232,6 +247,106 @@ impl Compositor {
             cache: None,
         });
 
+        // 3. Setup Optical Flow Retiming pipeline
+        let of_entry = effect_registry
+            .get("optical_flow")
+            .context("optical_flow shader missing")?;
+        let of_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Optical Flow Shader"),
+            source: wgpu::ShaderSource::Wgsl(of_entry.wgsl_source.as_str().into()),
+        });
+
+        let optical_flow_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Optical Flow Bind Group Layout"),
+                entries: &[
+                    // binding 0: frame_a_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 1: frame_b_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 2: flow_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 3: tex_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 4: params uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let of_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Optical Flow Pipeline Layout"),
+            bind_group_layouts: &[&optical_flow_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let optical_flow_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Optical Flow Pipeline"),
+                layout: Some(&of_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &of_shader,
+                    entry_point: Some(&of_entry.manifest.vertex_entry),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &of_shader,
+                    entry_point: Some(&of_entry.manifest.fragment_entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Ok(Self {
             device,
             queue,
@@ -242,6 +357,8 @@ impl Compositor {
             bc_bind_group_layout,
             blend_pipeline,
             blend_bind_group_layout,
+            optical_flow_pipeline,
+            optical_flow_bind_group_layout,
         })
     }
 
@@ -567,5 +684,85 @@ impl Compositor {
 
             current_base = target;
         }
+    }
+
+    /// Create a GPU-accelerated Optical Flow Estimator sharing this Compositor's device and queue.
+    pub fn create_optical_flow_estimator(
+        &self,
+        config: crate::optical_flow::GpuOpticalFlowConfig,
+    ) -> Result<crate::optical_flow::GpuOpticalFlowEstimator> {
+        crate::optical_flow::GpuOpticalFlowEstimator::new(
+            self.device.clone(),
+            self.queue.clone(),
+            config,
+        )
+    }
+
+    /// Execute an Optical Flow motion-compensated warping pass between frame_a and frame_b
+    /// using flow_view as the motion vector field.
+    pub fn render_optical_flow_retime(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame_a_view: &wgpu::TextureView,
+        frame_b_view: &wgpu::TextureView,
+        flow_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+        uniforms: OpticalFlowUniforms,
+    ) {
+        use wgpu::util::DeviceExt;
+
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Optical Flow Retime Uniform Buffer"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Optical Flow Retime Bind Group"),
+            layout: &self.optical_flow_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(frame_a_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(frame_b_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(flow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Optical Flow Retime Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.optical_flow_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }

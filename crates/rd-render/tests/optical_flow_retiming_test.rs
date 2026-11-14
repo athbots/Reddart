@@ -2,10 +2,10 @@
 //! (`rd-render` / `rd-effects` / `rd-core`).
 
 use rd_core::{Clip, RetimeMode};
-use rd_effects::{CostClass, EffectRegistry};
+use rd_effects::{CostClass, EffectRegistry, OPTICAL_FLOW_ESTIMATE_WGSL};
 use rd_render::{
-    DenseOpticalFlowEstimator, OpticalFlowConfig, interpolate_optical_flow,
-    interpolate_retimed_frame,
+    Compositor, DenseOpticalFlowEstimator, GpuOpticalFlowConfig, GpuOpticalFlowEstimator,
+    OpticalFlowConfig, OpticalFlowUniforms, interpolate_optical_flow, interpolate_retimed_frame,
 };
 
 /// Helper to generate a 64x32 synthetic frame with a textured moving block.
@@ -194,4 +194,132 @@ fn test_retime_mode_clip_persistence() {
     let deserialized: Clip = serde_json::from_str(&json).expect("Deserialize clip");
     assert_eq!(deserialized.retime_mode, RetimeMode::OpticalFlow);
     assert_eq!(deserialized.speed, 0.25);
+}
+
+#[test]
+fn test_optical_flow_estimate_wgsl_embedded() {
+    assert!(!OPTICAL_FLOW_ESTIMATE_WGSL.is_empty());
+    assert!(OPTICAL_FLOW_ESTIMATE_WGSL.contains("@compute"));
+    assert!(OPTICAL_FLOW_ESTIMATE_WGSL.contains("fn cs_main"));
+    assert!(OPTICAL_FLOW_ESTIMATE_WGSL.contains("texture_storage_2d<rgba16float, write>"));
+}
+
+#[test]
+fn test_gpu_optical_flow_estimator_initialization_and_compilation() {
+    let config = GpuOpticalFlowConfig::default();
+    let estimator = match pollster::block_on(GpuOpticalFlowEstimator::create_headless(config)) {
+        Ok(est) => est,
+        Err(err) => {
+            println!("Skipping GPU test: no wgpu compute adapter available ({err})");
+            return;
+        }
+    };
+
+    let width = 64;
+    let height = 32;
+    let frame_a = generate_moving_scene(width, height, 12);
+    let frame_b = generate_moving_scene(width, height, 20);
+
+    // Test GPU compute flow to texture
+    let flow_tex = estimator
+        .estimate_flow_to_texture(&frame_a, &frame_b, width, height)
+        .expect("GPU estimate_flow_to_texture failed");
+
+    assert_eq!(flow_tex.width(), width as u32);
+    assert_eq!(flow_tex.height(), height as u32);
+    assert_eq!(flow_tex.format(), wgpu::TextureFormat::Rgba16Float);
+
+    // Test GPU bidirectional flow calculation with readback
+    let (fwd, bwd, occlusion) =
+        estimator.compute_bidirectional_flow(&frame_a, &frame_b, width, height);
+
+    assert_eq!(fwd.width, width);
+    assert_eq!(fwd.height, height);
+    assert_eq!(bwd.width, width);
+    assert_eq!(bwd.height, height);
+    assert_eq!(occlusion.len(), width * height);
+
+    // Forward displacement in moving block should be positive (moving right)
+    let block_u = fwd.get(16, 16).0;
+    assert!(
+        block_u > 0.1,
+        "Expected forward flow u > 0.1 px on moving block, got {block_u}"
+    );
+
+    // Backward displacement in target position should be negative (moving left)
+    let bwd_u = bwd.get(20, 16).0;
+    assert!(
+        bwd_u < -0.1,
+        "Expected backward flow u < -0.1 px on moving block, got {bwd_u}"
+    );
+}
+
+#[test]
+fn test_compositor_optical_flow_retime_render_pass() {
+    let compositor = match pollster::block_on(Compositor::create_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+        16 * 1024 * 1024,
+    )) {
+        Ok(c) => c,
+        Err(err) => {
+            println!("Skipping Compositor GPU test: no wgpu adapter ({err})");
+            return;
+        }
+    };
+
+    let width = 64u32;
+    let height = 32u32;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+
+    let (_tex_a, view_a) =
+        compositor.create_solid_texture(width, height, format, [20, 20, 20, 255]);
+    let (_tex_b, view_b) =
+        compositor.create_solid_texture(width, height, format, [200, 200, 200, 255]);
+    let (_tex_flow, view_flow) =
+        compositor.create_solid_texture(width, height, format, [128, 128, 128, 128]);
+    let (_tex_out, view_out) =
+        compositor.create_texture(width, height, format, "Optical Flow Warped Output");
+
+    let mut encoder = compositor
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Optical Flow Render Encoder"),
+        });
+
+    let uniforms = OpticalFlowUniforms {
+        retime_speed: 0.5,
+        blend_time: 0.5,
+        flow_smoothness: 0.5,
+        occlusion_suppression: 0.8,
+    };
+
+    compositor.render_optical_flow_retime(
+        &mut encoder,
+        &view_a,
+        &view_b,
+        &view_flow,
+        &view_out,
+        uniforms,
+    );
+
+    compositor.queue().submit([encoder.finish()]);
+}
+
+#[test]
+fn test_gpu_optical_flow_cpu_fallback_consistency() {
+    let fallback = DenseOpticalFlowEstimator::new(OpticalFlowConfig::default());
+    let width = 64;
+    let height = 32;
+    let frame_a = generate_moving_scene(width, height, 10);
+    let frame_b = generate_moving_scene(width, height, 18);
+
+    let (cpu_fwd, _cpu_bwd, cpu_occ) =
+        fallback.compute_bidirectional_flow(&frame_a, &frame_b, width, height);
+
+    assert_eq!(cpu_fwd.width, width);
+    assert_eq!(cpu_fwd.height, height);
+    assert_eq!(cpu_occ.len(), width * height);
+
+    let cpu_u = cpu_fwd.get(14, 16).0;
+    assert!(cpu_u > 0.5, "CPU flow u should be > 0.5 px, got {cpu_u}");
 }

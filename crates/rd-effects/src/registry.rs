@@ -56,6 +56,8 @@ pub const MASK_SHAPE_WGSL: &str = include_str!("../../../effects/mask_shape/shad
 pub const NEURAL_MATTE_WGSL: &str = include_str!("../../../effects/neural_matte/shader.wgsl");
 pub const AUTO_REFRAME_WGSL: &str = include_str!("../../../effects/auto_reframe/shader.wgsl");
 pub const OPTICAL_FLOW_WGSL: &str = include_str!("../../../effects/optical_flow/shader.wgsl");
+pub const OPTICAL_FLOW_ESTIMATE_WGSL: &str =
+    include_str!("../../../effects/optical_flow/flow_estimate.wgsl");
 pub const COLOR_TRANSFORM_WGSL: &str = include_str!("../../../effects/color_transform/shader.wgsl");
 
 /// An effect entry registered in the engine.
