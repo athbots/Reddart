@@ -19,6 +19,7 @@
 | **6** | Streaming Export Memory Bounds & Range Accuracy | ✅ **MERGED** | `test/streaming-export-verification` | [#31](https://github.com/athbots/Reddart/pull/31) | `5ad14d9` | `43370892515` | 4/4 Pass |
 | **7** | Clean-Machine QA (Zero-Cache Runner & CLI) | ✅ **MERGED** | `test/clean-machine-qa` | [#32](https://github.com/athbots/Reddart/pull/32) | `b219a10` | `43376327991` | 5/5 Pass |
 | **8** | Reconcile Checksums & Publish Release v1.1.0 | ✅ **PUBLISHED** | `release/v1.1.0` | [#33](https://github.com/athbots/Reddart/pull/33) | `2bf85ea` | `43425796153` | 5/5 Pass |
+| **9** | Hardware-Accelerated Optical Flow Retiming | ✅ **MERGED** | `feat/gpu-optical-flow-compute` | [#35](https://github.com/athbots/Reddart/pull/35) | `ffe44b7` | `43572143595` | 10/10 Pass |
 
 ---
 
@@ -79,11 +80,21 @@
   - `Reddart-v1.1.0-Windows-x86_64.zip`: `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
 - **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
 
+### Item 9: Hardware-Accelerated Optical Flow Retiming (PR #35)
+- **Scope:** Implemented GPU-accelerated dense optical flow motion vector estimation and motion-compensated frame synthesis using WGSL compute shaders on `wgpu`.
+- **Compute Shader:** `effects/optical_flow/flow_estimate.wgsl` executing Horn-Schunck iterative relaxation across 8x8 thread workgroups.
+- **Engine Components:**
+  - `rd_render::GpuOpticalFlowEstimator`: Dispatches compute pipeline producing packed `Rgba16Float` flow textures (RG=forward u,v; BA=backward u,v) with synchronous staging readback and transparent software rasterizer fallback.
+  - `rd_render::Compositor::render_optical_flow_retime`: Executes bidirectional motion warping and bilateral occlusion hole-filling via `effects/optical_flow/shader.wgsl`.
+- **Verification Suite:** `crates/rd-render/tests/optical_flow_retiming_test.rs` (8/8 tests pass).
+- **Architecture Documentation:** `docs/OPTICAL_FLOW_GPU_ACCELERATION.md`.
+- **CI Run:** `43572143595` / `43572157201` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
+
 ---
 
 ## 🚀 Phase II Forward Roadmap (Future Milestones)
 
-With Phase I (v1.0.0 and v1.1.0) production-certified and sealed, the following architectural enhancements comprise the future engineering backlog:
+With Phase I (v1.0.0 and v1.1.0) and Hardware-Accelerated Optical Flow Retiming production-certified and merged, the following architectural enhancements comprise the future engineering backlog:
 
 1. **Nested Timelines & Compound Sequences:**
    - Multi-level timeline recursion allowing sequences to act as clips within other sequences.
@@ -91,13 +102,10 @@ With Phase I (v1.0.0 and v1.1.0) production-certified and sealed, the following 
 2. **GPU Signed Distance Field (SDF) Text Rendering:**
    - Vector-sharp text rendering directly in WGSL shaders at arbitrary zoom levels.
    - Rich typography controls (tracking, leading, stroke outlines, drop shadows).
-3. **Hardware-Accelerated Optical Flow Retiming:**
-   - Motion vector estimation for sub-frame interpolation and slow-motion synthesis.
-   - Integration with Vulkan Video / Direct3D 12 motion estimation features.
-4. **HDR / ACES Color Pipeline Expansion:**
+3. **HDR / ACES Color Pipeline Expansion:**
    - Full OCIO (OpenColorIO) configuration loading.
    - 10-bit and 12-bit Rec.2020 / PQ / HLG monitoring on Windows HDR displays.
-5. **Cross-Platform Distribution Packaging:**
+4. **Cross-Platform Distribution Packaging:**
    - macOS DMG and `.app` bundle notarization via Apple Developer CLI.
    - Linux Flatpak and AppImage packaging with Wayland fractional scaling support.
 
