@@ -4,8 +4,16 @@
 //! - Multi-scale hierarchical pyramidal optical flow solver (Coarse-to-fine Horn-Schunck with Sobel gradients).
 //! - Forward flow field (Frame A -> Frame B) and Backward flow field (Frame B -> Frame A).
 //! - Bidirectional forward-backward consistency checking for occlusion and boundary discontinuity detection.
+//!
+//! GPU Acceleration (Phase II):
+//! - `GpuOpticalFlowEstimator` dispatches Horn-Schunck relaxation on a wgpu compute pipeline.
+//! - CPU fallback: `DenseOpticalFlowEstimator` is preserved as a software rasterizer path.
+//! - Both produce a packed RGBA flow texture (RG=forward u,v; BA=backward u,v) in [0,1] encoding.
 
+use anyhow::{Context, Result};
+use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Dense 2D motion vector field representing per-pixel translation vectors $(\Delta x, \Delta y)$.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -366,6 +374,635 @@ impl DenseOpticalFlowEstimator {
         }
 
         mask
+    }
+}
+
+/// Configuration parameters for hardware-accelerated optical flow estimation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuOpticalFlowConfig {
+    /// Number of Horn-Schunck relaxation iterations (default: 15).
+    pub iterations: u32,
+    /// Horn-Schunck smoothness parameter alpha (default: 0.15).
+    pub alpha: f32,
+    /// Maximum displacement clamp in pixels (default: 32.0).
+    pub max_displacement: f32,
+    /// Forward-backward occlusion threshold in pixels (default: 1.5).
+    pub occlusion_threshold: f32,
+}
+
+impl Default for GpuOpticalFlowConfig {
+    fn default() -> Self {
+        Self {
+            iterations: 15,
+            alpha: 0.15,
+            max_displacement: 32.0,
+            occlusion_threshold: 1.5,
+        }
+    }
+}
+
+/// Uniform buffer structure matching `HsParams` in `effects/optical_flow/flow_estimate.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuHsParams {
+    alpha: f32,
+    max_displacement: f32,
+    iteration: u32,
+    _pad: u32,
+}
+
+/// Zero-dependency IEEE 754 half-precision float (f16) decoder.
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = ((h >> 15) & 1) as u32;
+    let exp = ((h >> 10) & 0x1F) as u32;
+    let mant = (h & 0x3FF) as u32;
+
+    if exp == 0 {
+        if mant == 0 {
+            f32::from_bits(sign << 31)
+        } else {
+            let mut m = mant;
+            let mut e = 113;
+            while (m & 0x400) == 0 {
+                m <<= 1;
+                e -= 1;
+            }
+            m &= 0x3FF;
+            f32::from_bits((sign << 31) | (e << 23) | (m << 13))
+        }
+    } else if exp == 31 {
+        f32::from_bits((sign << 31) | (0xFF << 23) | (mant << 13))
+    } else {
+        let new_exp = exp + 112;
+        f32::from_bits((sign << 31) | (new_exp << 23) | (mant << 13))
+    }
+}
+
+/// Zero-dependency IEEE 754 half-precision float (f16) encoder.
+fn f32_to_f16(val: f32) -> u16 {
+    let bits = val.to_bits();
+    let sign = (bits >> 31) & 1;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let mant = bits & 0x7FFFFF;
+
+    if exp == 0xFF {
+        ((sign << 15) | (0x1F << 10) | (mant >> 13).max(1)) as u16
+    } else if exp == 0 {
+        (sign << 15) as u16
+    } else {
+        let new_exp = exp - 127 + 15;
+        if new_exp >= 31 {
+            ((sign << 15) | (0x1F << 10)) as u16
+        } else if new_exp <= 0 {
+            0
+        } else {
+            ((sign << 15) | ((new_exp as u32) << 10) | (mant >> 13)) as u16
+        }
+    }
+}
+
+/// Hardware-Accelerated Dense Optical Flow Estimator using wgpu compute shaders.
+pub struct GpuOpticalFlowEstimator {
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    config: GpuOpticalFlowConfig,
+    fallback: DenseOpticalFlowEstimator,
+}
+
+impl GpuOpticalFlowEstimator {
+    /// Initialize a GPU optical flow estimator with an existing wgpu Device and Queue.
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        config: GpuOpticalFlowConfig,
+    ) -> Result<Self> {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Horn-Schunck Optical Flow Compute Shader"),
+            source: wgpu::ShaderSource::Wgsl(rd_effects::OPTICAL_FLOW_ESTIMATE_WGSL.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Optical Flow Compute BGL"),
+            entries: &[
+                // binding 0: luma_a (texture_2d<f32>)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 1: luma_b (texture_2d<f32>)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 2: flow_in (texture_2d<f32>)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 3: flow_out (texture_storage_2d<rgba16float, write>)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                // binding 4: params (uniform buffer)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Optical Flow Compute Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Optical Flow Compute Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("cs_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let fallback = DenseOpticalFlowEstimator::new(OpticalFlowConfig {
+            pyramid_levels: 3,
+            iterations: config.iterations as usize,
+            alpha_sq: config.alpha * config.alpha,
+            occlusion_threshold: config.occlusion_threshold,
+        });
+
+        Ok(Self {
+            device,
+            queue,
+            pipeline,
+            bind_group_layout,
+            config,
+            fallback,
+        })
+    }
+
+    /// Attempt to initialize a headless GPU optical flow estimator.
+    pub async fn create_headless(config: GpuOpticalFlowConfig) -> Result<Self> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+        {
+            Some(a) => a,
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::None,
+                    force_fallback_adapter: true,
+                    compatible_surface: None,
+                })
+                .await
+                .context("No available GPU or software fallback adapter found for optical flow")?,
+        };
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Headless Optical Flow Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                },
+                None,
+            )
+            .await
+            .context("Failed to create wgpu device for optical flow")?;
+
+        Self::new(Arc::new(device), Arc::new(queue), config)
+    }
+
+    /// Dispatches the GPU Horn-Schunck compute shader iterations to produce a packed RGBA16Float flow texture.
+    ///
+    /// Layout:
+    /// - R: forward u (normalized [0, 1])
+    /// - G: forward v (normalized [0, 1])
+    /// - B: backward u (normalized [0, 1])
+    /// - A: backward v (normalized [0, 1])
+    pub fn estimate_flow_to_texture(
+        &self,
+        frame_a: &[u8],
+        frame_b: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<wgpu::Texture> {
+        anyhow::ensure!(
+            frame_a.len() >= width * height * 4 && frame_b.len() >= width * height * 4,
+            "Input frame buffers are smaller than width * height * 4"
+        );
+
+        let w = width as u32;
+        let h = height as u32;
+
+        // 1. Upload luminance of Frame A and Frame B as R8Unorm textures
+        let lum_a_data: Vec<u8> = frame_a
+            .chunks_exact(4)
+            .take(width * height)
+            .map(|px| {
+                let r = px[0] as f32;
+                let g = px[1] as f32;
+                let b = px[2] as f32;
+                (0.299 * r + 0.587 * g + 0.114 * b)
+                    .round()
+                    .clamp(0.0, 255.0) as u8
+            })
+            .collect();
+
+        let lum_b_data: Vec<u8> = frame_b
+            .chunks_exact(4)
+            .take(width * height)
+            .map(|px| {
+                let r = px[0] as f32;
+                let g = px[1] as f32;
+                let b = px[2] as f32;
+                (0.299 * r + 0.587 * g + 0.114 * b)
+                    .round()
+                    .clamp(0.0, 255.0) as u8
+            })
+            .collect();
+
+        let tex_desc_luma = wgpu::TextureDescriptor {
+            label: Some("Luma Texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        };
+
+        let tex_luma_a = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Luma A"),
+            ..tex_desc_luma
+        });
+        let tex_luma_b = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Luma B"),
+            ..tex_desc_luma
+        });
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex_luma_a,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &lum_a_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex_luma_b,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &lum_b_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view_luma_a = tex_luma_a.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_luma_b = tex_luma_b.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 2. Create ping-pong Rgba16Float textures for flow relaxation
+        let flow_tex_desc = wgpu::TextureDescriptor {
+            label: Some("Optical Flow Relaxation Target"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        };
+
+        let tex_flow_0 = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Flow Ping"),
+            ..flow_tex_desc
+        });
+        let tex_flow_1 = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Flow Pong"),
+            ..flow_tex_desc
+        });
+
+        // Initialize tex_flow_0 with 0.5 (representing zero displacement)
+        let neutral_f16 = f32_to_f16(0.5);
+        let neutral_pixel = [neutral_f16, neutral_f16, neutral_f16, neutral_f16];
+        let init_data: Vec<u8> = (0..(width * height))
+            .flat_map(|_| bytemuck::bytes_of(&neutral_pixel))
+            .copied()
+            .collect();
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex_flow_0,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &init_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 8),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view_flow_0 = tex_flow_0.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_flow_1 = tex_flow_1.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 3. Iterative relaxation via compute pass dispatch
+        let iterations = self.config.iterations.max(1);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Optical Flow Relaxation Encoder"),
+            });
+
+        let mut ping_is_source = true;
+        let workgroups_x = w.div_ceil(8);
+        let workgroups_y = h.div_ceil(8);
+
+        for it in 0..iterations {
+            let (in_view, out_view) = if ping_is_source {
+                (&view_flow_0, &view_flow_1)
+            } else {
+                (&view_flow_1, &view_flow_0)
+            };
+
+            use wgpu::util::DeviceExt;
+            let params = GpuHsParams {
+                alpha: self.config.alpha,
+                max_displacement: self.config.max_displacement,
+                iteration: it,
+                _pad: 0,
+            };
+            let param_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("HS Uniform Buffer"),
+                    contents: bytemuck::bytes_of(&params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("HS Bind Group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view_luma_a),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view_luma_b),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(in_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(out_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: param_buf.as_entire_binding(),
+                    },
+                ],
+            });
+
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("HS Iteration Pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            drop(cpass);
+
+            ping_is_source = !ping_is_source;
+        }
+
+        self.queue.submit([encoder.finish()]);
+
+        let final_texture = if ping_is_source {
+            tex_flow_0
+        } else {
+            tex_flow_1
+        };
+
+        Ok(final_texture)
+    }
+
+    /// Compute bidirectional flow fields and occlusion mask using the GPU compute pipeline,
+    /// with synchronous readback and automatic fallback to CPU if GPU processing fails.
+    pub fn compute_bidirectional_flow(
+        &self,
+        frame_a: &[u8],
+        frame_b: &[u8],
+        width: usize,
+        height: usize,
+    ) -> (OpticalFlowField, OpticalFlowField, Vec<f32>) {
+        match self.compute_bidirectional_flow_gpu(frame_a, frame_b, width, height) {
+            Ok(res) => res,
+            Err(err) => {
+                log::warn!(
+                    "GPU optical flow estimation failed ({}); falling back to CPU",
+                    err
+                );
+                self.fallback
+                    .compute_bidirectional_flow(frame_a, frame_b, width, height)
+            }
+        }
+    }
+
+    /// Internal GPU execution and staging readback.
+    fn compute_bidirectional_flow_gpu(
+        &self,
+        frame_a: &[u8],
+        frame_b: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<(OpticalFlowField, OpticalFlowField, Vec<f32>)> {
+        let final_texture = self.estimate_flow_to_texture(frame_a, frame_b, width, height)?;
+
+        let unpadded_bytes_per_row = width * 8; // 4 half floats = 8 bytes per pixel
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) & !(align - 1);
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Flow Readback Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Flow Readback Encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &final_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row as u32),
+                    rows_per_image: Some(height as u32),
+                },
+            },
+            wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit([encoder.finish()]);
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        buffer_slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+
+        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        rx.recv()
+            .context("Readback channel hung")?
+            .context("Readback map failed")?;
+
+        let mut fwd = OpticalFlowField::new(width, height);
+        let mut bwd = OpticalFlowField::new(width, height);
+        let mut occlusion = vec![0.0_f32; width * height];
+
+        let max_d = self.config.max_displacement;
+        let thresh = self.config.occlusion_threshold.max(0.1);
+
+        {
+            let mapped = buffer_slice.get_mapped_range();
+            for y in 0..height {
+                let row_start = y * padded_bytes_per_row;
+                let row_bytes = &mapped[row_start..row_start + unpadded_bytes_per_row];
+
+                for x in 0..width {
+                    let px_start = x * 8;
+                    let h_u_fwd =
+                        u16::from_ne_bytes([row_bytes[px_start], row_bytes[px_start + 1]]);
+                    let h_v_fwd =
+                        u16::from_ne_bytes([row_bytes[px_start + 2], row_bytes[px_start + 3]]);
+                    let h_u_bwd =
+                        u16::from_ne_bytes([row_bytes[px_start + 4], row_bytes[px_start + 5]]);
+                    let h_v_bwd =
+                        u16::from_ne_bytes([row_bytes[px_start + 6], row_bytes[px_start + 7]]);
+
+                    let norm_u_fwd = f16_to_f32(h_u_fwd);
+                    let norm_v_fwd = f16_to_f32(h_v_fwd);
+                    let norm_u_bwd = f16_to_f32(h_u_bwd);
+                    let norm_v_bwd = f16_to_f32(h_v_bwd);
+
+                    let u_fwd = (norm_u_fwd * 2.0 - 1.0) * max_d;
+                    let v_fwd = (norm_v_fwd * 2.0 - 1.0) * max_d;
+                    let u_bwd = (norm_u_bwd * 2.0 - 1.0) * max_d;
+                    let v_bwd = (norm_v_bwd * 2.0 - 1.0) * max_d;
+
+                    fwd.set(x, y, u_fwd, v_fwd);
+                    bwd.set(x, y, u_bwd, v_bwd);
+
+                    let roundtrip_err = ((u_fwd + u_bwd).powi(2) + (v_fwd + v_bwd).powi(2)).sqrt();
+                    let occ = (roundtrip_err / thresh).clamp(0.0, 1.0);
+                    occlusion[y * width + x] = occ;
+                }
+            }
+        }
+
+        Ok((fwd, bwd, occlusion))
     }
 }
 
