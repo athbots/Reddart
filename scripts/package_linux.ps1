@@ -171,6 +171,8 @@ $manifestObj = [ordered]@{
     }
     desktop_entry = "share/applications/reddart.desktop"
     appstream_id = "app.reddart.Reddart"
+    flatpak_manifest = "platforms/linux/app.reddart.Reddart.yaml"
+    appimage_apprun = "platforms/linux/AppRun"
     icon = "share/icons/hicolor/scalable/apps/reddart.svg"
     effects_count = 12
 }

@@ -9,12 +9,18 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SKIP_BUILD=0
 VERIFY_REPRODUCIBILITY=0
+CREATE_DMG=0
+SIGN_IDENTITY=""
+NOTARIZE_PROFILE=""
 
-for arg in "$@"; do
-    case "$arg" in
-        --skip-build) SKIP_BUILD=1 ;;
-        --verify-reproducibility) VERIFY_REPRODUCIBILITY=1 ;;
-        *) echo "Unknown option: $arg"; exit 1 ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-build) SKIP_BUILD=1; shift ;;
+        --verify-reproducibility) VERIFY_REPRODUCIBILITY=1; shift ;;
+        --create-dmg) CREATE_DMG=1; shift ;;
+        --sign-identity) SIGN_IDENTITY="$2"; shift 2 ;;
+        --notarize-profile) NOTARIZE_PROFILE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
@@ -33,6 +39,7 @@ DIST_NAME="Reddart-v${VERSION}-macOS-Universal"
 APP_DIR="${ROOT_DIR}/target/dist/${DIST_NAME}/Reddart.app"
 READY_DIR="${ROOT_DIR}/ready_to_use/mac"
 ZIP_OUT="${READY_DIR}/${DIST_NAME}.zip"
+DMG_OUT="${READY_DIR}/${DIST_NAME}.dmg"
 SHA_OUT="${READY_DIR}/SHA256SUMS.txt"
 MANIFEST_OUT="${READY_DIR}/manifest.json"
 
@@ -202,7 +209,17 @@ cp -r "${APP_DIR}" "${READY_DIR}/Reddart.app"
 cp "${ROOT_DIR}/target/dist/${DIST_NAME}/VERSION.txt" "${READY_DIR}/VERSION.txt"
 cp "${ROOT_DIR}/target/dist/${DIST_NAME}/README_MACOS.txt" "${READY_DIR}/README_MACOS.txt"
 
-# 5. Create Deterministic Zip Archive
+# 5. Codesign (if identity supplied or ad-hoc on macOS)
+if [ -n "${SIGN_IDENTITY}" ]; then
+    echo "  -> Signing bundle with Developer ID: ${SIGN_IDENTITY}..."
+    codesign --force --deep --verify --verbose --options runtime --timestamp \
+        --sign "${SIGN_IDENTITY}" "${READY_DIR}/Reddart.app"
+elif command -v codesign > /dev/null 2>&1; then
+    echo "  -> Applying ad-hoc codesignature..."
+    codesign --force --deep -s - "${READY_DIR}/Reddart.app" 2>/dev/null || true
+fi
+
+# 6. Create Deterministic Zip Archive and DMG Disk Image
 echo "[4/6] Creating release archive (${ZIP_OUT})..."
 rm -f "${ZIP_OUT}"
 (
@@ -210,7 +227,45 @@ rm -f "${ZIP_OUT}"
     zip -q -r -X "${ZIP_OUT}" Reddart.app VERSION.txt README_MACOS.txt
 )
 
-# 6. Generate Checksums and Manifest
+# DMG Disk Image Creation
+DMG_CREATED=0
+if [ "${CREATE_DMG}" -eq 1 ] || command -v hdiutil > /dev/null 2>&1; then
+    if command -v hdiutil > /dev/null 2>&1; then
+        echo "  -> Creating macOS DMG disk image (${DMG_OUT})..."
+        DMG_STAGING="${ROOT_DIR}/target/dist/dmg_staging"
+        rm -rf "${DMG_STAGING}" "${DMG_OUT}"
+        mkdir -p "${DMG_STAGING}"
+        cp -r "${READY_DIR}/Reddart.app" "${DMG_STAGING}/"
+        ln -s /Applications "${DMG_STAGING}/Applications"
+        cp "${READY_DIR}/README_MACOS.txt" "${DMG_STAGING}/"
+
+        hdiutil create -volname "Reddart" \
+            -srcfolder "${DMG_STAGING}" \
+            -ov -format UDZO \
+            "${DMG_OUT}"
+        rm -rf "${DMG_STAGING}"
+        DMG_CREATED=1
+
+        if [ -n "${SIGN_IDENTITY}" ]; then
+            echo "  -> Signing DMG disk image..."
+            codesign --force --verify --verbose --sign "${SIGN_IDENTITY}" "${DMG_OUT}"
+        fi
+
+        # Apple Notarization CLI (xcrun notarytool & stapler)
+        if [ -n "${NOTARIZE_PROFILE}" ]; then
+            echo "  -> Submitting DMG to Apple Notarization Service (keychain-profile: ${NOTARIZE_PROFILE})..."
+            xcrun notarytool submit "${DMG_OUT}" --keychain-profile "${NOTARIZE_PROFILE}" --wait
+            echo "  -> Stapling notarization ticket to DMG..."
+            xcrun stapler staple "${DMG_OUT}"
+            xcrun stapler staple "${READY_DIR}/Reddart.app"
+            echo "  [OK] Notarization and stapling complete."
+        fi
+    else
+        echo "  -> hdiutil not present; skipping DMG generation."
+    fi
+fi
+
+# 7. Generate Checksums and Manifest
 echo "[5/6] Generating SHA-256 checksums and package manifest..."
 ZIP_SHA256=$(sha256sum "${ZIP_OUT}" 2>/dev/null | awk '{print $1}' || shasum -a 256 "${ZIP_OUT}" | awk '{print $1}')
 ZIP_SIZE=$(stat -c%s "${ZIP_OUT}" 2>/dev/null || stat -f%z "${ZIP_OUT}")
@@ -222,6 +277,12 @@ cat <<EOF > "${SHA_OUT}"
 ${ZIP_SHA256}  ${DIST_NAME}.zip
 EOF
 
+if [ "${DMG_CREATED}" -eq 1 ] && [ -f "${DMG_OUT}" ]; then
+    DMG_SHA256=$(sha256sum "${DMG_OUT}" 2>/dev/null | awk '{print $1}' || shasum -a 256 "${DMG_OUT}" | awk '{print $1}')
+    DMG_SIZE=$(stat -c%s "${DMG_OUT}" 2>/dev/null || stat -f%z "${DMG_OUT}")
+    echo "${DMG_SHA256}  ${DIST_NAME}.dmg" >> "${SHA_OUT}"
+fi
+
 cat <<EOF > "${MANIFEST_OUT}"
 {
   "product": "Reddart Video Editor",
@@ -232,6 +293,10 @@ cat <<EOF > "${MANIFEST_OUT}"
     "filename": "${DIST_NAME}.zip",
     "sha256": "${ZIP_SHA256}",
     "bytes": ${ZIP_SIZE}
+  },
+  "dmg": {
+    "supported": true,
+    "filename": "${DIST_NAME}.dmg"
   },
   "bundle": "Reddart.app",
   "bundle_identifier": "app.reddart.mac",

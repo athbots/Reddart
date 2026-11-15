@@ -247,6 +247,10 @@ $manifestObj = [ordered]@{
         sha256 = $zipHash
         bytes = $zipSize
     }
+    dmg = [ordered]@{
+        supported = $true
+        filename = "$DistName.dmg"
+    }
     bundle = "Reddart.app"
     bundle_identifier = "app.reddart.mac"
     minimum_system_version = "12.0"
