@@ -13,7 +13,7 @@ pub mod quality;
 
 pub use cache::{CachedSubSequenceFrame, SubSequenceCache, SubSequenceCacheKey};
 pub use composite::{CompositorLayer, composite_layers_over};
-pub use compositor::{Compositor, OpticalFlowUniforms};
+pub use compositor::{Compositor, OpticalFlowUniforms, TextSdfUniforms};
 pub use interpolate::{blend_rgba_frames, interpolate_optical_flow, interpolate_retimed_frame};
 pub use optical_flow::{
     DenseOpticalFlowEstimator, GpuOpticalFlowConfig, GpuOpticalFlowEstimator, OpticalFlowConfig,

@@ -365,6 +365,13 @@ impl Timeline {
                 clip.opacity.to_bits().hash(&mut hasher);
                 if let crate::clip::ClipKind::Compound(ref comp) = clip.kind {
                     comp.timeline.compute_content_hash().hash(&mut hasher);
+                } else if let crate::clip::ClipKind::Text(ref text) = clip.kind {
+                    text.text.hash(&mut hasher);
+                    text.font_size.to_bits().hash(&mut hasher);
+                    text.tracking.to_bits().hash(&mut hasher);
+                    text.leading.to_bits().hash(&mut hasher);
+                    text.outline_width.to_bits().hash(&mut hasher);
+                    text.drop_shadow.hash(&mut hasher);
                 }
             }
         }

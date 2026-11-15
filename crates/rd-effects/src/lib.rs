@@ -31,7 +31,9 @@ pub use registry::{
 };
 pub use template::{BeatDetector, MusicCue, TemplateSlot, TemplateSpec};
 pub use text::{
-    TextAlignment, TextOverlayParams, get_glyph_8x8, render_text_clip_overlay, render_text_overlay,
+    SdfTypographyParams, TextAlignment, TextOverlayParams, compute_signed_distance_field, edt_2d,
+    generate_text_sdf_field, get_glyph_8x8, render_sdf_text_overlay, render_text_clip_overlay,
+    render_text_overlay,
 };
 
 /// An effect's performance cost class, used by the quality governor.
