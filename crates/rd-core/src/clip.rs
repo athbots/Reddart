@@ -90,6 +90,18 @@ pub struct AudioClip {
     pub volume: f32,
 }
 
+fn default_leading() -> f32 {
+    1.35
+}
+
+fn default_shadow_color() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 0.75]
+}
+
+fn default_shadow_offset() -> [f32; 2] {
+    [0.003, 0.003]
+}
+
 /// Text overlay clip data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextClip {
@@ -99,10 +111,50 @@ pub struct TextClip {
     pub font_family: String,
     /// Font size in points.
     pub font_size: f32,
-    /// Text color as RGBA hex.
+    /// Text color as normalized RGBA `[r, g, b, a]` in range 0.0..1.0.
     pub color: [f32; 4],
     /// Position (normalized 0.0-1.0, relative to canvas).
     pub position: [f32; 2],
+    /// Letter spacing / tracking adjustment in normalized em units (0.0 = normal).
+    #[serde(default)]
+    pub tracking: f32,
+    /// Line spacing / leading multiplier (1.0 = normal, 1.35 = standard multi-line).
+    #[serde(default = "default_leading")]
+    pub leading: f32,
+    /// Stroke outline color as normalized RGBA.
+    #[serde(default)]
+    pub outline_color: [f32; 4],
+    /// Stroke outline width (0.0 = no outline, up to 0.3 in distance space).
+    #[serde(default)]
+    pub outline_width: f32,
+    /// Whether drop shadow is enabled.
+    #[serde(default)]
+    pub drop_shadow: bool,
+    /// Drop shadow color as normalized RGBA.
+    #[serde(default = "default_shadow_color")]
+    pub shadow_color: [f32; 4],
+    /// Drop shadow offset [dx, dy] in normalized canvas space.
+    #[serde(default = "default_shadow_offset")]
+    pub shadow_offset: [f32; 2],
+}
+
+impl Default for TextClip {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            font_family: "Inter".into(),
+            font_size: 48.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+            position: [0.5, 0.8],
+            tracking: 0.0,
+            leading: 1.35,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            outline_width: 0.0,
+            drop_shadow: false,
+            shadow_color: [0.0, 0.0, 0.0, 0.75],
+            shadow_offset: [0.003, 0.003],
+        }
+    }
 }
 
 /// Image/sticker overlay clip data.
@@ -277,6 +329,13 @@ impl Clip {
                 font_size: 48.0,
                 color: [1.0, 1.0, 1.0, 1.0],
                 position: [0.5, 0.8],
+                tracking: 0.0,
+                leading: 1.35,
+                outline_color: [0.0, 0.0, 0.0, 1.0],
+                outline_width: 0.0,
+                drop_shadow: false,
+                shadow_color: [0.0, 0.0, 0.0, 0.75],
+                shadow_offset: [0.003, 0.003],
             }),
             position_us,
             source_in_us: 0,

@@ -40,6 +40,21 @@ pub struct OpticalFlowUniforms {
     pub occlusion_suppression: f32,
 }
 
+/// Uniform buffer layout for Text Signed Distance Field (SDF) shader.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct TextSdfUniforms {
+    pub text_color: [f32; 4],
+    pub outline_color: [f32; 4],
+    pub shadow_color: [f32; 4],
+    pub outline_width: f32,
+    pub smoothing: f32,
+    pub shadow_smoothing: f32,
+    pub enable_shadow: f32,
+    pub shadow_offset: [f32; 2],
+    pub _padding: [f32; 2],
+}
+
 /// GPU Compositor engine.
 pub struct Compositor {
     device: Arc<wgpu::Device>,
@@ -65,6 +80,11 @@ pub struct Compositor {
     optical_flow_pipeline: wgpu::RenderPipeline,
     #[allow(dead_code)]
     optical_flow_bind_group_layout: wgpu::BindGroupLayout,
+
+    #[allow(dead_code)]
+    text_sdf_pipeline: wgpu::RenderPipeline,
+    #[allow(dead_code)]
+    text_sdf_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Compositor {
@@ -347,6 +367,84 @@ impl Compositor {
                 cache: None,
             });
 
+        // 4. Setup Text SDF pipeline
+        let text_sdf_entry = effect_registry
+            .get("text_sdf")
+            .context("text_sdf shader missing")?;
+        let text_sdf_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Text SDF Shader"),
+            source: wgpu::ShaderSource::Wgsl(text_sdf_entry.wgsl_source.as_str().into()),
+        });
+
+        let text_sdf_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Text SDF Bind Group Layout"),
+                entries: &[
+                    // binding 0: font_atlas (single-channel R8Unorm or R32Float SDF texture)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 1: font_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 2: uniform params
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let text_sdf_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Text SDF Pipeline Layout"),
+                bind_group_layouts: &[&text_sdf_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let text_sdf_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Text SDF Pipeline"),
+            layout: Some(&text_sdf_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &text_sdf_shader,
+                entry_point: Some(&text_sdf_entry.manifest.vertex_entry),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &text_sdf_shader,
+                entry_point: Some(&text_sdf_entry.manifest.fragment_entry),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Self {
             device,
             queue,
@@ -359,6 +457,8 @@ impl Compositor {
             blend_bind_group_layout,
             optical_flow_pipeline,
             optical_flow_bind_group_layout,
+            text_sdf_pipeline,
+            text_sdf_bind_group_layout,
         })
     }
 
@@ -762,6 +862,118 @@ impl Compositor {
         });
 
         pass.set_pipeline(&self.optical_flow_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Upload a normalized float SDF buffer as a single-channel R8Unorm GPU texture.
+    pub fn create_sdf_texture(
+        &self,
+        width: u32,
+        height: u32,
+        sdf_data: &[f32],
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let r8_bytes: Vec<u8> = sdf_data
+            .iter()
+            .map(|&v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Text SDF Atlas Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &r8_bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    /// Execute a GPU Text Signed Distance Field (SDF) rendering pass.
+    ///
+    /// Evaluates vector-sharp typography, stroke outlines, and drop shadows via WGSL shader,
+    /// blending directly onto the destination target view.
+    pub fn render_text_sdf(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        sdf_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+        uniforms: TextSdfUniforms,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        use wgpu::util::DeviceExt;
+
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Text SDF Uniform Buffer"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Text SDF Bind Group"),
+            layout: &self.text_sdf_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(sdf_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Text SDF Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.text_sdf_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
