@@ -8,6 +8,7 @@ pub mod color_transform;
 pub mod lut;
 pub mod mask;
 pub mod matte;
+pub mod ocio;
 pub mod optical_flow;
 pub mod reframe;
 pub mod registry;
@@ -18,11 +19,14 @@ pub mod text;
 pub use color_space::{
     AscCdlParams, ColorGamut, ColorPipeline, ColorPipelineConfig, Mat3, TransferFunction,
     aces_filmic_tone_map, decode_transfer_function, encode_transfer_function,
-    gamut_transform_matrix,
+    gamut_transform_matrix, pack_rgb10a2, pack_rgb10a2_dithered, pack_rgb12, pack_rgb12_dithered,
+    quantize_rgba32f_to_rgb10a2, quantize_rgba32f_to_rgb12, triangular_dither_tpdf, unpack_rgb10a2,
+    unpack_rgb12,
 };
 pub use color_transform::{ColorTransformParams, apply_color_transform};
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
 pub use matte::{NeuralMatteParams, apply_neural_matte, evaluate_matte_alpha};
+pub use ocio::{OcioBitDepth, OcioColorSpace, OcioConfig, OcioError, OcioTransform, OcioView};
 pub use optical_flow::{OpticalFlowRetimeParams, apply_optical_flow_retime};
 pub use reframe::{AutoReframeParams, apply_auto_reframe};
 pub use registry::{
