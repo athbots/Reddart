@@ -125,6 +125,13 @@ pub struct CompoundClip {
     pub timeline: Box<crate::timeline::Timeline>,
 }
 
+impl CompoundClip {
+    /// Compute a deterministic 64-bit structural and parameter content hash of this compound sequence.
+    pub fn content_hash(&self) -> u64 {
+        self.timeline.compute_content_hash()
+    }
+}
+
 /// An effect applied to a clip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipEffect {

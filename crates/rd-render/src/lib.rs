@@ -11,6 +11,7 @@ pub mod interpolate;
 pub mod optical_flow;
 pub mod quality;
 
+pub use cache::{CachedSubSequenceFrame, SubSequenceCache, SubSequenceCacheKey};
 pub use composite::{CompositorLayer, composite_layers_over};
 pub use compositor::{Compositor, OpticalFlowUniforms};
 pub use interpolate::{blend_rgba_frames, interpolate_optical_flow, interpolate_retimed_frame};

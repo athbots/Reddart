@@ -1,4 +1,5 @@
 use rd_core::{Clip, Project, Timeline, TrackKind};
+use rd_render::cache::{SubSequenceCache, SubSequenceCacheKey};
 use rd_render::graph::{NodeKind, RenderGraph};
 use rd_render::{CompositorLayer, composite_layers_over};
 
@@ -187,5 +188,235 @@ fn test_compound_clip_speed_remapping() {
         inner_source_time,
         Some(2_000_000),
         "At 1.0s with 2x speed, inner sequence source time must be 2.0s"
+    );
+}
+
+#[test]
+fn test_multi_level_deep_recursion_3_levels() {
+    // Level 3 (innermost): Two clips on two tracks
+    let mut lvl3 = Timeline::new();
+    let l3_t1 = lvl3.add_track(TrackKind::Video, "L3 T1");
+    let l3_t2 = lvl3.add_track(TrackKind::Video, "L3 T2");
+    lvl3.track_mut(l3_t1)
+        .unwrap()
+        .add_clip(Clip::new_video("leaf_a.mp4", 0, 0, 10_000_000));
+    lvl3.track_mut(l3_t2)
+        .unwrap()
+        .add_clip(Clip::new_video("leaf_b.mp4", 0, 0, 10_000_000));
+
+    // Level 2: Compound clip nesting Level 3 at 2.0x speed
+    let mut lvl2 = Timeline::new();
+    let l2_t1 = lvl2.add_track(TrackKind::Video, "L2 T1");
+    let mut c3 = Clip::new_compound("Nested L3", lvl3, 0);
+    c3.speed = 2.0;
+    lvl2.track_mut(l2_t1).unwrap().add_clip(c3);
+
+    // Level 1: Compound clip nesting Level 2 at 0.5x speed
+    let mut lvl1 = Timeline::new();
+    let l1_t1 = lvl1.add_track(TrackKind::Video, "L1 T1");
+    let mut c2 = Clip::new_compound("Nested L2", lvl2, 0);
+    c2.speed = 0.5;
+    lvl1.track_mut(l1_t1).unwrap().add_clip(c2);
+
+    // Level 0: Main project nesting Level 1 at position 1.0s (1_000_000 us)
+    let mut project = Project::new("Deep 3-Level Nesting");
+    let main_track = project.timeline.add_track(TrackKind::Video, "Main V1");
+    let c1 = Clip::new_compound("Nested L1", lvl1, 1_000_000);
+    project.timeline.track_mut(main_track).unwrap().add_clip(c1);
+
+    // Query at main timeline timestamp 2.0s (2_000_000 us):
+    // Offset into c1: 2.0s - 1.0s = 1.0s
+    // c1 speed is 1.0 -> time into lvl1: 1.0s
+    // c2 speed is 0.5 -> time into lvl2: 1.0s * 0.5 = 0.5s
+    // c3 speed is 2.0 -> time into lvl3: 0.5s * 2.0 = 1.0s (1_000_000 us)
+    let graph = RenderGraph::compile_timeline(&project, 2_000_000);
+    let order = graph
+        .topological_sort()
+        .expect("Valid DAG with 3-level nesting");
+
+    let mut source_times = Vec::new();
+    for &id in &order {
+        if let NodeKind::Source { source_time_us, .. } = graph.get_node(id).unwrap().kind {
+            source_times.push(source_time_us);
+        }
+    }
+
+    assert_eq!(
+        source_times.len(),
+        2,
+        "Expected 2 active leaf sources in 3-level hierarchy"
+    );
+    assert_eq!(
+        source_times[0], 1_000_000,
+        "Leaf A source time mapped correctly through speed cascade"
+    );
+    assert_eq!(
+        source_times[1], 1_000_000,
+        "Leaf B source time mapped correctly through speed cascade"
+    );
+}
+
+#[test]
+fn test_sub_sequence_cache_hit_and_invalidation() {
+    let mut project = Project::new("Cached Sequence Project");
+    let main_track = project.timeline.add_track(TrackKind::Video, "Main Video");
+
+    // Inner timeline with 3 tracks and 3 clips
+    let mut inner = Timeline::new();
+    let t1 = inner.add_track(TrackKind::Video, "Inner 1");
+    let t2 = inner.add_track(TrackKind::Video, "Inner 2");
+    let t3 = inner.add_track(TrackKind::Video, "Inner 3");
+    inner
+        .track_mut(t1)
+        .unwrap()
+        .add_clip(Clip::new_video("clip1.mp4", 0, 0, 5_000_000));
+    inner
+        .track_mut(t2)
+        .unwrap()
+        .add_clip(Clip::new_video("clip2.mp4", 0, 0, 5_000_000));
+    inner
+        .track_mut(t3)
+        .unwrap()
+        .add_clip(Clip::new_video("clip3.mp4", 0, 0, 5_000_000));
+
+    let compound = Clip::new_compound("Heavy VFX Sequence", inner, 0);
+    let compound_id = compound.id;
+    let inner_hash = match &compound.kind {
+        rd_core::ClipKind::Compound(c) => c.content_hash(),
+        _ => unreachable!(),
+    };
+
+    project
+        .timeline
+        .track_mut(main_track)
+        .unwrap()
+        .add_clip(compound);
+
+    // 1. Without cache: Graph expands inner tracks and clips (at least 3 sources + transforms + blends)
+    let uncached_graph = RenderGraph::compile_timeline(&project, 1_000_000);
+    let uncached_order = uncached_graph.topological_sort().unwrap();
+    let source_count_uncached = uncached_order
+        .iter()
+        .filter(|&&id| {
+            matches!(
+                uncached_graph.get_node(id).unwrap().kind,
+                NodeKind::Source { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        source_count_uncached, 3,
+        "Without cache, all 3 inner sources must be compiled"
+    );
+
+    // 2. Pre-populate sub-sequence cache for this compound clip at 1.0s
+    let mut cache = SubSequenceCache::new(64);
+    let cache_key = SubSequenceCacheKey {
+        compound_clip_id: compound_id,
+        source_time_us: 1_000_000,
+        sequence_hash: inner_hash,
+    };
+    cache.insert(cache_key, 1920, 1080, vec![0u8; 1920 * 1080 * 4]);
+
+    // 3. Compile with cache: Should produce a single CachedSequence node instead of 3 sources
+    let cached_graph = RenderGraph::compile_timeline_with_cache(&project, 1_000_000, Some(&cache));
+    let cached_order = cached_graph.topological_sort().unwrap();
+
+    let cached_nodes: Vec<_> = cached_order
+        .iter()
+        .filter(|&&id| {
+            matches!(
+                cached_graph.get_node(id).unwrap().kind,
+                NodeKind::CachedSequence { .. }
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        cached_nodes.len(),
+        1,
+        "Graph must contain exactly 1 CachedSequence node"
+    );
+
+    let source_nodes_cached = cached_order
+        .iter()
+        .filter(|&&id| {
+            matches!(
+                cached_graph.get_node(id).unwrap().kind,
+                NodeKind::Source { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        source_nodes_cached, 0,
+        "Zero inner sources should be created when cache hits"
+    );
+
+    // 4. Invalidate clip: Purges cache and restores full graph compilation
+    cache.invalidate_clip(compound_id);
+    let invalidated_graph =
+        RenderGraph::compile_timeline_with_cache(&project, 1_000_000, Some(&cache));
+    let invalidated_order = invalidated_graph.topological_sort().unwrap();
+    let source_nodes_invalidated = invalidated_order
+        .iter()
+        .filter(|&&id| {
+            matches!(
+                invalidated_graph.get_node(id).unwrap().kind,
+                NodeKind::Source { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        source_nodes_invalidated, 3,
+        "After invalidation, full inner graph is recompiled"
+    );
+}
+
+#[test]
+fn test_sub_sequence_cache_eviction_lru() {
+    let mut cache = SubSequenceCache::new(2);
+    let clip_a = rd_core::ClipId::new();
+    let clip_b = rd_core::ClipId::new();
+    let clip_c = rd_core::ClipId::new();
+
+    let key_a = SubSequenceCacheKey {
+        compound_clip_id: clip_a,
+        source_time_us: 1_000_000,
+        sequence_hash: 100,
+    };
+    let key_b = SubSequenceCacheKey {
+        compound_clip_id: clip_b,
+        source_time_us: 2_000_000,
+        sequence_hash: 200,
+    };
+    let key_c = SubSequenceCacheKey {
+        compound_clip_id: clip_c,
+        source_time_us: 3_000_000,
+        sequence_hash: 300,
+    };
+
+    cache.insert(key_a, 64, 64, vec![10u8; 64 * 64 * 4]);
+    cache.insert(key_b, 64, 64, vec![20u8; 64 * 64 * 4]);
+    assert_eq!(cache.len(), 2);
+
+    // Touch key_a to make key_b the oldest LRU entry
+    let _ = cache.get(&key_a);
+    assert_eq!(cache.hits(), 1);
+
+    // Insert key_c: should evict key_b
+    cache.insert(key_c, 64, 64, vec![30u8; 64 * 64 * 4]);
+    assert_eq!(cache.len(), 2);
+
+    assert!(
+        cache.contains(&key_a),
+        "Recently touched key_a must remain in cache"
+    );
+    assert!(
+        !cache.contains(&key_b),
+        "Oldest entry key_b must be evicted"
+    );
+    assert!(
+        cache.contains(&key_c),
+        "Newly inserted key_c must be present in cache"
     );
 }

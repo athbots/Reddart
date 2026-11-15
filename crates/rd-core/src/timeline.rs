@@ -348,6 +348,28 @@ impl Timeline {
 
         Ok(unnested_ids)
     }
+
+    /// Compute a deterministic 64-bit structural and parameter content hash of this timeline.
+    pub fn compute_content_hash(&self) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        for track in self.tracks() {
+            track.id.0.hash(&mut hasher);
+            track.enabled.hash(&mut hasher);
+            for clip in track.clips() {
+                clip.id.0.hash(&mut hasher);
+                clip.position_us.hash(&mut hasher);
+                clip.source_in_us.hash(&mut hasher);
+                clip.source_out_us.hash(&mut hasher);
+                clip.speed.to_bits().hash(&mut hasher);
+                clip.opacity.to_bits().hash(&mut hasher);
+                if let crate::clip::ClipKind::Compound(ref comp) = clip.kind {
+                    comp.timeline.compute_content_hash().hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
 }
 
 impl Default for Timeline {
