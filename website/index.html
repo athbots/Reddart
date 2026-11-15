@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Reddart &mdash; Professional Zero-Lag Video Editor in Rust</title>
-  <meta name="description" content="Reddart is a standalone, offline, subscription-free non-linear video editor written in Rust with Direct3D 12/Vulkan render graph, 48 kHz WASAPI audio mixing, and hardware export.">
+  <meta name="description"
+    content="Reddart is a standalone, offline, subscription-free non-linear video editor written in Rust with Direct3D 12/Vulkan render graph, 48 kHz WASAPI audio mixing, and hardware export.">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
   <!-- Navigation -->
@@ -15,7 +18,7 @@
       <div class="brand">
         <span class="logo-mark">RD</span>
         <span class="logo-text">Reddart</span>
-        <span class="badge">v1.1.0</span>
+        <span class="badge">v1.2.0</span>
       </div>
       <nav class="nav-links">
         <a href="#features">Features</a>
@@ -34,15 +37,17 @@
       <h1 class="hero-title">Zero-Lag Video Editing.<br><span class="accent-text">Engineered in Rust.</span></h1>
       <p class="hero-subtitle">
         Direct3D 12 &amp; Vulkan render graph compilation, dedicated 48 kHz WASAPI audio mixing,
-        eased keyframe automation, geometric shape masking, and native hardware export. No cloud logins. No subscriptions.
+        eased keyframe automation, geometric shape masking, and native hardware export. No cloud logins. No
+        subscriptions.
       </p>
 
       <div class="hero-cta-group">
-        <a href="https://github.com/athbots/Reddart/releases/download/v1.1.0/Reddart-v1.1.0-Windows-x86_64.zip" class="btn btn-primary">
+        <a href="https://github.com/athbots/Reddart/releases/download/v1.2.0/Reddart-v1.2.0-Windows-x86_64.zip"
+          class="btn btn-primary">
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
           </svg>
-          Download for Windows (.zip, 8.22 MB)
+          Download for Windows (.zip, 8.23 MB)
         </a>
         <a href="https://github.com/athbots/Reddart" target="_blank" rel="noopener" class="btn btn-secondary">
           View Source on GitHub
@@ -63,44 +68,51 @@
     <div class="container">
       <div class="section-header">
         <h2 class="section-title">Engineered for Latency-Critical Production</h2>
-        <p class="section-desc">Every subsystem is built from the ground up for sub-millisecond responsiveness, memory safety, and complete data resilience.</p>
+        <p class="section-desc">Every subsystem is built from the ground up for sub-millisecond responsiveness, memory
+          safety, and complete data resilience.</p>
       </div>
 
       <div class="grid grid-3">
         <div class="card">
           <div class="card-icon">DAG</div>
           <h3>Directed Acyclic Graph (DAG)</h3>
-          <p>Compiles multi-track timeline states into an immutable topological render graph. Content-addressed hashing eliminates redundant GPU shader execution.</p>
+          <p>Compiles multi-track timeline states into an immutable topological render graph. Content-addressed hashing
+            eliminates redundant GPU shader execution.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">48k</div>
           <h3>48 kHz Low-Latency WASAPI</h3>
-          <p>Native 48,000 Hz 32-bit floating-point audio engine. Dynamic linear resampling, automated clip volume and stereo pan, 3-band EQ, and lookahead tanh soft limiter.</p>
+          <p>Native 48,000 Hz 32-bit floating-point audio engine. Dynamic linear resampling, automated clip volume and
+            stereo pan, 3-band EQ, and lookahead tanh soft limiter.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">KEY</div>
           <h3>Keyframe Automation</h3>
-          <p>Five interpolation curves (Linear, Ease In, Ease Out, Ease In-Out, Hold) driving spatial transforms, layer opacity, speed remapping, and audio volume envelopes.</p>
+          <p>Five interpolation curves (Linear, Ease In, Ease Out, Ease In-Out, Hold) driving spatial transforms, layer
+            opacity, speed remapping, and audio volume envelopes.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">MSK</div>
           <h3>Geometric Shape Masking</h3>
-          <p>Pixel-accurate Rectangle, Ellipse, Linear Gradient, and Vignette mask generators with normalized feather radius and alpha inversion.</p>
+          <p>Pixel-accurate Rectangle, Ellipse, Linear Gradient, and Vignette mask generators with normalized feather
+            radius and alpha inversion.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">WAL</div>
           <h3>CRC32 Write-Ahead Log</h3>
-          <p>Append-only binary journal (.reddart.wal) recording all timeline mutations with CRC32 checksums. Automatic torn-write truncation guarantees zero project corruption.</p>
+          <p>Append-only binary journal (.reddart.wal) recording all timeline mutations with CRC32 checksums. Automatic
+            torn-write truncation guarantees zero project corruption.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">GPU</div>
           <h3>Hardware Video Export</h3>
-          <p>Automatic discovery for NVIDIA NVENC, AMD AMF, Intel QuickSync, and Apple VideoToolbox with software libx264/libx265 fallback.</p>
+          <p>Automatic discovery for NVIDIA NVENC, AMD AMF, Intel QuickSync, and Apple VideoToolbox with software
+            libx264/libx265 fallback.</p>
         </div>
       </div>
     </div>
@@ -168,7 +180,8 @@
         </table>
       </div>
       <p class="table-caption">
-        *At 47.8 &micro;s p50 latency for 800 clips, DAG compilation consumes less than 0.3% of a 16.6 ms (60 fps) frame interval.
+        *At 47.8 &micro;s p50 latency for 800 clips, DAG compilation consumes less than 0.3% of a 16.6 ms (60 fps) frame
+        interval.
       </p>
     </div>
   </section>
@@ -178,7 +191,8 @@
     <div class="container">
       <div class="section-header">
         <h2 class="section-title">Native Command-Line Interface</h2>
-        <p class="section-desc">Automate batch rendering, inspect media containers, and benchmark DAG compiler performance without spawning a GUI window.</p>
+        <p class="section-desc">Automate batch rendering, inspect media containers, and benchmark DAG compiler
+          performance without spawning a GUI window.</p>
       </div>
 
       <div class="cli-box">
@@ -275,20 +289,22 @@ fast_action_music_video      High-Tempo Action Video  16:9     1920x1080    8.0s
   <!-- Download & Verification -->
   <section class="section">
     <div class="container text-center">
-      <h2 class="section-title">Get Started with Reddart v1.1.0</h2>
+      <h2 class="section-title">Get Started with Reddart v1.2.0</h2>
       <p class="section-desc">Download the standalone binary or build directly from source using the Rust toolchain.</p>
 
       <div class="download-card">
         <div class="download-info">
-          <h3>Reddart v1.1.0 for Windows</h3>
-          <p>Standalone ZIP archive containing <code>Reddart.exe</code>, sample project, and file association scripts.</p>
+          <h3>Reddart v1.2.0 for Windows</h3>
+          <p>Standalone ZIP archive containing <code>Reddart.exe</code>, sample project, and file association scripts.
+          </p>
           <div class="hash-box">
-            <code>Archive SHA-256: f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230<br>Binary SHA-256: 12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f</code>
+            <code>Archive SHA-256: f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c<br>Binary SHA-256: 412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e</code>
           </div>
         </div>
         <div class="download-actions">
-          <a href="https://github.com/athbots/Reddart/releases/download/v1.1.0/Reddart-v1.1.0-Windows-x86_64.zip" class="btn btn-primary btn-large">
-            Download Reddart v1.1.0 (8.22 MB)
+          <a href="https://github.com/athbots/Reddart/releases/download/v1.2.0/Reddart-v1.2.0-Windows-x86_64.zip"
+            class="btn btn-primary btn-large">
+            Download Reddart v1.2.0 (8.23 MB)
           </a>
         </div>
       </div>
@@ -320,4 +336,5 @@ cargo build --release -p reddart-windows</code></pre>
   </footer>
 
 </body>
+
 </html>

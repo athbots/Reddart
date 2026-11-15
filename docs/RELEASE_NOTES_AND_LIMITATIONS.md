@@ -1,69 +1,67 @@
-# Reddart v1.1.0 Production Release: Integrated Editing Workflow & Media Engine
+# Reddart v1.2.0 Production Release: Advanced Motion, Typography & Color Engine
 
-**Release Tag:** `v1.1.0`  
-**Distribution Archive:** `Reddart-v1.1.0-Windows-x86_64.zip`  
-**Binary Checksum (SHA-256):** `12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f`  
-**Archive Checksum (SHA-256):** `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
+**Release Tag:** `v1.2.0`  
+**Distribution Archive:** `Reddart-v1.2.0-Windows-x86_64.zip`  
+**Binary Checksum (SHA-256):** `412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e`  
+**Archive Checksum (SHA-256):** `f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c`  
 **MSRV:** Rust 1.85.0 (2024 Edition)  
 
 ---
 
 ## 1. Verified Production Capabilities
 
-Reddart v1.1.0 is officially released for production use by creators on Windows 10 and Windows 11:
+Reddart v1.2.0 represents a major milestone expansion, introducing professional motion estimation, vector typography, digital cinema color science, and nested timeline compositions:
 
-### Core Editing & Timeline Deck
-- **NLE Editing Tools:** Full implementation of Selection (`V`), Razor Split (`C`), Ripple Trim Out (`B`), Roll Edit (`N`), Slip (`Y`), Slide (`U`), and Cue Marker (`M`) tools.
-- **Keyframe Automation Engine:** Five interpolation curves (**Linear**, **EaseIn**, **EaseOut**, **EaseInOut**, and stepped **Hold**) driving spatial translation, scaling, rotation, opacity, speed, audio volume, and mask parameters.
-- **Geometric Shape Masking:** Real-time GPU rasterization of Rectangle, Ellipse, Linear Gradient, and Vignette shapes with normalized feather radius and alpha inversion.
-- **Dedicated 48 kHz Audio Engine:** Native 48,000 Hz 32-bit floating-point WASAPI stereo mixing bus with dynamic linear resampling, 3-band parametric EQ, and lookahead $\tanh$ soft-knee limiter.
-- **Variable Playback Speed:** Continuous $0.25\times\text{--}4.0\times$ speed remapping with microsecond timeline-to-source synchronization.
-- **Starter Project Templates:** Five pre-calibrated multi-format project blueprints (Reels/TikTok 9:16 Beat Cut, Cinematic Vlog 16:9, Social Square 1:1, YouTube 4K Doc, Action Video).
-- **Atomic WAL Journaling:** Append-only transaction logging with CRC32 verification and automatic torn-write truncation.
-- **Hardware Export Pipeline:** Automatic discovery of NVENC, AMF, QuickSync, and VideoToolbox with libx264/libx265 fallback.
-- **Headless Terminal CLI:** Direct command-line video rendering, container probing (`reddart probe`), template listing (`reddart templates`), and DAG latency benchmarking (`reddart benchmark`).
+### Hardware-Accelerated Optical Flow Retiming
+- **WGSL Compute Pipeline:** Dispatches `effects/optical_flow/flow_estimate.wgsl` executing Horn-Schunck iterative relaxation across $8 \times 8$ thread workgroups.
+- **Dense Motion Field:** Dense forward and backward vector fields packed into `Rgba16Float` textures for real-time velocity estimation.
+- **Bidirectional Synthesis:** Motion-compensated intermediate frame generation with bilateral occlusion hole-filling and smooth velocity interpolation.
+
+### Nested Timelines & Compound Sequences
+- **Multi-Level Recursion:** Embed complete sub-sequences as individual clips within master timelines with automatic cycle detection and recursion depth clamping.
+- **Pre-Render Sequence Cache:** High-speed LRU frame caching layer (`NestedSequenceCache`) with deterministic mutation-hash invalidation avoiding redundant DAG recompilation.
+
+### GPU Signed Distance Field (SDF) Text Rendering
+- **Vector-Sharp Typography:** Direct WGSL rendering with sub-pixel antialiasing via `smoothstep` regardless of canvas zoom or display scale.
+- **Linear-Time 2D EDT:** Felzenszwalb & Huttenlocher exact Euclidean Distance Transform ($O(W \cdot H)$) with high-efficiency R8Unorm atlas caching.
+- **Rich Typographic Styling:** Native tracking (kerning), leading (line spacing), stroke outline width/color, and customizable drop shadows.
+
+### Digital Cinema HDR & ACES Color Pipeline
+- **OpenColorIO v2 Parser:** Zero-dependency YAML configuration parser compliant with OCIO v2 specifications and reference ACES 1.2 / 1.3 color hierarchy.
+- **ACEScct Transfer Function:** Academy S-2016-001 logarithmic grading curve with linear toe segment below black ($L \le 0.0078125$) for tactile shadow control.
+- **High-Precision Quantization & Dithering:** 10-bit (`Rgb10a2Unorm`) and 12-bit (`Rgb12`) packing with symmetric Triangular Probability Density Function (TPDF) blue noise dithering.
+- **Dynamic HDR Surface Negotiation:** Automatic display probing on Windows DXGI/wgpu selecting `Rgba16Float` (scRGB Linear HDR) or `Rgb10a2Unorm` (HDR10 PQ) with graceful sRGB SDR fallback.
+
+### Cross-Platform Packaging & Distribution Matrix
+- **Linux Flatpak & AppImage:** Complete FreeDesktop Flatpak 24.08 sandbox manifest (`platforms/linux/app.reddart.Reddart.yaml`) and AppImage runner with Wayland fractional scaling auto-detection.
+- **macOS DMG & Apple Notarization:** Drag-and-drop UDZO disk image generation, hardened runtime codesigning (`--options runtime --timestamp`), and Apple Notarization CLI automation (`xcrun notarytool`).
 
 ---
 
 ## 2. System Requirements & Hardware Compatibility
 
-### Minimum Specifications:
+### Windows Specifications:
 - **Operating System:** Windows 10 (version 1903 or higher, 64-bit) or Windows 11.
-- **Processor:** Dual-core 64-bit x86_64 CPU with SSE4.2 support.
-- **Memory:** 8 GB DDR4 RAM.
-- **Graphics Card:** DirectX 12 Feature Level 11_0 or Vulkan 1.2 compatible GPU (NVIDIA GTX 900 series+, AMD Radeon RX 400 series+, Intel HD Graphics 500+).
-- **Audio Output:** WASAPI-compatible stereo output device (built-in speakers, headphone jack, or USB DAC).
-- **External Media Engine:** FFmpeg 5.0+ (FFmpeg 6.0+ recommended) with `ffmpeg` and `ffprobe` in system `PATH` or `<app_dir>/bin/`. Required for importing, probing, and decoding real container formats (MP4, MOV, MKV, WebM) and exporting rendered videos.
-  - Quick Install (Windows): `winget install Gyan.FFmpeg` or `choco install ffmpeg`.
+- **Processor:** 64-bit x86_64 CPU with SSE4.2 support (Intel 8th+ Gen, AMD Ryzen).
+- **Memory:** 16 GB DDR4/DDR5 RAM recommended for 4K and multi-layer nested workflows.
+- **Graphics Card:** DirectX 12 Feature Level 11_0 or Vulkan 1.2 compatible GPU (NVIDIA GTX 900+, AMD Radeon RX 400+, Intel UHD 600+).
+- **Audio Output:** WASAPI-compatible stereo output device.
+- **External Media Engine:** FFmpeg 6.0+ recommended in system `PATH` or `<app_dir>/bin/`.
 
-### Recommended Studio Specifications:
-- **Processor:** 8-core CPU (Intel Core i7/i9 12th+ Gen, AMD Ryzen 7/9 5000+ series).
-- **Memory:** 32 GB DDR4/DDR5 RAM.
-- **Graphics Card:** NVIDIA RTX 3060+ (for 4K NVENC export) or AMD Radeon RX 6700XT+.
-- **Storage:** Dedicated NVMe SSD for high-bandwidth media caching.
-- **Media Engine:** FFmpeg 6.0+ with NVENC / AMF / QSV hardware codec support.
+### Linux Specifications:
+- **Display Server:** Wayland (native fractional scaling) or X11.
+- **Graphics:** Vulkan 1.2+ DRI GPU driver (Mesa 23+, NVIDIA 525+).
+- **Audio:** PipeWire or PulseAudio low-latency sound server.
 
----
-
-## 3. Known Limitations & Phase II Workarounds
-
-As a public beta release, creators should be aware of the following known architectural limitations:
-
-1. **Nested Compound Clips / Sub-Sequences:**  
-   *Current State:* The timeline supports flat multi-track arrangements of video and audio tracks. Nested timelines (placing a sequence inside another sequence) are scheduled for Phase II.  
-   *Workaround:* Render sub-sequences headlessly to an intermediate MP4 (`reddart export sub.reddart -o sub.mp4`) and import into the main project.
-2. **Text / Title Generator Overlay:**  
-   *Current State:* Subtitles and caption tracks render via `rd-ml` whisper integration; arbitrary rich-text graphical title animators are currently being migrated to WGSL signed distance field text rendering.  
-   *Workaround:* Import transparent PNG title cards directly into overlay video tracks.
-3. **Multi-Channel Surround Audio (5.1 / 7.1):**  
-   *Current State:* The WASAPI audio engine operates in studio stereo (2.0 channels). Multichannel surround sound and 3D ambisonics bed mixing are slated for Phase II.
-4. **macOS and Linux Binary Releases:**  
-   *Current State:* Core crates (`rd-core`, `rd-render`, `rd-effects`, `rd-decode`, `rd-export`) support macOS (Metal) and Linux (Vulkan); pre-compiled GUI binaries are currently packaged exclusively for Windows x86_64.
+### macOS Specifications:
+- **Operating System:** macOS 12 (Monterey) or higher (macOS 14+ Sonoma recommended).
+- **Architecture:** Universal 2 (Apple Silicon M1/M2/M3/M4 & Intel x86_64).
+- **Graphics:** Metal 2.4+ hardware acceleration.
 
 ---
 
-## 4. Reporting Issues
+## 3. Reporting Issues
 
-To report bugs or regressions without compromising your media privacy:
+To report bugs, regressions, or feature requests:
 - **GitHub Issues:** [github.com/athbots/Reddart/issues](https://github.com/athbots/Reddart/issues)
-- Include your GPU model, Windows version, and stdout from `reddart --version`.
+- Include your platform, GPU model, and stdout from `reddart --version`.

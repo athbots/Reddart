@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-11-15
+
+### Added
+- **Hardware-Accelerated Optical Flow Retiming:** WGSL compute shader executing Horn-Schunck iterative relaxation across 8x8 thread workgroups (`effects/optical_flow/flow_estimate.wgsl`), dense motion field generation (`Rgba16Float` forward/backward vectors), and bidirectional motion-compensated frame interpolation with bilateral occlusion hole-filling. ([#35](https://github.com/athbots/Reddart/pull/35))
+- **Nested Timelines & Compound Sequences:** Multi-level recursive timeline rendering supporting sub-sequences embedded as clips within master sequences (`ClipPayload::NestedSequence`), cycle detection, and high-performance pre-render frame cache (`NestedSequenceCache`) with deterministic mutation-hash invalidation. ([#37](https://github.com/athbots/Reddart/pull/37))
+- **GPU Signed Distance Field (SDF) Text Rendering:** Direct WGSL vector-sharp typography shader with sub-pixel antialiasing via `smoothstep`, exact linear-time 2D Euclidean Distance Transform ($O(W \cdot H)$), R8Unorm hardware texture atlas, and rich typographic controls (tracking, leading, stroke outlines, drop shadows). ([#38](https://github.com/athbots/Reddart/pull/38))
+- **HDR & ACES Digital Cinema Color Pipeline:** Zero-dependency OpenColorIO v2 YAML configuration parser (`rd_effects::ocio`), reference ACES 1.2/1.3 hierarchy, ACEScct transfer function with linear shadow toe ($L \le 0.0078125$), 10-bit and 12-bit quantizers with Triangular Probability Density Function (TPDF) blue noise dithering, and dynamic DXGI/wgpu surface capability negotiation selecting `Rgba16Float` or `Rgb10a2Unorm`. ([#39](https://github.com/athbots/Reddart/pull/39))
+- **Cross-Platform Distribution Packaging:** FreeDesktop Flatpak 24.08 sandbox manifest (`platforms/linux/app.reddart.Reddart.yaml`) with Wayland, X11, DRI Vulkan, and PipeWire audio, Linux AppImage runner with Wayland fractional scaling auto-detection, and macOS DMG generation with hardened runtime codesigning and Apple Notarization CLI automation. ([#40](https://github.com/athbots/Reddart/pull/40))
+
+---
+
 ## [1.1.0] - 2026-11-13
 
 ### Added
