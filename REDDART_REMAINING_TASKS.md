@@ -1,7 +1,7 @@
 # Reddart — Production Milestone Completion & Future Roadmap Ledger
 
 > [!IMPORTANT]
-> **Execution Status:** All 14 primary production launch, architectural, and verification items across Phase I and Phase II are **100% COMPLETE, TESTED, PACKAGED, AND READY FOR OFFICIAL GITHUB RELEASE [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)**.
+> **Execution Status:** All 14 primary production launch, architectural, and verification items across Phase I and Phase II are **100% COMPLETE, TESTED, MERGED INTO `master`, AND PUBLISHED AS OFFICIAL GITHUB RELEASE [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)**.
 > All automated CI suites are green across Windows, Ubuntu, and macOS. Release assets have been verified bit-for-bit.
 
 ---
@@ -24,7 +24,7 @@
 | **11** | GPU Signed Distance Field (SDF) Text Rendering | ✅ **MERGED** | `feat/gpu-sdf-text-rendering` | [#38](https://github.com/athbots/Reddart/pull/38) | `400d8d9` | `43733646860` | 10/10 Pass |
 | **12** | HDR / ACES Color Pipeline Expansion | ✅ **MERGED** | `feat/hdr-aces-color-pipeline` | [#39](https://github.com/athbots/Reddart/pull/39) | `e1cd453` | `43735544076` | 10/10 Pass |
 | **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
-| **14** | Reconcile Checksums & Publish Release v1.2.0 | 🚀 **STAGED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `Pending` | `Pending` | 10/10 Pass |
+| **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
 
 ---
 
@@ -137,12 +137,14 @@
 - **CI Run:** `43737068850` / `43737089845` (10/10 matrix jobs passed).
 
 ### Item 14: Reconcile Checksums & Publish Release v1.2.0 (PR #41)
-- **Scope:** Packaged production binaries, verified clean build determinism, synchronized all manifests and documentation, merged PR #41, and published official GitHub release v1.2.0.
+- **Scope:** Packaged production binaries, verified clean build determinism, synchronized all manifests and documentation, merged PR #41, published official GitHub release v1.2.0, and verified downloaded release assets from the GitHub CDN.
 - **Release URL:** [https://github.com/athbots/Reddart/releases/tag/v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)
 - **Authoritative Checksums:**
   - `Reddart.exe`: `412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e`
   - `Reddart-v1.2.0-Windows-x86_64.zip`: `f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c`
+- **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
 - **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass), zero-warning clippy and cargo fmt.
+- **CI Run:** `43739965127` (5/5 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
