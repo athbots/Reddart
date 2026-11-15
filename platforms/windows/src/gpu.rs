@@ -62,21 +62,62 @@ impl GpuContext {
     }
 }
 
-/// Configure the surface for rendering.
-pub fn configure_surface(
+/// HDR surface capability and configuration metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HdrSurfaceInfo {
+    /// Configured swapchain texture format.
+    pub format: wgpu::TextureFormat,
+    /// Whether high dynamic range (HDR10 or scRGB) format is active.
+    pub is_hdr: bool,
+}
+
+/// Configure the surface for rendering, optionally enabling HDR display swapchains.
+///
+/// Probes surface capabilities for wide color gamut and high dynamic range presentation:
+/// - `wgpu::TextureFormat::Rgba16Float`: 16-bit floating point scRGB linear HDR swapchain.
+/// - `wgpu::TextureFormat::Rgb10a2Unorm`: 10-bit HDR10 PQ / BT.2100 swapchain.
+///
+/// When `prefer_hdr` is requested and supported by the display adapter, an HDR format is selected;
+/// otherwise, the swapchain gracefully falls back to an sRGB standard dynamic range format.
+pub fn configure_surface_hdr(
     surface: &wgpu::Surface,
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
     width: u32,
     height: u32,
-) -> wgpu::TextureFormat {
+    prefer_hdr: bool,
+) -> HdrSurfaceInfo {
     let caps = surface.get_capabilities(adapter);
-    let format = caps
-        .formats
-        .iter()
-        .find(|f| f.is_srgb())
-        .copied()
-        .unwrap_or(caps.formats[0]);
+
+    let (format, is_hdr) = if prefer_hdr {
+        if caps.formats.contains(&wgpu::TextureFormat::Rgba16Float) {
+            log::info!("HDR display detected: selecting Rgba16Float swapchain");
+            (wgpu::TextureFormat::Rgba16Float, true)
+        } else if caps.formats.contains(&wgpu::TextureFormat::Rgb10a2Unorm) {
+            log::info!("HDR display detected: selecting Rgb10a2Unorm swapchain");
+            (wgpu::TextureFormat::Rgb10a2Unorm, true)
+        } else {
+            let sdr_format = caps
+                .formats
+                .iter()
+                .find(|f| f.is_srgb())
+                .copied()
+                .unwrap_or(caps.formats[0]);
+            log::info!(
+                "HDR requested but not supported by display surface; falling back to {:?}",
+                sdr_format
+            );
+            (sdr_format, false)
+        }
+    } else {
+        let sdr_format = caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(caps.formats[0]);
+        (sdr_format, false)
+    };
 
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -90,7 +131,24 @@ pub fn configure_surface(
     };
 
     surface.configure(device, &config);
-    log::info!("Surface configured: {}x{} {:?}", width, height, format);
+    log::info!(
+        "Surface configured: {}x{} {:?} (HDR active: {})",
+        width,
+        height,
+        format,
+        is_hdr
+    );
 
-    format
+    HdrSurfaceInfo { format, is_hdr }
+}
+
+/// Configure the surface for rendering.
+pub fn configure_surface(
+    surface: &wgpu::Surface,
+    adapter: &wgpu::Adapter,
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> wgpu::TextureFormat {
+    configure_surface_hdr(surface, adapter, device, width, height, false).format
 }

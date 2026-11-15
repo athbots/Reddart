@@ -42,6 +42,8 @@ pub enum TransferFunction {
     HLG,
     /// ACEScc logarithmic encoding for digital color grading.
     ACEScc,
+    /// ACEScct logarithmic encoding with toe for traditional color grading feel.
+    ACEScct,
 }
 
 /// 3x3 Matrix for 32-bit floating point linear color space conversions.
@@ -258,6 +260,17 @@ pub fn decode_transfer_function(v: f32, tf: TransferFunction) -> f32 {
                 2.0_f32.powf(v * 17.52 - 9.72)
             }
         }
+        TransferFunction::ACEScct => {
+            // Academy ACEScct (S-2016-001) log to linear
+            const Y_BRK: f32 = 0.155251141552511;
+            const A: f32 = 10.540237741654697;
+            const B: f32 = 0.0729055341958355;
+            if v <= Y_BRK {
+                (v - B) / A
+            } else {
+                2.0_f32.powf(v * 17.52 - 9.72)
+            }
+        }
     }
 }
 
@@ -316,6 +329,17 @@ pub fn encode_transfer_function(l: f32, tf: TransferFunction) -> f32 {
                 (2.0_f32.powf(-16.0) + l * 0.5).log2() * (1.0 / 17.52) + (9.72 / 17.52)
             } else {
                 l.log2() * (1.0 / 17.52) + (9.72 / 17.52)
+            }
+        }
+        TransferFunction::ACEScct => {
+            // Linear to Academy ACEScct (S-2016-001) log with toe
+            const X_BRK: f32 = 0.0078125; // 2^-7
+            const A: f32 = 10.540237741654697;
+            const B: f32 = 0.0729055341958355;
+            if l <= X_BRK {
+                A * l + B
+            } else {
+                (l.log2() + 9.72) / 17.52
             }
         }
     }
@@ -530,6 +554,155 @@ impl ColorPipeline {
     }
 }
 
+// -----------------------------------------------------------------------------
+// High-Bitdepth Quantization, Dithering & Packed HDR Formats
+// -----------------------------------------------------------------------------
+
+/// Triangular Probability Density Function (TPDF) dither noise in range (-1.0, 1.0).
+///
+/// Generates high-frequency triangular dither based on 2D coordinates and frame index,
+/// ensuring mathematically complete elimination of quantization banding without visible pattern artifacts.
+#[inline]
+pub fn triangular_dither_tpdf(x: u32, y: u32, frame: u32) -> f32 {
+    let hash1 = {
+        let mut n =
+            x.wrapping_mul(1597334677) ^ y.wrapping_mul(3812015801) ^ frame.wrapping_mul(1234567);
+        n = (n ^ (n >> 16)).wrapping_mul(0x7feb352d);
+        n = (n ^ (n >> 15)).wrapping_mul(0x846ca68b);
+        (n ^ (n >> 16)) as f32 / 4294967295.0
+    };
+    let hash2 = {
+        let mut n = (x.wrapping_add(31)).wrapping_mul(2654435761)
+            ^ (y.wrapping_add(17)).wrapping_mul(2246822519)
+            ^ frame.wrapping_mul(9876543);
+        n = (n ^ (n >> 16)).wrapping_mul(0x45d9f3b);
+        n = (n ^ (n >> 15)).wrapping_mul(0x45d9f3b);
+        (n ^ (n >> 16)) as f32 / 4294967295.0
+    };
+    hash1 - hash2
+}
+
+/// Pack a 32-bit floating point RGBA color into a 32-bit packed R10G10B10A2 unsigned integer.
+///
+/// Matches DXGI `DXGI_FORMAT_R10G10B10A2_UNORM` and Vulkan/Metal `R10G10B10A2_UNORM` layouts:
+/// - Red: bits 0..9 (10-bit, 0..1023)
+/// - Green: bits 10..19 (10-bit, 0..1023)
+/// - Blue: bits 20..29 (10-bit, 0..1023)
+/// - Alpha: bits 30..31 (2-bit, 0..3)
+#[inline]
+pub fn pack_rgb10a2(rgba: [f32; 4]) -> u32 {
+    let r = (rgba[0].clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let g = (rgba[1].clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let b = (rgba[2].clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let a = (rgba[3].clamp(0.0, 1.0) * 3.0).round() as u32;
+    (r & 0x3FF) | ((g & 0x3FF) << 10) | ((b & 0x3FF) << 20) | ((a & 0x3) << 30)
+}
+
+/// Unpack a 32-bit packed R10G10B10A2 unsigned integer back to normalized [f32; 4] RGBA.
+#[inline]
+pub fn unpack_rgb10a2(val: u32) -> [f32; 4] {
+    let r = (val & 0x3FF) as f32 / 1023.0;
+    let g = ((val >> 10) & 0x3FF) as f32 / 1023.0;
+    let b = ((val >> 20) & 0x3FF) as f32 / 1023.0;
+    let a = ((val >> 30) & 0x3) as f32 / 3.0;
+    [r, g, b, a]
+}
+
+/// Pack a 32-bit floating point RGBA color into 10-bit with TPDF dithering to avoid HDR banding.
+#[inline]
+pub fn pack_rgb10a2_dithered(rgba: [f32; 4], x: u32, y: u32, frame: u32) -> u32 {
+    let noise = triangular_dither_tpdf(x, y, frame) / 1023.0;
+    let r = ((rgba[0] + noise).clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let g = ((rgba[1] + noise).clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let b = ((rgba[2] + noise).clamp(0.0, 1.0) * 1023.0).round() as u32;
+    let a = (rgba[3].clamp(0.0, 1.0) * 3.0).round() as u32;
+    (r & 0x3FF) | ((g & 0x3FF) << 10) | ((b & 0x3FF) << 20) | ((a & 0x3) << 30)
+}
+
+/// Pack a 32-bit floating point RGBA color into 12-bit per channel (`[u16; 4]`, range 0..4095).
+#[inline]
+pub fn pack_rgb12(rgba: [f32; 4]) -> [u16; 4] {
+    [
+        (rgba[0].clamp(0.0, 1.0) * 4095.0).round() as u16,
+        (rgba[1].clamp(0.0, 1.0) * 4095.0).round() as u16,
+        (rgba[2].clamp(0.0, 1.0) * 4095.0).round() as u16,
+        (rgba[3].clamp(0.0, 1.0) * 4095.0).round() as u16,
+    ]
+}
+
+/// Unpack a 12-bit per channel color back to normalized [f32; 4] RGBA.
+#[inline]
+pub fn unpack_rgb12(val: [u16; 4]) -> [f32; 4] {
+    [
+        (val[0].min(4095) as f32) / 4095.0,
+        (val[1].min(4095) as f32) / 4095.0,
+        (val[2].min(4095) as f32) / 4095.0,
+        (val[3].min(4095) as f32) / 4095.0,
+    ]
+}
+
+/// Pack a 32-bit floating point RGBA color into 12-bit with TPDF dithering.
+#[inline]
+pub fn pack_rgb12_dithered(rgba: [f32; 4], x: u32, y: u32, frame: u32) -> [u16; 4] {
+    let noise = triangular_dither_tpdf(x, y, frame) / 4095.0;
+    [
+        ((rgba[0] + noise).clamp(0.0, 1.0) * 4095.0).round() as u16,
+        ((rgba[1] + noise).clamp(0.0, 1.0) * 4095.0).round() as u16,
+        ((rgba[2] + noise).clamp(0.0, 1.0) * 4095.0).round() as u16,
+        (rgba[3].clamp(0.0, 1.0) * 4095.0).round() as u16,
+    ]
+}
+
+/// Quantize a high-precision 32-bit floating point RGBA buffer to 10-bit packed integer (R10G10B10A2).
+pub fn quantize_rgba32f_to_rgb10a2(
+    src: &[[f32; 4]],
+    dst: &mut [u32],
+    width: u32,
+    height: u32,
+    enable_dither: bool,
+) {
+    let total = (width as usize)
+        .saturating_mul(height as usize)
+        .min(src.len())
+        .min(dst.len());
+    if enable_dither {
+        for (idx, item) in dst.iter_mut().enumerate().take(total) {
+            let x = (idx as u32) % width;
+            let y = (idx as u32) / width;
+            *item = pack_rgb10a2_dithered(src[idx], x, y, 0);
+        }
+    } else {
+        for (idx, item) in dst.iter_mut().enumerate().take(total) {
+            *item = pack_rgb10a2(src[idx]);
+        }
+    }
+}
+
+/// Quantize a high-precision 32-bit floating point RGBA buffer to 12-bit channels ([u16; 4]).
+pub fn quantize_rgba32f_to_rgb12(
+    src: &[[f32; 4]],
+    dst: &mut [[u16; 4]],
+    width: u32,
+    height: u32,
+    enable_dither: bool,
+) {
+    let total = (width as usize)
+        .saturating_mul(height as usize)
+        .min(src.len())
+        .min(dst.len());
+    if enable_dither {
+        for (idx, item) in dst.iter_mut().enumerate().take(total) {
+            let x = (idx as u32) % width;
+            let y = (idx as u32) / width;
+            *item = pack_rgb12_dithered(src[idx], x, y, 0);
+        }
+    } else {
+        for (idx, item) in dst.iter_mut().enumerate().take(total) {
+            *item = pack_rgb12(src[idx]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +805,79 @@ mod tests {
             "+1 EV should increase brightness"
         );
         assert!((output_pixel[0] - output_pixel[1]).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_acescct_log_transfer_function_roundtrip() {
+        for &lin in &[0.0001, 0.005, 0.0078125, 0.01, 0.18, 1.0, 5.0, 10.0] {
+            let log_val = encode_transfer_function(lin, TransferFunction::ACEScct);
+            let reconstructed = decode_transfer_function(log_val, TransferFunction::ACEScct);
+            assert!(
+                (reconstructed - lin).abs() < 1e-3 * lin.max(0.001),
+                "ACEScct roundtrip error for {}: got {}",
+                lin,
+                reconstructed
+            );
+        }
+    }
+
+    #[test]
+    fn test_pack_unpack_rgb10a2_precision() {
+        let original = [0.12345, 0.67891, 0.98765, 1.0];
+        let packed = pack_rgb10a2(original);
+        let unpacked = unpack_rgb10a2(packed);
+
+        // 10-bit resolution is 1 / 1023 ~= 0.000977
+        for c in 0..3 {
+            assert!(
+                (unpacked[c] - original[c]).abs() < 0.0015,
+                "Channel {} deviates: {} vs {}",
+                c,
+                unpacked[c],
+                original[c]
+            );
+        }
+        assert_eq!(unpacked[3], 1.0);
+    }
+
+    #[test]
+    fn test_pack_unpack_rgb12_precision() {
+        let original = [0.12345, 0.67891, 0.98765, 0.5];
+        let packed = pack_rgb12(original);
+        let unpacked = unpack_rgb12(packed);
+
+        // 12-bit resolution is 1 / 4095 ~= 0.000244
+        for c in 0..4 {
+            assert!(
+                (unpacked[c] - original[c]).abs() < 0.0005,
+                "Channel {} deviates: {} vs {}",
+                c,
+                unpacked[c],
+                original[c]
+            );
+        }
+    }
+
+    #[test]
+    fn test_tpdf_dithering_noise_distribution() {
+        let mut min_val = 1.0f32;
+        let mut max_val = -1.0f32;
+        let mut sum = 0.0f32;
+        let n = 1000;
+
+        for i in 0..n {
+            let val = triangular_dither_tpdf(i, i * 3, 0);
+            min_val = min_val.min(val);
+            max_val = max_val.max(val);
+            sum += val;
+        }
+
+        let mean = sum / (n as f32);
+        assert!(min_val >= -1.0 && max_val <= 1.0);
+        assert!(
+            mean.abs() < 0.1,
+            "TPDF mean should be close to zero, got {}",
+            mean
+        );
     }
 }
