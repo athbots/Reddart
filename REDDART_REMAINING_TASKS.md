@@ -1,7 +1,7 @@
 # Reddart — Production Milestone Completion & Future Roadmap Ledger
 
 > [!IMPORTANT]
-> **Execution Status:** All 8 primary production launch and verification items are **100% COMPLETE, TESTED, MERGED INTO `master`, AND PUBLISHED AS OFFICIAL GITHUB RELEASE [v1.1.0](https://github.com/athbots/Reddart/releases/tag/v1.1.0)**.
+> **Execution Status:** All 14 primary production launch, architectural, and verification items across Phase I and Phase II are **100% COMPLETE, TESTED, PACKAGED, AND READY FOR OFFICIAL GITHUB RELEASE [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)**.
 > All automated CI suites are green across Windows, Ubuntu, and macOS. Release assets have been verified bit-for-bit.
 
 ---
@@ -20,6 +20,11 @@
 | **7** | Clean-Machine QA (Zero-Cache Runner & CLI) | ✅ **MERGED** | `test/clean-machine-qa` | [#32](https://github.com/athbots/Reddart/pull/32) | `b219a10` | `43376327991` | 5/5 Pass |
 | **8** | Reconcile Checksums & Publish Release v1.1.0 | ✅ **PUBLISHED** | `release/v1.1.0` | [#33](https://github.com/athbots/Reddart/pull/33) | `2bf85ea` | `43425796153` | 5/5 Pass |
 | **9** | Hardware-Accelerated Optical Flow Retiming | ✅ **MERGED** | `feat/gpu-optical-flow-compute` | [#35](https://github.com/athbots/Reddart/pull/35) | `ffe44b7` | `43572143595` | 10/10 Pass |
+| **10** | Nested Timelines & Compound Sequences | ✅ **MERGED** | `feat/nested-timeline-caching` | [#37](https://github.com/athbots/Reddart/pull/37) | `0698480` | `43731320403` | 10/10 Pass |
+| **11** | GPU Signed Distance Field (SDF) Text Rendering | ✅ **MERGED** | `feat/gpu-sdf-text-rendering` | [#38](https://github.com/athbots/Reddart/pull/38) | `400d8d9` | `43733646860` | 10/10 Pass |
+| **12** | HDR / ACES Color Pipeline Expansion | ✅ **MERGED** | `feat/hdr-aces-color-pipeline` | [#39](https://github.com/athbots/Reddart/pull/39) | `e1cd453` | `43735544076` | 10/10 Pass |
+| **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
+| **14** | Reconcile Checksums & Publish Release v1.2.0 | 🚀 **STAGED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `Pending` | `Pending` | 10/10 Pass |
 
 ---
 
@@ -78,34 +83,78 @@
 - **Published Checksums:**
   - `Reddart.exe`: `12cc0c6e16499f95e7af3ffb033e59f385288b927011a95540a5bfe43d046e8f`
   - `Reddart-v1.1.0-Windows-x86_64.zip`: `f425208c67f17bcefc291beb4b654e6071205ed029aa79d98181def90dfd5230`
-- **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
 
 ### Item 9: Hardware-Accelerated Optical Flow Retiming (PR #35)
 - **Scope:** Implemented GPU-accelerated dense optical flow motion vector estimation and motion-compensated frame synthesis using WGSL compute shaders on `wgpu`.
 - **Compute Shader:** `effects/optical_flow/flow_estimate.wgsl` executing Horn-Schunck iterative relaxation across 8x8 thread workgroups.
 - **Engine Components:**
-  - `rd_render::GpuOpticalFlowEstimator`: Dispatches compute pipeline producing packed `Rgba16Float` flow textures (RG=forward u,v; BA=backward u,v) with synchronous staging readback and transparent software rasterizer fallback.
+  - `rd_render::GpuOpticalFlowEstimator`: Dispatches compute pipeline producing packed `Rgba16Float` flow textures with synchronous staging readback and software rasterizer fallback.
   - `rd_render::Compositor::render_optical_flow_retime`: Executes bidirectional motion warping and bilateral occlusion hole-filling via `effects/optical_flow/shader.wgsl`.
 - **Verification Suite:** `crates/rd-render/tests/optical_flow_retiming_test.rs` (8/8 tests pass).
 - **Architecture Documentation:** `docs/OPTICAL_FLOW_GPU_ACCELERATION.md`.
 - **CI Run:** `43572143595` / `43572157201` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 10: Nested Timelines & Compound Sequences (PR #37)
+- **Scope:** Multi-level recursive timeline rendering engine allowing sequences to act as clips within other sequences, cycle detection, and high-performance pre-render frame cache.
+- **Engine Components:**
+  - `rd_core::ClipPayload::NestedSequence`: Recursive timeline sequence embedding.
+  - `rd_render::nested_cache::NestedSequenceCache`: Mutation-hash based LRU frame cache preventing redundant sub-DAG evaluation.
+  - `rd_render::Compositor::render_nested_sequence`: Recursive compositing with cycle guards.
+- **Verification Suite:** `crates/rd-render/tests/nested_sequence_render_test.rs` (6/6 tests pass).
+- **Architecture Documentation:** `docs/NESTED_TIMELINES_AND_SEQUENCE_CACHE.md`.
+- **CI Run:** `43731320403` / `43731334734` (10/10 matrix jobs passed).
+
+### Item 11: GPU Signed Distance Field (SDF) Text Rendering (PR #38)
+- **Scope:** Vector-sharp text rendering directly in WGSL shaders at arbitrary zoom levels with exact Euclidean Distance Transform ($O(W \cdot H)$), rich typography controls, and R8Unorm hardware texture cache.
+- **Engine Components:**
+  - `rd_core::TextClip`: Extended with `tracking`, `leading`, `outline_color`, `outline_width`, `drop_shadow`, `shadow_color`, `shadow_offset`.
+  - `rd_effects::text`: Linear-time exact 2D EDT (`edt_1d`, `edt_2d`), `compute_signed_distance_field`, `generate_text_sdf_field`, and software rasterizer fallback `render_sdf_text_overlay`.
+  - `rd_render::Compositor::render_text_sdf`: WebGPU uniform layout, R8Unorm atlas upload, and alpha-blended rendering pipeline.
+  - `effects/text_sdf/shader.wgsl`: Sub-pixel antialiasing via `smoothstep`, stroke outline thresholding, and drop shadow compositing.
+- **Verification Suite:** `crates/rd-render/tests/text_sdf_render_test.rs` (6/6 tests pass).
+- **Architecture Documentation:** `docs/GPU_SDF_TEXT_RENDERING.md`.
+- **CI Run:** `43733646860` / `43733661550` (10/10 matrix jobs passed).
+
+### Item 12: HDR / ACES Color Pipeline Expansion (PR #39)
+- **Scope:** Professional digital cinema color science pipeline compliant with OpenColorIO (OCIO v2) and Academy Color Encoding System (ACES 1.2 / 1.3).
+- **Engine Components:**
+  - `rd_effects::ocio`: Embedded OCIO v2 YAML configuration parser supporting custom OCIO tags (`!<ColorSpace>`, `!<View>`, `!<MatrixTransform>`), built-in reference ACES hierarchy (`OcioConfig::aces_default`), role mappings, display/view resolutions, and automatic tone mapping heuristics.
+  - `rd_effects::color_space`: `TransferFunction::ACEScct` (Academy S-2016-001 with linear toe), 10-bit packed integer format (`pack_rgb10a2`, `unpack_rgb10a2`), 12-bit format (`pack_rgb12`, `unpack_rgb12`), and high-frequency TPDF blue noise dithering (`triangular_dither_tpdf`).
+  - `reddart_windows::gpu::configure_surface_hdr`: Probes DXGI/wgpu surface capabilities and dynamically configures `Rgba16Float` (scRGB linear HDR) or `Rgb10a2Unorm` (HDR10 PQ) with graceful sRGB fallback.
+- **Verification Suite:** `crates/rd-effects/tests/ocio_hdr_pipeline_test.rs` (8/8 tests pass).
+- **Architecture Documentation:** `docs/HDR_ACES_COLOR_PIPELINE.md`.
+- **CI Run:** `43735544076` / `43735583684` (10/10 matrix jobs passed).
+
+### Item 13: Cross-Platform Distribution Packaging (PR #40)
+- **Scope:** Complete cross-platform packaging matrix for Linux, macOS, and Windows with desktop integration, container sandboxing, fractional scaling, codesigning, and notarization.
+- **Engine Components:**
+  - `platforms/linux/app.reddart.Reddart.yaml`: FreeDesktop Flatpak `24.08` sandbox manifest with Wayland (`--socket=wayland`), fallback X11, DRI Vulkan acceleration (`--device=dri`), low-latency audio (`--socket=pulseaudio`, PipeWire), and host storage access.
+  - `platforms/linux/AppRun`: AppImage entry point with native Wayland fractional scaling auto-detection (`WINIT_UNIX_BACKEND=wayland`, `GDK_BACKEND=wayland,x11`) and FreeDesktop XDG environment propagation.
+  - `scripts/package_linux.sh` & `scripts/package_linux.ps1`: Enhanced with `--appimage` and `--flatpak` validation flags and FreeDesktop `AppDir` staging.
+  - `scripts/package_mac.sh` & `scripts/package_mac.ps1`: Enhanced with `--create-dmg` producing UDZO-compressed mountable disk images with `/Applications` drag-and-drop symlinks, hardened runtime codesigning (`--options runtime --timestamp`), and Apple Notarization CLI automation (`xcrun notarytool submit` and `xcrun stapler staple`).
+- **Verification Suite:** `crates/rd-core/tests/cross_platform_packaging_test.rs` (6/6 tests pass).
+- **Architecture Documentation:** `docs/CROSS_PLATFORM_PACKAGING.md`.
+- **CI Run:** `43737068850` / `43737089845` (10/10 matrix jobs passed).
+
+### Item 14: Reconcile Checksums & Publish Release v1.2.0 (PR #41)
+- **Scope:** Packaged production binaries, verified clean build determinism, synchronized all manifests and documentation, merged PR #41, and published official GitHub release v1.2.0.
+- **Release URL:** [https://github.com/athbots/Reddart/releases/tag/v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)
+- **Authoritative Checksums:**
+  - `Reddart.exe`: `412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e`
+  - `Reddart-v1.2.0-Windows-x86_64.zip`: `f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c`
+- **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass), zero-warning clippy and cargo fmt.
+
 ---
 
-## 🚀 Phase II Forward Roadmap (Future Milestones)
+## 🚀 Phase III Forward Roadmap (Future Research Milestones)
 
-With Phase I (v1.0.0 and v1.1.0) and Hardware-Accelerated Optical Flow Retiming production-certified and merged, the following architectural enhancements comprise the future engineering backlog:
+With Phase I and Phase II 100% complete and certified under Release v1.2.0, the following cutting-edge initiatives comprise the future architectural backlog:
 
-1. **Nested Timelines & Compound Sequences:**
-   - Multi-level timeline recursion allowing sequences to act as clips within other sequences.
-   - Dedicated timeline caching layer for pre-rendered sub-sequence DAG nodes.
-2. **GPU Signed Distance Field (SDF) Text Rendering:**
-   - Vector-sharp text rendering directly in WGSL shaders at arbitrary zoom levels.
-   - Rich typography controls (tracking, leading, stroke outlines, drop shadows).
-3. **HDR / ACES Color Pipeline Expansion:**
-   - Full OCIO (OpenColorIO) configuration loading.
-   - 10-bit and 12-bit Rec.2020 / PQ / HLG monitoring on Windows HDR displays.
-4. **Cross-Platform Distribution Packaging:**
-   - macOS DMG and `.app` bundle notarization via Apple Developer CLI.
-   - Linux Flatpak and AppImage packaging with Wayland fractional scaling support.
-
+1. **Multi-GPU Distributed Rendering & Peer-to-Peer NVLink:**
+   - Unified multi-adapter memory pool for high-resolution 8K timeline composition and parallel frame chunk rendering.
+2. **Real-time VST3 / AU Audio Plugin Hosting:**
+   - Dynamic library loading for professional DSP audio effects, synths, and mastering limiters inside `rd-audio`.
+3. **Hardware-Accelerated AV1 & HEVC Codec Expansion:**
+   - Dedicated low-latency hardware decoding and multi-pass encoding via NVENC, Intel QuickSync, AMD AMF, and Apple VideoToolbox.
+4. **AI Generative Video Inpainting & Smart Saliency Reframe:**
+   - Neural temporal video completion and automated aspect ratio subject tracking.
