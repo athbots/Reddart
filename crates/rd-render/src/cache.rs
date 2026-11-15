@@ -158,3 +158,136 @@ impl ResultCache {
         self.entries.is_empty()
     }
 }
+
+/// Content hash identifying the structural and parameter state of a nested sub-sequence.
+pub type SequenceHash = u64;
+
+/// Cache key uniquely identifying a sub-sequence frame at a specific source timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SubSequenceCacheKey {
+    pub compound_clip_id: rd_core::ClipId,
+    pub source_time_us: rd_core::TimestampUs,
+    pub sequence_hash: SequenceHash,
+}
+
+/// In-memory pre-rendered sub-sequence cache entry (RGBA frame buffer).
+#[derive(Debug, Clone)]
+pub struct CachedSubSequenceFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub last_used_tick: u64,
+}
+
+/// Dedicated sub-sequence pre-render caching layer.
+///
+/// Prevents recursive re-evaluation of complex nested timeline graphs during scrubbing
+/// and playback by caching rendered intermediate compound sequence frames.
+#[derive(Debug)]
+pub struct SubSequenceCache {
+    frames: HashMap<SubSequenceCacheKey, CachedSubSequenceFrame>,
+    current_tick: u64,
+    max_frames: usize,
+    hits: u64,
+    misses: u64,
+}
+
+impl SubSequenceCache {
+    /// Create a new sub-sequence cache with maximum capacity in number of frames.
+    pub fn new(max_frames: usize) -> Self {
+        Self {
+            frames: HashMap::new(),
+            current_tick: 0,
+            max_frames: max_frames.max(1),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// Check if the cache contains a pre-rendered frame for the given key.
+    pub fn contains(&self, key: &SubSequenceCacheKey) -> bool {
+        self.frames.contains_key(key)
+    }
+
+    /// Retrieve a pre-rendered frame from cache by key.
+    pub fn get(&mut self, key: &SubSequenceCacheKey) -> Option<&CachedSubSequenceFrame> {
+        self.current_tick += 1;
+        let tick = self.current_tick;
+        if let Some(entry) = self.frames.get_mut(key) {
+            entry.last_used_tick = tick;
+            self.hits += 1;
+            Some(entry)
+        } else {
+            self.misses += 1;
+            None
+        }
+    }
+
+    /// Insert a pre-rendered frame into the cache.
+    pub fn insert(&mut self, key: SubSequenceCacheKey, width: u32, height: u32, rgba: Vec<u8>) {
+        self.current_tick += 1;
+        if self.frames.len() >= self.max_frames && !self.frames.contains_key(&key) {
+            self.evict_oldest();
+        }
+
+        self.frames.insert(
+            key,
+            CachedSubSequenceFrame {
+                width,
+                height,
+                rgba,
+                last_used_tick: self.current_tick,
+            },
+        );
+    }
+
+    /// Evict the least recently used cached frame.
+    fn evict_oldest(&mut self) -> bool {
+        let oldest_key = self
+            .frames
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_used_tick)
+            .map(|(key, _)| *key);
+
+        if let Some(key) = oldest_key {
+            self.frames.remove(&key);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Invalidate all cached entries for a specific compound clip.
+    pub fn invalidate_clip(&mut self, clip_id: rd_core::ClipId) {
+        self.frames.retain(|key, _| key.compound_clip_id != clip_id);
+    }
+
+    /// Clear all cached frames.
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    pub fn hits(&self) -> u64 {
+        self.hits
+    }
+
+    pub fn misses(&self) -> u64 {
+        self.misses
+    }
+}
+
+impl Default for SubSequenceCache {
+    fn default() -> Self {
+        Self::new(128)
+    }
+}

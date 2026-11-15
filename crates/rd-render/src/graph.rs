@@ -35,6 +35,12 @@ pub enum NodeKind {
     },
     /// Blend two layers together (base + overlay) using a blend mode.
     Blend { blend_mode: u32, opacity: f32 },
+    /// Pre-rendered sub-sequence / compound clip from the dedicated sequence cache.
+    CachedSequence {
+        compound_clip_id: ClipId,
+        source_time_us: TimestampUs,
+        sequence_hash: u64,
+    },
     /// Final output target (screen preview or encoder).
     Output { width: u32, height: u32 },
 }
@@ -208,6 +214,35 @@ impl RenderGraph {
         id
     }
 
+    /// Add a pre-rendered sub-sequence node from the dedicated sequence cache.
+    pub fn add_cached_sequence(
+        &mut self,
+        compound_clip_id: ClipId,
+        source_time_us: TimestampUs,
+        sequence_hash: u64,
+    ) -> NodeId {
+        let id = self.alloc_id();
+        let mut hasher = DefaultHasher::new();
+        "cached_sequence".hash(&mut hasher);
+        compound_clip_id.0.hash(&mut hasher);
+        source_time_us.hash(&mut hasher);
+        sequence_hash.hash(&mut hasher);
+        let content_hash = hasher.finish();
+
+        let node = RenderNode {
+            id,
+            kind: NodeKind::CachedSequence {
+                compound_clip_id,
+                source_time_us,
+                sequence_hash,
+            },
+            inputs: Vec::new(),
+            content_hash,
+        };
+        self.nodes.insert(id, node);
+        id
+    }
+
     /// Set the output target node.
     pub fn set_output(&mut self, input: NodeId, width: u32, height: u32) -> NodeId {
         let id = self.alloc_id();
@@ -286,10 +321,15 @@ impl RenderGraph {
         }
     }
 
-    /// Compile a Project Timeline at a specific timestamp into a complete RenderGraph.
-    pub fn compile_timeline(project: &rd_core::Project, time_us: TimestampUs) -> Self {
+    /// Compile a Project Timeline at a specific timestamp with an optional sub-sequence cache.
+    pub fn compile_timeline_with_cache(
+        project: &rd_core::Project,
+        time_us: TimestampUs,
+        sequence_cache: Option<&crate::cache::SubSequenceCache>,
+    ) -> Self {
         let mut graph = Self::new();
-        let composite = graph.compile_timeline_tracks(&project.timeline, time_us);
+        let composite =
+            graph.compile_timeline_tracks_with_cache(&project.timeline, time_us, sequence_cache);
 
         let final_node = match composite {
             Some(node) => node,
@@ -309,12 +349,18 @@ impl RenderGraph {
         graph
     }
 
+    /// Compile a Project Timeline at a specific timestamp into a complete RenderGraph.
+    pub fn compile_timeline(project: &rd_core::Project, time_us: TimestampUs) -> Self {
+        Self::compile_timeline_with_cache(project, time_us, None)
+    }
+
     /// Recursively compile the active tracks of a timeline (or nested compound clip sequence)
-    /// at a given timestamp into composited render graph nodes.
-    pub fn compile_timeline_tracks(
+    /// at a given timestamp into composited render graph nodes, using the sub-sequence cache if provided.
+    pub fn compile_timeline_tracks_with_cache(
         &mut self,
         timeline: &rd_core::Timeline,
         time_us: TimestampUs,
+        sequence_cache: Option<&crate::cache::SubSequenceCache>,
     ) -> Option<NodeId> {
         let mut active_layer_nodes = Vec::new();
 
@@ -327,10 +373,35 @@ impl RenderGraph {
                     // Check if this is a compound clip or primitive clip
                     let mut current = match &clip.kind {
                         rd_core::ClipKind::Compound(comp) => {
-                            // Recursively compile inner nested timeline
-                            match self.compile_timeline_tracks(&comp.timeline, source_time) {
-                                Some(inner_node) => inner_node,
-                                None => continue,
+                            let sub_seq_hash = comp.content_hash();
+                            let cache_key = crate::cache::SubSequenceCacheKey {
+                                compound_clip_id: clip.id,
+                                source_time_us: source_time,
+                                sequence_hash: sub_seq_hash,
+                            };
+
+                            if let Some(cache) = sequence_cache {
+                                if cache.contains(&cache_key) {
+                                    self.add_cached_sequence(clip.id, source_time, sub_seq_hash)
+                                } else {
+                                    match self.compile_timeline_tracks_with_cache(
+                                        &comp.timeline,
+                                        source_time,
+                                        Some(cache),
+                                    ) {
+                                        Some(inner_node) => inner_node,
+                                        None => continue,
+                                    }
+                                }
+                            } else {
+                                match self.compile_timeline_tracks_with_cache(
+                                    &comp.timeline,
+                                    source_time,
+                                    None,
+                                ) {
+                                    Some(inner_node) => inner_node,
+                                    None => continue,
+                                }
                             }
                         }
                         _ => self.add_source(clip.id, track.id, source_time),
@@ -380,6 +451,16 @@ impl RenderGraph {
         }
 
         Some(composite)
+    }
+
+    /// Recursively compile the active tracks of a timeline (or nested compound clip sequence)
+    /// at a given timestamp into composited render graph nodes.
+    pub fn compile_timeline_tracks(
+        &mut self,
+        timeline: &rd_core::Timeline,
+        time_us: TimestampUs,
+    ) -> Option<NodeId> {
+        self.compile_timeline_tracks_with_cache(timeline, time_us, None)
     }
 
     /// Alias for `compile_timeline_tracks` for compiling nested sequences into the DAG.
