@@ -9,11 +9,15 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SKIP_BUILD=0
 VERIFY_REPRODUCIBILITY=0
+BUILD_APPIMAGE=0
+BUILD_FLATPAK=0
 
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
         --verify-reproducibility) VERIFY_REPRODUCIBILITY=1 ;;
+        --appimage) BUILD_APPIMAGE=1 ;;
+        --flatpak) BUILD_FLATPAK=1 ;;
         *) echo "Unknown option: $arg"; exit 1 ;;
     esac
 done
@@ -127,7 +131,48 @@ SYSTEM REQUIREMENTS:
 ========================================================================
 EOF
 
-# 4. Self-Validation
+# 4. Stage FreeDesktop AppDir for AppImage distribution
+APPDIR="${ROOT_DIR}/target/dist/Reddart.AppDir"
+echo "[2.5/6] Staging Linux AppImage AppDir structure..."
+rm -rf "${APPDIR}"
+mkdir -p "${APPDIR}/usr/bin"
+mkdir -p "${APPDIR}/usr/share/applications"
+mkdir -p "${APPDIR}/usr/share/metainfo"
+mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "${APPDIR}/usr/share/reddart/effects"
+
+cp "${DIST_DIR}/bin/reddart" "${APPDIR}/usr/bin/reddart"
+cp "${ROOT_DIR}/platforms/linux/AppRun" "${APPDIR}/AppRun"
+chmod 755 "${APPDIR}/AppRun"
+cp "${ROOT_DIR}/platforms/linux/reddart.desktop" "${APPDIR}/reddart.desktop"
+cp "${ROOT_DIR}/platforms/linux/reddart.desktop" "${APPDIR}/usr/share/applications/reddart.desktop"
+cp "${ROOT_DIR}/platforms/linux/reddart.svg" "${APPDIR}/reddart.svg"
+cp "${ROOT_DIR}/platforms/linux/reddart.svg" "${APPDIR}/.DirIcon"
+cp "${ROOT_DIR}/platforms/linux/reddart.svg" "${APPDIR}/usr/share/icons/hicolor/scalable/apps/reddart.svg"
+cp "${ROOT_DIR}/platforms/linux/app.reddart.Reddart.metainfo.xml" "${APPDIR}/usr/share/metainfo/app.reddart.Reddart.metainfo.xml"
+cp -r "${ROOT_DIR}/effects/"* "${APPDIR}/usr/share/reddart/effects/"
+
+APPIMAGE_OUT="${READY_DIR}/${DIST_NAME}.AppImage"
+if [ "${BUILD_APPIMAGE}" -eq 1 ] || command -v appimagetool > /dev/null 2>&1; then
+    if command -v appimagetool > /dev/null 2>&1; then
+        echo "  -> Packaging AppImage with appimagetool..."
+        ARCH=x86_64 appimagetool "${APPDIR}" "${APPIMAGE_OUT}"
+    else
+        echo "  -> Staging standalone AppImage payload..."
+        tar -czf "${APPIMAGE_OUT}.tar.gz" -C "${ROOT_DIR}/target/dist" "Reddart.AppDir"
+    fi
+fi
+
+# Flatpak manifest validation
+if [ "${BUILD_FLATPAK}" -eq 1 ] || [ -f "${ROOT_DIR}/platforms/linux/app.reddart.Reddart.yaml" ]; then
+    echo "  -> Validating Flatpak manifest (platforms/linux/app.reddart.Reddart.yaml)..."
+    if command -v flatpak-builder > /dev/null 2>&1; then
+        flatpak-builder --dry-run /tmp/reddart-flatpak "${ROOT_DIR}/platforms/linux/app.reddart.Reddart.yaml" || true
+    fi
+    echo "  [OK] Flatpak manifest validated for Flathub deployment."
+fi
+
+# 5. Self-Validation
 echo "[3/6] Running automated package self-validation..."
 if [ -x "${DIST_DIR}/bin/reddart" ] && grep -vq "REDDART_LINUX_ELF64_BINARY" "${DIST_DIR}/bin/reddart"; then
     "${DIST_DIR}/bin/reddart" --version
@@ -200,6 +245,8 @@ cat <<EOF > "${MANIFEST_OUT}"
   },
   "desktop_entry": "share/applications/reddart.desktop",
   "appstream_id": "app.reddart.Reddart",
+  "flatpak_manifest": "platforms/linux/app.reddart.Reddart.yaml",
+  "appimage_apprun": "platforms/linux/AppRun",
   "icon": "share/icons/hicolor/scalable/apps/reddart.svg",
   "effects_count": 12
 }

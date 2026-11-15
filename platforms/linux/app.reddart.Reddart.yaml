@@ -1,0 +1,47 @@
+app-id: app.reddart.Reddart
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: reddart
+
+finish-args:
+  # IPC & Wayland/X11 Windowing
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+
+  # GPU Direct Rendering Infrastructure (Vulkan / OpenGL hardware acceleration)
+  - --device=dri
+
+  # Low-latency Audio (ALSA / PulseAudio / PipeWire)
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
+
+  # File Access for Video/Audio Media Import and Master Render Export
+  - --filesystem=host
+
+  # Environment variables for native Wayland fractional scaling
+  - --env=GDK_BACKEND=wayland,x11
+  - --env=WINIT_UNIX_BACKEND=wayland
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    - --share=network
+
+modules:
+  - name: reddart
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked -p reddart-windows
+      - install -Dm755 target/release/reddart /app/bin/reddart
+      - install -Dm644 platforms/linux/reddart.desktop /app/share/applications/app.reddart.Reddart.desktop
+      - install -Dm644 platforms/linux/app.reddart.Reddart.metainfo.xml /app/share/metainfo/app.reddart.Reddart.metainfo.xml
+      - install -Dm644 platforms/linux/reddart.svg /app/share/icons/hicolor/scalable/apps/app.reddart.Reddart.svg
+      - mkdir -p /app/share/reddart/effects
+      - cp -r effects/* /app/share/reddart/effects/
+    sources:
+      - type: dir
+        path: ../../
