@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::preset::ExportPreset;
+use crate::preset::{ExportPreset, RateControlMode};
 use rd_core::{ClipKind, Project, TrackKind};
 use rd_decode::FfmpegDecoder;
 
@@ -133,39 +133,114 @@ impl ExportJob {
         let b_str = format!("{}k", preset.video_bitrate_kbps);
         let ab_str = format!("{}k", preset.audio_bitrate_kbps);
 
-        let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
-        let status = std::process::Command::new(bin)
-            .args([
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                &format!(
-                    "testsrc=size={}:rate={}:duration={}",
-                    size_str, rate_str, dur_str
-                ),
-                "-f",
-                "lavfi",
-                "-i",
-                &format!("aevalsrc=0:s=48000:d={}", dur_str),
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-b:v",
-                &b_str,
-                "-c:a",
-                "aac",
-                "-b:a",
-                &ab_str,
-                output_path.to_str().unwrap_or("output.mp4"),
-            ])
-            .status()?;
-
-        if status.success() {
-            Ok(())
+        let encoder = select_encoder_for_profile(&preset.video_codec, preset.bit_depth);
+        let pix_fmt = if preset.bit_depth == 10 {
+            if encoder.contains("nvenc") || encoder.contains("qsv") || encoder.contains("amf") {
+                "p010le"
+            } else {
+                "yuv420p10le"
+            }
         } else {
-            Err(std::io::Error::other("FFmpeg encode failed"))
+            "yuv420p"
+        };
+
+        let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        let mut cmd = std::process::Command::new(bin);
+        cmd.args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!(
+                "testsrc=size={}:rate={}:duration={}",
+                size_str, rate_str, dur_str
+            ),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("aevalsrc=0:s=48000:d={}", dur_str),
+            "-c:v",
+            encoder,
+        ]);
+
+        if encoder.contains("videotoolbox") {
+            cmd.args(["-allow_sw", "1"]);
+        }
+
+        cmd.args([
+            "-pix_fmt",
+            pix_fmt,
+            "-b:v",
+            &b_str,
+            "-c:a",
+            "aac",
+            "-b:a",
+            &ab_str,
+            "-movflags",
+            "+faststart",
+        ]);
+
+        if preset.bit_depth == 10 {
+            if encoder.contains("hevc") || encoder.contains("x265") {
+                cmd.args(["-profile:v", "main10"]);
+            } else if encoder.contains("av1") || encoder.contains("svtav1") {
+                cmd.args(["-profile:v", "main"]);
+            }
+        }
+
+        cmd.arg(output_path.to_str().unwrap_or("output.mp4"));
+
+        let status = cmd.status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            _ => {
+                // If hardware encoder failed and it was not already software, fallback to software
+                if !encoder.starts_with("lib") {
+                    let fallback_encoder = if preset.video_codec.eq_ignore_ascii_case("hevc")
+                        || preset.video_codec.eq_ignore_ascii_case("h265")
+                    {
+                        "libx265"
+                    } else if preset.video_codec.eq_ignore_ascii_case("av1") {
+                        "libsvtav1"
+                    } else {
+                        "libx264"
+                    };
+
+                    let bin_fallback =
+                        find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+                    let mut fallback_cmd = std::process::Command::new(bin_fallback);
+                    fallback_cmd.args([
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        &format!(
+                            "testsrc=size={}:rate={}:duration={}",
+                            size_str, rate_str, dur_str
+                        ),
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        &format!("aevalsrc=0:s=48000:d={}", dur_str),
+                        "-c:v",
+                        fallback_encoder,
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-b:v",
+                        &b_str,
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        &ab_str,
+                        output_path.to_str().unwrap_or("output.mp4"),
+                    ]);
+
+                    if fallback_cmd.status().map(|s| s.success()).unwrap_or(false) {
+                        return Ok(());
+                    }
+                }
+                Err(std::io::Error::other("FFmpeg encode failed"))
+            }
         }
     }
 
@@ -538,11 +613,18 @@ pub fn mix_project_audio_range(
 fn test_encoder_available(encoder_name: &str) -> bool {
     let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let mut cmd = std::process::Command::new(bin);
-    cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.03:size=64x64"]);
+    cmd.args([
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=0.03:size=64x64",
+        "-c:v",
+        encoder_name,
+    ]);
     if encoder_name.contains("videotoolbox") {
         cmd.args(["-allow_sw", "1"]);
     }
-    cmd.args(["-c:v", encoder_name, "-f", "null", "-"])
+    cmd.args(["-f", "null", "-"])
         .output()
         .map(|out| out.status.success())
         .unwrap_or(false)
@@ -556,13 +638,23 @@ pub struct HardwareEncoderReport {
     pub h264_qsv: bool,
     pub h264_videotoolbox: bool,
     pub libx264: bool,
+
     pub hevc_nvenc: bool,
     pub hevc_amf: bool,
     pub hevc_qsv: bool,
     pub hevc_videotoolbox: bool,
     pub libx265: bool,
+
+    pub av1_nvenc: bool,
+    pub av1_amf: bool,
+    pub av1_qsv: bool,
+    pub av1_videotoolbox: bool,
+    pub libsvtav1: bool,
+    pub libaom_av1: bool,
+
     pub selected_h264: &'static str,
     pub selected_hevc: &'static str,
+    pub selected_av1: &'static str,
 }
 
 /// Probe host environment for available hardware and software video encoders.
@@ -578,6 +670,13 @@ pub fn probe_hardware_encoders() -> HardwareEncoderReport {
     let hevc_qsv = test_encoder_available("hevc_qsv");
     let hevc_videotoolbox = test_encoder_available("hevc_videotoolbox");
     let libx265 = test_encoder_available("libx265");
+
+    let av1_nvenc = test_encoder_available("av1_nvenc");
+    let av1_amf = test_encoder_available("av1_amf");
+    let av1_qsv = test_encoder_available("av1_qsv");
+    let av1_videotoolbox = test_encoder_available("av1_videotoolbox");
+    let libsvtav1 = test_encoder_available("libsvtav1");
+    let libaom_av1 = test_encoder_available("libaom-av1");
 
     let selected_h264 = if h264_nvenc {
         "h264_nvenc"
@@ -603,6 +702,22 @@ pub fn probe_hardware_encoders() -> HardwareEncoderReport {
         "libx265"
     };
 
+    let selected_av1 = if av1_nvenc {
+        "av1_nvenc"
+    } else if av1_amf {
+        "av1_amf"
+    } else if av1_qsv {
+        "av1_qsv"
+    } else if av1_videotoolbox {
+        "av1_videotoolbox"
+    } else if libsvtav1 {
+        "libsvtav1"
+    } else if libaom_av1 {
+        "libaom-av1"
+    } else {
+        "libsvtav1"
+    };
+
     HardwareEncoderReport {
         h264_nvenc,
         h264_amf,
@@ -614,8 +729,15 @@ pub fn probe_hardware_encoders() -> HardwareEncoderReport {
         hevc_qsv,
         hevc_videotoolbox,
         libx265,
+        av1_nvenc,
+        av1_amf,
+        av1_qsv,
+        av1_videotoolbox,
+        libsvtav1,
+        libaom_av1,
         selected_h264,
         selected_hevc,
+        selected_av1,
     }
 }
 
@@ -624,11 +746,51 @@ pub fn select_encoder(video_codec: &str) -> &'static str {
     static REPORT: OnceLock<HardwareEncoderReport> = OnceLock::new();
     let report = REPORT.get_or_init(probe_hardware_encoders);
 
-    if video_codec == "h265" || video_codec == "hevc" {
+    if video_codec.eq_ignore_ascii_case("h265") || video_codec.eq_ignore_ascii_case("hevc") {
         report.selected_hevc
+    } else if video_codec.eq_ignore_ascii_case("av1") {
+        report.selected_av1
+    } else if video_codec.eq_ignore_ascii_case("prores") {
+        "prores_ks"
     } else {
         report.selected_h264
     }
+}
+
+/// Query encoder optimized for requested color bit depth (e.g. 10-bit HDR vs 8-bit SDR).
+pub fn select_encoder_for_profile(video_codec: &str, bit_depth: u32) -> &'static str {
+    let base = select_encoder(video_codec);
+    if bit_depth > 8 && !supports_10bit(base) {
+        if video_codec.eq_ignore_ascii_case("hevc") || video_codec.eq_ignore_ascii_case("h265") {
+            "libx265"
+        } else if video_codec.eq_ignore_ascii_case("av1") {
+            "libsvtav1"
+        } else {
+            "libx264"
+        }
+    } else {
+        base
+    }
+}
+
+/// Returns whether the specified video encoder natively supports 10-bit color pipelines.
+pub fn supports_10bit(encoder: &str) -> bool {
+    matches!(
+        encoder,
+        "hevc_nvenc"
+            | "hevc_amf"
+            | "hevc_qsv"
+            | "hevc_videotoolbox"
+            | "libx265"
+            | "av1_nvenc"
+            | "av1_amf"
+            | "av1_qsv"
+            | "av1_videotoolbox"
+            | "libsvtav1"
+            | "libaom-av1"
+            | "prores"
+            | "prores_ks"
+    )
 }
 
 /// Locate the FFmpeg executable by checking:
@@ -786,10 +948,20 @@ pub fn render_project_to_file(
     let temp_audio_path = mix_project_audio_range(req.project, start_us, duration_s)?;
 
     // 2. Select best encoder and spawn FFmpeg child process
-    let encoder = select_encoder(&req.preset.video_codec);
+    let encoder = select_encoder_for_profile(&req.preset.video_codec, req.preset.bit_depth);
     let b_str = format!("{}k", req.preset.video_bitrate_kbps);
     let ab_str = format!("{}k", req.preset.audio_bitrate_kbps);
     let fps_str = format!("{:.3}", req.preset.fps);
+
+    let pix_fmt = if req.preset.bit_depth == 10 {
+        if encoder.contains("nvenc") || encoder.contains("qsv") || encoder.contains("amf") {
+            "p010le"
+        } else {
+            "yuv420p10le"
+        }
+    } else {
+        "yuv420p"
+    };
 
     let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let mut cmd = std::process::Command::new(ffmpeg_bin);
@@ -812,30 +984,122 @@ pub fn render_project_to_file(
         "2",
         "-i",
         temp_audio_path.to_str().unwrap_or(""),
+        "-c:v",
+        encoder,
     ]);
 
     if encoder.contains("videotoolbox") {
         cmd.args(["-allow_sw", "1"]);
     }
 
-    cmd.args([
-        "-c:v",
-        encoder,
-        "-pix_fmt",
-        "yuv420p",
-        "-b:v",
-        &b_str,
-        "-c:a",
-        "aac",
-        "-b:a",
-        &ab_str,
-        "-movflags",
-        "+faststart",
-    ])
-    .arg(req.output_path)
-    .stdin(std::process::Stdio::piped())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::piped());
+    cmd.args(["-pix_fmt", pix_fmt]);
+
+    // Color metadata & HDR signaling
+    if let Some(ref cs) = req.preset.color_space {
+        match cs.as_str() {
+            "bt2020_pq" | "hdr10" => {
+                cmd.args([
+                    "-color_primaries",
+                    "bt2020",
+                    "-color_trc",
+                    "smpte2084",
+                    "-colorspace",
+                    "bt2020nc",
+                ]);
+            }
+            "bt2020_hlg" | "hlg" => {
+                cmd.args([
+                    "-color_primaries",
+                    "bt2020",
+                    "-color_trc",
+                    "arib-std-b67",
+                    "-colorspace",
+                    "bt2020nc",
+                ]);
+            }
+            "bt709" => {
+                cmd.args([
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
+                    "-colorspace",
+                    "bt709",
+                ]);
+            }
+            _ => {}
+        }
+    } else if req.preset.bit_depth == 10 {
+        cmd.args([
+            "-color_primaries",
+            "bt2020",
+            "-color_trc",
+            "smpte2084",
+            "-colorspace",
+            "bt2020nc",
+        ]);
+    }
+
+    // Profile signaling
+    if req.preset.bit_depth == 10 {
+        if encoder.contains("hevc") || encoder.contains("x265") {
+            cmd.args(["-profile:v", "main10"]);
+        } else if encoder.contains("av1") || encoder.contains("svtav1") {
+            cmd.args(["-profile:v", "main"]);
+        }
+    }
+
+    // Rate control configuration
+    match req.preset.rate_control {
+        Some(RateControlMode::Crf(crf)) => {
+            if encoder.starts_with("lib") {
+                cmd.args(["-crf", &crf.to_string()]);
+            } else if encoder.contains("nvenc") {
+                cmd.args(["-rc", "vbr", "-cq", &crf.to_string(), "-b:v", "0"]);
+            } else if encoder.contains("qsv") {
+                cmd.args(["-global_quality", &crf.to_string()]);
+            } else if encoder.contains("amf") {
+                cmd.args([
+                    "-rc",
+                    "cqp",
+                    "-qp_i",
+                    &crf.to_string(),
+                    "-qp_p",
+                    &crf.to_string(),
+                ]);
+            } else if encoder.contains("videotoolbox") {
+                let q_val = (100u32.saturating_sub(crf * 2)).clamp(10, 95);
+                cmd.args(["-q:v", &q_val.to_string()]);
+            } else {
+                cmd.args(["-b:v", &b_str]);
+            }
+        }
+        Some(RateControlMode::Cbr) => {
+            let buf_str = format!("{}k", req.preset.video_bitrate_kbps * 2);
+            cmd.args([
+                "-b:v", &b_str, "-minrate", &b_str, "-maxrate", &b_str, "-bufsize", &buf_str,
+            ]);
+        }
+        Some(RateControlMode::Cvbr {
+            max_bitrate_kbps,
+            bufsize_kbps,
+        }) => {
+            let max_str = format!("{}k", max_bitrate_kbps);
+            let buf_str = format!("{}k", bufsize_kbps);
+            cmd.args(["-b:v", &b_str, "-maxrate", &max_str, "-bufsize", &buf_str]);
+        }
+        Some(RateControlMode::Vbr) | None => {
+            let max_str = format!("{}k", (req.preset.video_bitrate_kbps as f64 * 1.5) as u32);
+            let buf_str = format!("{}k", req.preset.video_bitrate_kbps * 2);
+            cmd.args(["-b:v", &b_str, "-maxrate", &max_str, "-bufsize", &buf_str]);
+        }
+    }
+
+    cmd.args(["-c:a", "aac", "-b:a", &ab_str, "-movflags", "+faststart"])
+        .arg(req.output_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| {
         let _ = std::fs::remove_file(&temp_audio_path);
