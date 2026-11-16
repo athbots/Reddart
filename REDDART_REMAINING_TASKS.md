@@ -26,7 +26,7 @@
 | **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
-| **16** | Real-time VST3 / AU Audio Plugin Hosting | 🔄 **IN REVIEW** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `pending` | `pending` | 7/7 Pass |
+| **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
 
 ---
 
@@ -163,6 +163,7 @@
   - `rd_audio::plugin`: `AudioPlugin`, `PluginDescriptor`, `PluginParameter`, `PluginError`, `PluginCategory`, `PluginFormat`, `StudioCompressorPlugin`, `ParametricEqPlugin`, `BrickwallLimiterPlugin`, `AudioPluginInsertChain`, and `PluginScanner`.
 - **Verification Suite:** `crates/rd-audio/tests/vst3_audio_plugin_host_test.rs` (7/7 tests pass).
 - **Architecture Documentation:** `docs/VST3_AU_AUDIO_PLUGIN_HOSTING.md`.
+- **CI Run:** `43909081703` / `43909067626` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
