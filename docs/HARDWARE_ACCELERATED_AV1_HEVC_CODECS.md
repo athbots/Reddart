@@ -132,3 +132,4 @@ The AV1 & HEVC codec expansion subsystem is validated in `crates/rd-export/tests
 | `test_render_to_file_av1_and_hevc_presets` | Encodes synthesized media using both HEVC and AV1 encoders; probes resulting MP4 containers to verify valid video/audio streams and exact frame dimensions. |
 | `test_rate_control_mode_crf_and_cbr_export` | Verifies encoding and container validity under explicit CBR rate control mode. |
 | `test_hardware_encoder_probing_and_selection` | Verifies multi-vendor hardware encoder discovery, tier selection, and codec selection invariants across H.264, HEVC, and AV1. |
+

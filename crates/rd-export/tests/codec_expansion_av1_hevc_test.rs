@@ -87,7 +87,7 @@ fn test_hardware_decoder_report_and_probe() {
     let report: HardwareDecoderReport = probe_hardware_decoders();
     println!("Host Video Decoder Capabilities: {:?}", report);
 
-    assert!(report.selected_hwaccel.len() > 0);
+    assert!(!report.selected_hwaccel.is_empty());
     // On all supported systems, auto or specific hwaccel should be active
     assert!(
         [
