@@ -206,6 +206,7 @@ fn test_compositor_layer_multi_aspect_rendering() {
         shape_mask: None,
         neural_matte: None,
         auto_reframe: Some(v_params),
+        inpaint: None,
     };
 
     let mut target_canvas = vec![0u8; width * height * 4];

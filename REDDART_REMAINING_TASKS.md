@@ -28,6 +28,7 @@
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
 | **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
+| **18** | AI Generative Video Inpainting & Smart Saliency Reframe | 🔄 **IN REVIEW** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | Pending | Pending | CI Running |
 
 ---
 
@@ -175,6 +176,18 @@
 - **Verification Suite:** `crates/rd-export/tests/codec_expansion_av1_hevc_test.rs` (6/6 tests pass) & `crates/rd-export/tests/hardware_matrix_test.rs` (1/1 test pass).
 - **Architecture Documentation:** `docs/HARDWARE_ACCELERATED_AV1_HEVC_CODECS.md`.
 - **CI Run:** `43926627246` / `43926643111` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
+
+### Item 18: AI Generative Video Inpainting & Smart Saliency Reframe (PR #49)
+- **Scope:** On-device generative video inpainting and intelligent multi-subject saliency reframing: temporal optical flow-guided pixel propagation from past/future clean frames, multi-scale exemplar patch synthesis with Poisson edge blending, dynamic-programming energy seam carving for object removal and content-preserving retargeting, and multi-subject saliency tracking with speaker-switch jump cut detection.
+- **Engine Components:**
+  - `rd_ml::inpainting`: `InpaintMask`, `InpaintMode`, `InpaintConfig`, `SpatialInpainter`, `TemporalVideoInpainter`, `OpticalFlowField`.
+  - `rd_ml::seam_carving`: `SeamCarver` with dual-gradient visual energy evaluation and energy-modulated seam optimization.
+  - `rd_ml::saliency` & `rd_ml::reframe`: `detect_multiple_salient_subjects`, `compute_multi_subject_framing_box`, `detect_speaker_switches`, and kinematic deadband camera smoothing.
+  - `rd_effects::inpainting`: `InpaintParams`, `apply_inpaint_effect`, and registry manifest for `generative_inpaint`.
+  - `rd_render::composite`: `CompositorLayer::inpaint` integration with real-time multi-track renderer and headless export pipeline.
+- **Verification Suite:** `crates/rd-ml/tests/generative_inpainting_and_reframe_test.rs` (7/7 tests pass) & `crates/rd-ml/tests/auto_reframe_test.rs` (4/4 tests pass).
+- **Architecture Documentation:** `docs/AI_GENERATIVE_VIDEO_INPAINTING_AND_REFRAME.md`.
+- **CI Run:** Pending (PR #49).
 
 ---
 
