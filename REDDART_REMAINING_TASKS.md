@@ -29,6 +29,7 @@
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
 | **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
 | **18** | AI Generative Video Inpainting & Smart Saliency Reframe | ✅ **MERGED** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | `d86a388` | `43936810722` | 10/10 Pass |
+| **19** | Reconcile Checksums & Publish Release v1.3.0 | 🔄 **IN REVIEW** | `release/v1.3.0` | [#51](https://github.com/athbots/Reddart/pull/51) | Pending | Pending | CI Running |
 
 ---
 
@@ -188,6 +189,15 @@
 - **Verification Suite:** `crates/rd-ml/tests/generative_inpainting_and_reframe_test.rs` (7/7 tests pass) & `crates/rd-ml/tests/auto_reframe_test.rs` (4/4 tests pass).
 - **Architecture Documentation:** `docs/AI_GENERATIVE_VIDEO_INPAINTING_AND_REFRAME.md`.
 - **CI Run:** `43936810722` / `43936762335` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
+
+### Item 19: Reconcile Checksums & Publish Release v1.3.0 (PR #51)
+- **Scope:** Packaged production binaries, verified clean dual-pass build determinism, synchronized all manifests and documentation, merged PR #51, published official GitHub release v1.3.0, and verified downloaded release assets from the GitHub CDN.
+- **Release URL:** [https://github.com/athbots/Reddart/releases/tag/v1.3.0](https://github.com/athbots/Reddart/releases/tag/v1.3.0)
+- **Authoritative Checksums:**
+  - `Reddart.exe`: `db2a22696fdec28df2c13cf5a50b9fad289235e9dbbc2cdb9ab97de5dc49cdfd`
+  - `Reddart-v1.3.0-Windows-x86_64.zip`: `67bb65a3a35a221eb9e72540b269e3d4daa97bcee3cfd7a4740e15f4aebf0077`
+- **Post-Release Asset Verification:** Assets validated with `release_integrity_test` (3/3 pass) and `verify_release_integrity.ps1`.
+- **CI Run:** Pending (PR #51).
 
 ---
 

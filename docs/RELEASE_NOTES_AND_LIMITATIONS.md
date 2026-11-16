@@ -1,40 +1,37 @@
-# Reddart v1.2.0 Production Release: Advanced Motion, Typography & Color Engine
+# Reddart v1.3.0 Production Release: Multi-GPU, VST3 Hosting, Hardware AV1/HEVC & AI Inpainting/Reframe
 
-**Release Tag:** `v1.2.0`  
-**Distribution Archive:** `Reddart-v1.2.0-Windows-x86_64.zip`  
-**Binary Checksum (SHA-256):** `412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e`  
-**Archive Checksum (SHA-256):** `f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c`  
+**Release Tag:** `v1.3.0`  
+**Distribution Archive:** `Reddart-v1.3.0-Windows-x86_64.zip`  
+**Binary Checksum (SHA-256):** `db2a22696fdec28df2c13cf5a50b9fad289235e9dbbc2cdb9ab97de5dc49cdfd`  
+**Archive Checksum (SHA-256):** `67bb65a3a35a221eb9e72540b269e3d4daa97bcee3cfd7a4740e15f4aebf0077`  
 **MSRV:** Rust 1.85.0 (2024 Edition)  
 
 ---
 
 ## 1. Verified Production Capabilities
 
-Reddart v1.2.0 represents a major milestone expansion, introducing professional motion estimation, vector typography, digital cinema color science, and nested timeline compositions:
+Reddart v1.3.0 delivers major Phase III architectural expansions, bringing enterprise-grade multi-GPU distributed rendering, studio VST3/AU audio plugin hosting, hardware-accelerated AV1 and HEVC codecs, and AI generative video inpainting and smart multi-subject reframing:
 
-### Hardware-Accelerated Optical Flow Retiming
-- **WGSL Compute Pipeline:** Dispatches `effects/optical_flow/flow_estimate.wgsl` executing Horn-Schunck iterative relaxation across $8 \times 8$ thread workgroups.
-- **Dense Motion Field:** Dense forward and backward vector fields packed into `Rgba16Float` textures for real-time velocity estimation.
-- **Bidirectional Synthesis:** Motion-compensated intermediate frame generation with bilateral occlusion hole-filling and smooth velocity interpolation.
+### Multi-GPU Distributed Rendering & Peer-to-Peer NVLink
+- **Adapter Fleet Discovery:** Queries all physical graphics adapters, classifying VRAM capacity, driver architecture, PCIe/NVLink interconnect bandwidth, and multi-GPU capabilities.
+- **Workload Partitioning:** Spatial split-frame rendering with configurable halo margins to eliminate edge seams, alternate-frame temporal chunking, and compute-offload pipelines.
+- **Bit-for-Bit Tile Stitching:** Memory-safe parallel tile recombination with single-GPU fallback when multi-adapter is unavailable.
 
-### Nested Timelines & Compound Sequences
-- **Multi-Level Recursion:** Embed complete sub-sequences as individual clips within master timelines with automatic cycle detection and recursion depth clamping.
-- **Pre-Render Sequence Cache:** High-speed LRU frame caching layer (`NestedSequenceCache`) with deterministic mutation-hash invalidation avoiding redundant DAG recompilation.
+### Real-Time VST3 / AU Audio Plugin Hosting
+- **Zero-Heap In-Place DSP:** Audio plugin architecture operating directly on contiguous channel buffers without intermediate heap allocations.
+- **Serial Insert Chains:** Multi-slot plugin chains with latency tracking, compensation, bypass states, and JSON state persistence.
+- **Built-in Studio DSP Suite:** Studio Compressor (RMS/peak detection, soft knee, auto make-up gain), 4-Band Parametric EQ (Low/High Shelf, Bell filters with bilinear transform), and True Peak Brickwall Limiter.
 
-### GPU Signed Distance Field (SDF) Text Rendering
-- **Vector-Sharp Typography:** Direct WGSL rendering with sub-pixel antialiasing via `smoothstep` regardless of canvas zoom or display scale.
-- **Linear-Time 2D EDT:** Felzenszwalb & Huttenlocher exact Euclidean Distance Transform ($O(W \cdot H)$) with high-efficiency R8Unorm atlas caching.
-- **Rich Typographic Styling:** Native tracking (kerning), leading (line spacing), stroke outline width/color, and customizable drop shadows.
+### Hardware-Accelerated AV1 & HEVC Codec Expansion
+- **Hardware Encoder Pipeline:** Zero-copy hardware-accelerated encoding via NVENC, Intel QuickSync, AMD AMF, and Apple VideoToolbox for AV1 and HEVC (H.265).
+- **10-Bit HDR & Color Signaling:** Full BT.2020 PQ (HDR10) and HLG metadata signaling with high-efficiency 10-bit pixel formats (`p010le`, `yuv420p10le`).
+- **Flexible Rate Control:** Support for CBR, VBR, CRF, and Constrained VBR modes with seamless software encoder fallback (`libsvtav1`, `libx265`, `libx264`).
 
-### Digital Cinema HDR & ACES Color Pipeline
-- **OpenColorIO v2 Parser:** Zero-dependency YAML configuration parser compliant with OCIO v2 specifications and reference ACES 1.2 / 1.3 color hierarchy.
-- **ACEScct Transfer Function:** Academy S-2016-001 logarithmic grading curve with linear toe segment below black ($L \le 0.0078125$) for tactile shadow control.
-- **High-Precision Quantization & Dithering:** 10-bit (`Rgb10a2Unorm`) and 12-bit (`Rgb12`) packing with symmetric Triangular Probability Density Function (TPDF) blue noise dithering.
-- **Dynamic HDR Surface Negotiation:** Automatic display probing on Windows DXGI/wgpu selecting `Rgba16Float` (scRGB Linear HDR) or `Rgb10a2Unorm` (HDR10 PQ) with graceful sRGB SDR fallback.
-
-### Cross-Platform Packaging & Distribution Matrix
-- **Linux Flatpak & AppImage:** Complete FreeDesktop Flatpak 24.08 sandbox manifest (`platforms/linux/app.reddart.Reddart.yaml`) and AppImage runner with Wayland fractional scaling auto-detection.
-- **macOS DMG & Apple Notarization:** Drag-and-drop UDZO disk image generation, hardened runtime codesigning (`--options runtime --timestamp`), and Apple Notarization CLI automation (`xcrun notarytool`).
+### AI Generative Video Inpainting & Smart Saliency Reframe
+- **Temporal Video Completion:** Optical flow-guided pixel propagation from past/future clean frames with bilateral temporal smoothing to eliminate flicker.
+- **Spatial Exemplar Inpainting:** Multi-scale exemplar patch synthesis with boundary priority queue and Laplacian fringe Poisson smoothing.
+- **Content-Aware Dynamic Programming Seam Carving:** $O(W \cdot H)$ cumulative gradient energy evaluation for seamless object removal (energy attraction) and aspect-ratio retargeting without squishing protected subjects.
+- **Multi-Subject Saliency & Smart Reframe:** Multi-peak spatial clustering with NMS, unified aspect ratio bounding box generation, and automated speaker-switch detection with kinematic deadband smoothing.
 
 ---
 
