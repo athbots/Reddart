@@ -8,6 +8,7 @@ pub mod composite;
 pub mod compositor;
 pub mod graph;
 pub mod interpolate;
+pub mod multi_gpu;
 pub mod optical_flow;
 pub mod quality;
 
@@ -15,6 +16,10 @@ pub use cache::{CachedSubSequenceFrame, SubSequenceCache, SubSequenceCacheKey};
 pub use composite::{CompositorLayer, composite_layers_over};
 pub use compositor::{Compositor, OpticalFlowUniforms, TextSdfUniforms};
 pub use interpolate::{blend_rgba_frames, interpolate_optical_flow, interpolate_retimed_frame};
+pub use multi_gpu::{
+    GpuAdapterProfile, GpuNodeRole, InterconnectType, MultiGpuConfig, MultiGpuError,
+    MultiGpuManager, TileDescriptor, WorkloadPartitionStrategy,
+};
 pub use optical_flow::{
     DenseOpticalFlowEstimator, GpuOpticalFlowConfig, GpuOpticalFlowEstimator, OpticalFlowConfig,
     OpticalFlowField,

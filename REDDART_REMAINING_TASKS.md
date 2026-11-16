@@ -25,6 +25,7 @@
 | **12** | HDR / ACES Color Pipeline Expansion | ✅ **MERGED** | `feat/hdr-aces-color-pipeline` | [#39](https://github.com/athbots/Reddart/pull/39) | `e1cd453` | `43735544076` | 10/10 Pass |
 | **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
+| **15** | Multi-GPU Distributed Rendering & NVLink | 🚀 **STAGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `Pending` | `Pending` | 8/8 Pass |
 
 ---
 
@@ -145,6 +146,15 @@
 - **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
 - **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass), zero-warning clippy and cargo fmt.
 - **CI Run:** `43739965127` (5/5 matrix jobs passed across Windows, Ubuntu, and macOS).
+
+### Item 15: Multi-GPU Distributed Rendering & Peer-to-Peer NVLink (PR #43)
+- **Scope:** Multi-adapter physical GPU fleet discovery, workload partitioning (split-frame spatial tiling with halo margins, alternate frame temporal chunking, and compute offload), bit-for-bit frame stitching, and zero-cost single-GPU fallback.
+- **Engine Components:**
+  - `rd_render::multi_gpu`: `MultiGpuManager`, `GpuAdapterProfile`, `InterconnectType`, `WorkloadPartitionStrategy`, `TileDescriptor`, and `stitch_frame_tiles`.
+  - `reddart_windows::gpu::GpuContext`: Initialized with `MultiGpuManager::discover`.
+- **Verification Suite:** `crates/rd-render/tests/multi_gpu_distributed_render_test.rs` (8/8 tests pass).
+- **Architecture Documentation:** `docs/MULTI_GPU_DISTRIBUTED_RENDERING.md`.
+- **CI Run:** Staged for verification.
 
 ---
 
