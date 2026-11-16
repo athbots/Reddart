@@ -133,3 +133,4 @@ The audio plugin hosting subsystem is validated in `crates/rd-audio/tests/vst3_a
 | `test_plugin_bypass_and_wet_dry_mix` | Confirms bit-for-bit identity between dry input and bypassed output buffers ($10^{-7}$ precision) and linear 50/50 wet/dry blending. |
 | `test_parameter_automation_and_state_serialization` | Verifies full parameter introspection, out-of-bounds value clamping, and JSON state serialization/deserialization round-tripping. |
 | `test_plugin_scanner_standard_directories` | Validates OS-specific directory path generation across Windows, macOS, and Linux. |
+
