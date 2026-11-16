@@ -25,7 +25,7 @@
 | **12** | HDR / ACES Color Pipeline Expansion | ✅ **MERGED** | `feat/hdr-aces-color-pipeline` | [#39](https://github.com/athbots/Reddart/pull/39) | `e1cd453` | `43735544076` | 10/10 Pass |
 | **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
-| **15** | Multi-GPU Distributed Rendering & NVLink | 🚀 **STAGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `Pending` | `Pending` | 8/8 Pass |
+| **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
 
 ---
 
@@ -154,7 +154,7 @@
   - `reddart_windows::gpu::GpuContext`: Initialized with `MultiGpuManager::discover`.
 - **Verification Suite:** `crates/rd-render/tests/multi_gpu_distributed_render_test.rs` (8/8 tests pass).
 - **Architecture Documentation:** `docs/MULTI_GPU_DISTRIBUTED_RENDERING.md`.
-- **CI Run:** Staged for verification.
+- **CI Run:** `43887888326` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
