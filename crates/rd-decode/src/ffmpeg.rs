@@ -5,13 +5,90 @@
 
 use anyhow::{Context, Result, bail};
 use log::{info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use crate::{DecodedFrame, DecoderCapabilities, VideoDecoder};
 use rd_core::{DurationUs, TimestampUs};
+
+/// Host hardware decoder capability diagnostics across Direct3D, NVDEC, QSV, VideoToolbox, and VAAPI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareDecoderReport {
+    pub d3d11va: bool,
+    pub dxva2: bool,
+    pub cuda: bool,
+    pub qsv: bool,
+    pub videotoolbox: bool,
+    pub vaapi: bool,
+    pub av1_hwaccel: bool,
+    pub hevc_hwaccel: bool,
+    pub h264_hwaccel: bool,
+    pub selected_hwaccel: &'static str,
+}
+
+/// Helper to test if a hardware acceleration method is recognized by FFmpeg.
+fn test_hwaccel_available(hwaccel_name: &str) -> bool {
+    let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let output = Command::new(bin).args(["-hwaccels"]).output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines()
+            .any(|l| l.trim().eq_ignore_ascii_case(hwaccel_name))
+    } else {
+        false
+    }
+}
+
+/// Probe host environment for available hardware video decoders.
+pub fn probe_hardware_decoders() -> HardwareDecoderReport {
+    let d3d11va = test_hwaccel_available("d3d11va");
+    let dxva2 = test_hwaccel_available("dxva2");
+    let cuda = test_hwaccel_available("cuda");
+    let qsv = test_hwaccel_available("qsv");
+    let videotoolbox = test_hwaccel_available("videotoolbox");
+    let vaapi = test_hwaccel_available("vaapi");
+
+    let selected_hwaccel = if cfg!(target_os = "windows") {
+        if d3d11va {
+            "d3d11va"
+        } else if dxva2 {
+            "dxva2"
+        } else if cuda {
+            "cuda"
+        } else if qsv {
+            "qsv"
+        } else {
+            "auto"
+        }
+    } else if cfg!(target_os = "macos") {
+        if videotoolbox { "videotoolbox" } else { "auto" }
+    } else if cfg!(target_os = "linux") {
+        if vaapi {
+            "vaapi"
+        } else if cuda {
+            "cuda"
+        } else {
+            "auto"
+        }
+    } else {
+        "auto"
+    };
+
+    HardwareDecoderReport {
+        d3d11va,
+        dxva2,
+        cuda,
+        qsv,
+        videotoolbox,
+        vaapi,
+        av1_hwaccel: d3d11va || cuda || qsv || vaapi || videotoolbox,
+        hevc_hwaccel: d3d11va || dxva2 || cuda || qsv || videotoolbox || vaapi,
+        h264_hwaccel: d3d11va || dxva2 || cuda || qsv || videotoolbox || vaapi,
+        selected_hwaccel,
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct FfprobeOutput {
@@ -44,6 +121,7 @@ pub struct FfmpegDecoder {
     current_frame: i64,
     child: Option<Child>,
     caps: DecoderCapabilities,
+    hwaccel: Option<String>,
 }
 
 /// Locate the FFmpeg executable by checking:
@@ -255,12 +333,23 @@ impl FfmpegDecoder {
             current_frame: 0,
             child: None,
             caps,
+            hwaccel: None,
         };
 
         // Start stream at position 0
         decoder.seek(0)?;
 
         Ok(decoder)
+    }
+
+    /// Sets the specific hardware acceleration method (e.g. "d3d11va", "cuda", "qsv", "videotoolbox", "none", or "auto").
+    pub fn set_hwaccel(&mut self, hwaccel: Option<impl Into<String>>) {
+        self.hwaccel = hwaccel.map(|s| s.into());
+    }
+
+    /// Current hardware acceleration method in use.
+    pub fn hwaccel(&self) -> Option<&str> {
+        self.hwaccel.as_deref()
     }
 
     /// Spawns the FFmpeg rawvideo pipe starting at the requested timestamp.
@@ -270,9 +359,14 @@ impl FfmpegDecoder {
         let seek_seconds = (timestamp_us.max(0) as f64) / 1_000_000.0;
         let ffmpeg_bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
 
-        let child = Command::new(&ffmpeg_bin)
-            .arg("-hwaccel")
-            .arg("auto")
+        let hwaccel_method = self.hwaccel.as_deref().unwrap_or("auto");
+        let mut cmd = Command::new(&ffmpeg_bin);
+
+        if hwaccel_method != "none" {
+            cmd.arg("-hwaccel").arg(hwaccel_method);
+        }
+
+        let child = cmd
             .arg("-ss")
             .arg(format!("{:.6}", seek_seconds))
             .arg("-i")

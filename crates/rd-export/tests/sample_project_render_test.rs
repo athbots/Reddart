@@ -426,6 +426,9 @@ fn test_render_all_five_starter_templates() {
             audio_bitrate_kbps: 192,
             video_codec: "h264".into(),
             audio_codec: "aac".into(),
+            bit_depth: 8,
+            color_space: None,
+            rate_control: None,
         };
 
         let req = RenderRequest {

@@ -15,7 +15,10 @@ pub mod proxy;
 pub mod service;
 pub mod synthetic;
 
-pub use ffmpeg::{FfmpegDecoder, find_ffmpeg_executable, find_ffprobe_executable};
+pub use ffmpeg::{
+    FfmpegDecoder, HardwareDecoderReport, find_ffmpeg_executable, find_ffprobe_executable,
+    probe_hardware_decoders,
+};
 pub use prefetch::{PlayDirection, PrefetchRingBuffer};
 pub use service::{AsyncDecoderService, FrameCache, FrameRequest, FrameResponse};
 pub use synthetic::{PatternStyle, SyntheticDecoder};

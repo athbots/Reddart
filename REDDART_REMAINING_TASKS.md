@@ -27,6 +27,7 @@
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
+| **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | 🔄 **IN REVIEW** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | Pending | Pending | CI Running |
 
 ---
 
@@ -164,6 +165,16 @@
 - **Verification Suite:** `crates/rd-audio/tests/vst3_audio_plugin_host_test.rs` (7/7 tests pass).
 - **Architecture Documentation:** `docs/VST3_AU_AUDIO_PLUGIN_HOSTING.md`.
 - **CI Run:** `43909081703` / `43909067626` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
+
+### Item 17: Hardware-Accelerated AV1 & HEVC Codec Expansion (PR #47)
+- **Scope:** Production hardware-accelerated encoding and decoding pipeline for next-generation AV1 and HEVC (H.265) video formats, complete 10-bit HDR (HDR10 PQ / HLG) color signaling, multiple rate control modes (CBR, VBR, CRF, Constrained VBR), hardware decoder probing (D3D11VA, DXVA2, CUDA, QuickSync, VideoToolbox, VAAPI), and automated zero-flakiness software encoder fallback (`libsvtav1`, `libx265`, `libx264`).
+- **Engine Components:**
+  - `rd_export::preset`: `ExportPreset` expanded with `bit_depth`, `color_space`, and `RateControlMode` (`Cbr`, `Vbr`, `Crf`, `Cvbr`). New presets: `av1_1080p()`, `av1_4k()`, `hdr10_hevc_4k()`, `hdr10_av1_4k()`, `mastering_prores_422()`.
+  - `rd_export::pipeline`: `HardwareEncoderReport` expanded with AV1 detection (`av1_nvenc`, `av1_amf`, `av1_qsv`, `av1_videotoolbox`, `libsvtav1`, `libaom_av1`). 10-bit pixel format mappings (`p010le` / `yuv420p10le`), BT.2020 PQ/HLG color parameters, and transparent software fallback logic on hardware encoder failure.
+  - `rd_decode::ffmpeg`: `HardwareDecoderReport` and `probe_hardware_decoders()`, `set_hwaccel()` and `hwaccel()` on `FfmpegDecoder`.
+- **Verification Suite:** `crates/rd-export/tests/codec_expansion_av1_hevc_test.rs` (6/6 tests pass) & `crates/rd-export/tests/hardware_matrix_test.rs` (1/1 test pass).
+- **Architecture Documentation:** `docs/HARDWARE_ACCELERATED_AV1_HEVC_CODECS.md`.
+- **CI Run:** Pending (PR #47).
 
 ---
 
