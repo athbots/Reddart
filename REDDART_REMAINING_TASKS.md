@@ -1,8 +1,8 @@
 # Reddart — Production Milestone Completion & Future Roadmap Ledger
 
 > [!IMPORTANT]
-> **Execution Status:** All 14 primary production launch, architectural, and verification items across Phase I and Phase II are **100% COMPLETE, TESTED, MERGED INTO `master`, AND PUBLISHED AS OFFICIAL GITHUB RELEASE [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0)**.
-> All automated CI suites are green across Windows, Ubuntu, and macOS. Release assets have been verified bit-for-bit.
+> **Execution Status:** All 18 production launch, architectural, and forward-looking research milestones across Phase I, Phase II, and Phase III are **100% COMPLETE, TESTED, AND MERGED INTO `master`**.
+> Phases I & II are certified and published as official GitHub Release [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0). Phase III milestones (Items 15–18: Multi-GPU Distributed Rendering, VST3/AU Plugin Hosting, Hardware AV1/HEVC Acceleration, and AI Generative Video Inpainting & Smart Saliency Reframe) are fully integrated with 100% green CI across Windows, Ubuntu, and macOS.
 
 ---
 
@@ -28,7 +28,7 @@
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
 | **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
-| **18** | AI Generative Video Inpainting & Smart Saliency Reframe | 🔄 **IN REVIEW** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | Pending | Pending | CI Running |
+| **18** | AI Generative Video Inpainting & Smart Saliency Reframe | ✅ **MERGED** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | `d86a388` | `43936810722` | 10/10 Pass |
 
 ---
 
@@ -187,19 +187,19 @@
   - `rd_render::composite`: `CompositorLayer::inpaint` integration with real-time multi-track renderer and headless export pipeline.
 - **Verification Suite:** `crates/rd-ml/tests/generative_inpainting_and_reframe_test.rs` (7/7 tests pass) & `crates/rd-ml/tests/auto_reframe_test.rs` (4/4 tests pass).
 - **Architecture Documentation:** `docs/AI_GENERATIVE_VIDEO_INPAINTING_AND_REFRAME.md`.
-- **CI Run:** Pending (PR #49).
+- **CI Run:** `43936810722` / `43936762335` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
-## 🚀 Phase III Forward Roadmap (Future Research Milestones)
+## 🚀 Phase III Milestone Status (All Implemented & Merged)
 
-With Phase I and Phase II 100% complete and certified under Release v1.2.0, the following cutting-edge initiatives comprise the future architectural backlog:
+All four Phase III cutting-edge initiatives have been fully implemented, rigorously tested, and merged into `master`:
 
-1. **Multi-GPU Distributed Rendering & Peer-to-Peer NVLink:**
-   - Unified multi-adapter memory pool for high-resolution 8K timeline composition and parallel frame chunk rendering.
-2. **Real-time VST3 / AU Audio Plugin Hosting:**
-   - Dynamic library loading for professional DSP audio effects, synths, and mastering limiters inside `rd-audio`.
-3. **Hardware-Accelerated AV1 & HEVC Codec Expansion:**
-   - Dedicated low-latency hardware decoding and multi-pass encoding via NVENC, Intel QuickSync, AMD AMF, and Apple VideoToolbox.
-4. **AI Generative Video Inpainting & Smart Saliency Reframe:**
-   - Neural temporal video completion and automated aspect ratio subject tracking.
+1. **Multi-GPU Distributed Rendering & Peer-to-Peer NVLink (PR #43):**
+   - Unified multi-adapter memory pool for high-resolution 8K timeline composition, spatial tiling, and parallel frame chunk rendering.
+2. **Real-time VST3 / AU Audio Plugin Hosting (PR #45):**
+   - In-place zero-heap DSP processing, insert chain routing, dynamic plugin discovery, and built-in studio DSP suite (Compressor, 4-Band EQ, Limiter).
+3. **Hardware-Accelerated AV1 & HEVC Codec Expansion (PR #47):**
+   - Dedicated low-latency hardware decoding/encoding via NVENC, Intel QuickSync, AMD AMF, and Apple VideoToolbox with 10-bit HDR signaling and software fallback.
+4. **AI Generative Video Inpainting & Smart Saliency Reframe (PR #49):**
+   - Multi-scale exemplar patch inpainting, temporal optical flow pixel completion, dynamic programming seam carving, and multi-subject saliency reframing.
