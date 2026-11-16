@@ -611,6 +611,19 @@ pub fn mix_project_audio_range(
 
 /// Helper to test if a specific encoder can be instantiated by FFmpeg on host hardware.
 fn test_encoder_available(encoder_name: &str) -> bool {
+    // In headless or virtualized CI environments (such as GitHub Actions macOS virtual runners),
+    // VideoToolbox hardware encoder acceleration fails with AppleM2ScalerParavirtDriver missing
+    // or generic external library error -542398533. We bypass VideoToolbox when running in CI
+    // to ensure reliable, bit-stable software encoding via libx264/libx265/libsvtav1.
+    if encoder_name.contains("videotoolbox")
+        && (std::env::var("CI")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false)
+            || std::env::var("GITHUB_ACTIONS").is_ok())
+    {
+        return false;
+    }
+
     let bin = find_ffmpeg_executable().unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let mut cmd = std::process::Command::new(bin);
     cmd.args([
