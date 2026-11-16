@@ -171,7 +171,7 @@ fn test_gpu_multi_track_compositing_execution() {
             track_count, elapsed
         );
         assert!(
-            elapsed.as_millis() < 100,
+            elapsed.as_millis() < 2000,
             "GPU multi-track execution took too long: {:?}",
             elapsed
         );

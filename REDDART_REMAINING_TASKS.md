@@ -26,6 +26,7 @@
 | **13** | Cross-Platform Distribution Packaging | ✅ **MERGED** | `feat/cross-platform-packaging` | [#40](https://github.com/athbots/Reddart/pull/40) | `2a3947a` | `43737068850` | 10/10 Pass |
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
+| **16** | Real-time VST3 / AU Audio Plugin Hosting | 🔄 **IN REVIEW** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `pending` | `pending` | 7/7 Pass |
 
 ---
 
@@ -155,6 +156,13 @@
 - **Verification Suite:** `crates/rd-render/tests/multi_gpu_distributed_render_test.rs` (8/8 tests pass).
 - **Architecture Documentation:** `docs/MULTI_GPU_DISTRIBUTED_RENDERING.md`.
 - **CI Run:** `43887888326` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
+
+### Item 16: Real-time VST3 / AU Audio Plugin Hosting (PR #45)
+- **Scope:** Complete real-time audio plugin hosting architecture, including `AudioPlugin` trait, zero-heap in-place DSP buffer processing, parameter introspection/clamping, preset state serialization, insert chain serial routing with latency tracking, platform plugin directory scanning (Windows, macOS, Linux), and built-in studio DSP suite (Studio Compressor, 4-Band Parametric EQ, Brickwall Peak Limiter).
+- **Engine Components:**
+  - `rd_audio::plugin`: `AudioPlugin`, `PluginDescriptor`, `PluginParameter`, `PluginError`, `PluginCategory`, `PluginFormat`, `StudioCompressorPlugin`, `ParametricEqPlugin`, `BrickwallLimiterPlugin`, `AudioPluginInsertChain`, and `PluginScanner`.
+- **Verification Suite:** `crates/rd-audio/tests/vst3_audio_plugin_host_test.rs` (7/7 tests pass).
+- **Architecture Documentation:** `docs/VST3_AU_AUDIO_PLUGIN_HOSTING.md`.
 
 ---
 
