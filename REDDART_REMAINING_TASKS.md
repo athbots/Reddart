@@ -27,7 +27,7 @@
 | **14** | Reconcile Checksums & Publish Release v1.2.0 | ✅ **PUBLISHED** | `release/v1.2.0` | [#41](https://github.com/athbots/Reddart/pull/41) | `a4c6bf9` | `43739965127` | 5/5 Pass |
 | **15** | Multi-GPU Distributed Rendering & NVLink | ✅ **MERGED** | `feat/multi-gpu-distributed-rendering` | [#43](https://github.com/athbots/Reddart/pull/43) | `d6fa6ed` | `43887888326` | 10/10 Pass |
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
-| **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | 🔄 **IN REVIEW** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | Pending | Pending | CI Running |
+| **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
 
 ---
 
@@ -174,7 +174,7 @@
   - `rd_decode::ffmpeg`: `HardwareDecoderReport` and `probe_hardware_decoders()`, `set_hwaccel()` and `hwaccel()` on `FfmpegDecoder`.
 - **Verification Suite:** `crates/rd-export/tests/codec_expansion_av1_hevc_test.rs` (6/6 tests pass) & `crates/rd-export/tests/hardware_matrix_test.rs` (1/1 test pass).
 - **Architecture Documentation:** `docs/HARDWARE_ACCELERATED_AV1_HEVC_CODECS.md`.
-- **CI Run:** Pending (PR #47).
+- **CI Run:** `43926627246` / `43926643111` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
