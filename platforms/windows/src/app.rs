@@ -728,6 +728,46 @@ impl EditorData {
                             }
                         });
 
+                    let inpaint = clip
+                        .effects
+                        .iter()
+                        .find(|e| {
+                            (e.effect_id == "generative_inpaint"
+                                || e.effect_id == "content_aware_fill")
+                                && e.enabled
+                        })
+                        .map(|inp_eff| {
+                            let mode =
+                                inp_eff.parameters.get("mode").copied().unwrap_or(0.0) as u32;
+                            let hole_x = inp_eff.parameters.get("hole_x").copied().unwrap_or(0.25);
+                            let hole_y = inp_eff.parameters.get("hole_y").copied().unwrap_or(0.25);
+                            let hole_w = inp_eff
+                                .parameters
+                                .get("hole_width")
+                                .copied()
+                                .unwrap_or(0.20);
+                            let hole_h = inp_eff
+                                .parameters
+                                .get("hole_height")
+                                .copied()
+                                .unwrap_or(0.20);
+                            let feather =
+                                inp_eff.parameters.get("feather").copied().unwrap_or(0.02);
+                            let search_radius = inp_eff
+                                .parameters
+                                .get("search_radius")
+                                .copied()
+                                .unwrap_or(32.0)
+                                as u32;
+
+                            rd_effects::InpaintParams {
+                                mode,
+                                hole_rect: Some([hole_x, hole_y, hole_w, hole_h]),
+                                feather,
+                                search_radius,
+                            }
+                        });
+
                     if let Some(path) = rd_export::resolve_media_path(&vclip.source_path) {
                         let source_time_us = clip.source_in_us
                             + ((playhead_us - clip.position_us) as f64 * clip.speed) as i64;
@@ -816,6 +856,7 @@ impl EditorData {
                                 shape_mask,
                                 neural_matte,
                                 auto_reframe,
+                                inpaint,
                             });
                         }
                     } else {
@@ -840,6 +881,7 @@ impl EditorData {
                             shape_mask,
                             neural_matte: None,
                             auto_reframe: None,
+                            inpaint: None,
                         });
                     }
                 }

@@ -245,6 +245,150 @@ impl SaliencyDetector {
             height: norm_h,
         }
     }
+
+    /// Detect multiple salient subject clusters (e.g. podcast co-hosts or group discussions).
+    pub fn detect_multiple_salient_subjects(
+        &self,
+        frame: &[u8],
+        width: usize,
+        height: usize,
+        channels: usize,
+        max_subjects: usize,
+    ) -> Vec<BoundingBox> {
+        let sm = self.compute_saliency_map(frame, width, height, channels);
+        let sw = sm.width;
+        let sh = sm.height;
+
+        let threshold = 0.40_f32;
+        let mut peaks: Vec<(usize, usize, f32)> = Vec::new();
+
+        // 1. Identify local maxima peaks in saliency map
+        let r = 3i32;
+        for sy in (r as usize)..(sh - r as usize) {
+            for sx in (r as usize)..(sw - r as usize) {
+                let val = sm.get(sx, sy);
+                if val < threshold {
+                    continue;
+                }
+
+                let mut is_max = true;
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let nx = (sx as i32 + dx) as usize;
+                        let ny = (sy as i32 + dy) as usize;
+                        if sm.get(nx, ny) > val {
+                            is_max = false;
+                            break;
+                        }
+                    }
+                    if !is_max {
+                        break;
+                    }
+                }
+
+                if is_max {
+                    peaks.push((sx, sy, val));
+                }
+            }
+        }
+
+        // Sort peaks descending by saliency intensity
+        peaks.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut boxes = Vec::new();
+        let min_separation_sq = (sw as f32 * 0.20).powi(2);
+
+        for (px, py, _val) in peaks {
+            if boxes.len() >= max_subjects {
+                break;
+            }
+
+            let norm_px = px as f32 / sw as f32;
+            let norm_py = py as f32 / sh as f32;
+
+            // Enforce spatial separation so peaks belong to distinct subjects
+            let mut separate = true;
+            for b in &boxes {
+                let (bx, by) = (b as &BoundingBox).center();
+                let dist_sq = (norm_px - bx).powi(2) + (norm_py - by).powi(2);
+                if dist_sq < (min_separation_sq / (sw as f32).powi(2)) {
+                    separate = false;
+                    break;
+                }
+            }
+
+            if separate {
+                let w = 0.28_f32;
+                let h = 0.42_f32;
+                boxes.push(BoundingBox {
+                    x: (norm_px - w * 0.5).clamp(0.0, 1.0 - w),
+                    y: (norm_py - h * 0.5).clamp(0.0, 1.0 - h),
+                    width: w,
+                    height: h,
+                });
+            }
+        }
+
+        if boxes.is_empty() {
+            vec![self.detect_salient_subject(frame, width, height, channels)]
+        } else {
+            boxes
+        }
+    }
+
+    /// Compute a unified bounding box that encloses all detected subjects with headroom.
+    pub fn compute_multi_subject_framing_box(
+        &self,
+        subjects: &[BoundingBox],
+        target_aspect_ratio: f32,
+    ) -> BoundingBox {
+        if subjects.is_empty() {
+            return BoundingBox {
+                x: 0.35,
+                y: 0.25,
+                width: 0.30,
+                height: 0.50,
+            };
+        }
+
+        let mut min_x = 1.0f32;
+        let mut max_x = 0.0f32;
+        let mut min_y = 1.0f32;
+        let mut max_y = 0.0f32;
+
+        for s in subjects {
+            min_x = min_x.min(s.x);
+            max_x = max_x.max(s.x + s.width);
+            min_y = min_y.min(s.y);
+            max_y = max_y.max(s.y + s.height);
+        }
+
+        // Add 10% breathing room / margins
+        let margin_x = (max_x - min_x) * 0.12;
+        let margin_y = (max_y - min_y) * 0.12;
+
+        let w = (max_x - min_x + margin_x * 2.0).clamp(0.25, 1.0);
+        let h = (max_y - min_y + margin_y * 2.0).clamp(0.30, 1.0);
+        let cx = (min_x + max_x) * 0.5;
+        let cy = (min_y + max_y) * 0.5;
+
+        // Shape to target aspect ratio
+        let (final_w, final_h) = if w / h > target_aspect_ratio {
+            (w, (w / target_aspect_ratio).clamp(0.2, 1.0))
+        } else {
+            ((h * target_aspect_ratio).clamp(0.2, 1.0), h)
+        };
+
+        BoundingBox {
+            x: (cx - final_w * 0.5).clamp(0.0, 1.0 - final_w),
+            y: (cy - final_h * 0.5).clamp(0.0, 1.0 - final_h),
+            width: final_w,
+            height: final_h,
+        }
+    }
 }
 
 #[cfg(test)]

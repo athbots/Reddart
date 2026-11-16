@@ -258,6 +258,59 @@ impl AutoReframer {
 
         self.solve_kinematic_reframe_path(source_width, source_height, &detections)
     }
+
+    /// Automatically reframe video frames containing multiple subjects (e.g., dual interviews, panel discussions).
+    pub fn reframe_multi_subject_video_frames(
+        &self,
+        source_width: u32,
+        source_height: u32,
+        frames: &[(TimestampUs, &[u8])],
+        channels: usize,
+        max_subjects: usize,
+    ) -> ReframeTracks {
+        let mut detections = Vec::with_capacity(frames.len());
+        let target_ratio = self.config.target_aspect.ratio();
+
+        for &(ts, frame_bytes) in frames {
+            let subjects = self.saliency_detector.detect_multiple_salient_subjects(
+                frame_bytes,
+                source_width as usize,
+                source_height as usize,
+                channels,
+                max_subjects,
+            );
+            let unified_box = self
+                .saliency_detector
+                .compute_multi_subject_framing_box(&subjects, target_ratio);
+            detections.push((ts, unified_box));
+        }
+
+        self.solve_kinematic_reframe_path(source_width, source_height, &detections)
+    }
+
+    /// Detect timestamps where the active speaker / primary subject switches rapidly across the frame.
+    pub fn detect_speaker_switches(
+        &self,
+        detections: &[(TimestampUs, BoundingBox)],
+        switch_threshold: f32,
+    ) -> Vec<TimestampUs> {
+        let mut switches = Vec::new();
+        if detections.len() < 2 {
+            return switches;
+        }
+
+        let mut prev_cx = detections[0].1.center().0;
+        for &(ts, ref bbox) in &detections[1..] {
+            let curr_cx = bbox.center().0;
+            let delta = (curr_cx - prev_cx).abs();
+            if delta >= switch_threshold {
+                switches.push(ts);
+            }
+            prev_cx = curr_cx;
+        }
+
+        switches
+    }
 }
 
 #[cfg(test)]

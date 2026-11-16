@@ -731,6 +731,82 @@ impl EffectRegistry {
             },
             COLOR_TRANSFORM_WGSL.into(),
         );
+
+        // 13. AI Generative Inpainting & Content-Aware Fill
+        self.register(
+            EffectManifest {
+                id: "generative_inpaint".into(),
+                name: "AI Generative Inpainting".into(),
+                version: 1,
+                cost_class: CostClass::High,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "mode".into(),
+                        name: "Mode (0: Object, 1: Wire, 2: Watermark, 3: Fill)".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 3.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "hole_x".into(),
+                        name: "Hole X".into(),
+                        param_type: ParamType::Float,
+                        default: 0.25,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "hole_y".into(),
+                        name: "Hole Y".into(),
+                        param_type: ParamType::Float,
+                        default: 0.25,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "hole_width".into(),
+                        name: "Hole Width".into(),
+                        param_type: ParamType::Float,
+                        default: 0.20,
+                        min: 0.01,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "hole_height".into(),
+                        name: "Hole Height".into(),
+                        param_type: ParamType::Float,
+                        default: 0.20,
+                        min: 0.01,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "feather".into(),
+                        name: "Boundary Feather".into(),
+                        param_type: ParamType::Float,
+                        default: 0.02,
+                        min: 0.0,
+                        max: 0.2,
+                        step: 0.01,
+                        keyframeable: false,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            COLOR_TRANSFORM_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.

@@ -10,8 +10,10 @@
 
 pub mod captions;
 pub mod denoise;
+pub mod inpainting;
 pub mod reframe;
 pub mod saliency;
+pub mod seam_carving;
 pub mod segmentation;
 pub mod stabilize;
 pub mod tracking;
@@ -26,8 +28,13 @@ pub use denoise::{
     AudioDenoiser, BiquadFilter, DenoiseConfig, DenoiseMode, DenoiseProfile, HumNotchFilter,
     fft_radix2,
 };
+pub use inpainting::{
+    InpaintConfig, InpaintMask, InpaintMode, OpticalFlowField, SpatialInpainter,
+    TemporalVideoInpainter,
+};
 pub use reframe::{AutoReframer, ReframeConfig, ReframeTracks, TargetAspect};
 pub use saliency::{SaliencyConfig, SaliencyDetector, SaliencyMap};
+pub use seam_carving::SeamCarver;
 pub use segmentation::{
     CompositeBackground, GuidedFilter, PortraitMattingConfig, PortraitMattingEngine,
     SegmentationMask, Trimap, composite_segmented_frame, suppress_color_spill,

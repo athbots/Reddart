@@ -5,7 +5,7 @@
 //! - Keyframed opacity, spatial transforms (translation, scale), and blend modes.
 //! - Direct pixel alpha blending and effect integration.
 
-use rd_effects::{AutoReframeParams, NeuralMatteParams, ShapeMaskParams};
+use rd_effects::{AutoReframeParams, InpaintParams, NeuralMatteParams, ShapeMaskParams};
 
 /// Parameters defining a video layer to be composited into a multi-track frame.
 #[derive(Debug, Clone)]
@@ -34,6 +34,8 @@ pub struct CompositorLayer {
     pub neural_matte: Option<NeuralMatteParams>,
     /// Optional AI auto-reframe parameters.
     pub auto_reframe: Option<AutoReframeParams>,
+    /// Optional AI generative inpainting parameters.
+    pub inpaint: Option<InpaintParams>,
 }
 
 impl CompositorLayer {
@@ -52,6 +54,7 @@ impl CompositorLayer {
             shape_mask: None,
             neural_matte: None,
             auto_reframe: None,
+            inpaint: None,
         }
     }
 
@@ -81,6 +84,7 @@ impl CompositorLayer {
             shape_mask: None,
             neural_matte: None,
             auto_reframe: None,
+            inpaint: None,
         }
     }
 }
@@ -116,6 +120,14 @@ fn composite_single_layer(
     if layer.opacity <= 0.001 || layer.width == 0 || layer.height == 0 || layer.rgba.is_empty() {
         return;
     }
+
+    let effective_rgba = if let Some(ref inpaint) = layer.inpaint {
+        let mut buf = layer.rgba.clone();
+        rd_effects::apply_inpaint_effect(&mut buf, layer.width, layer.height, inpaint);
+        std::borrow::Cow::Owned(buf)
+    } else {
+        std::borrow::Cow::Borrowed(&layer.rgba)
+    };
 
     let is_identity_transform = (layer.scale_x - 1.0).abs() < 0.001
         && (layer.scale_y - 1.0).abs() < 0.001
@@ -182,13 +194,13 @@ fn composite_single_layer(
                             let bg_y =
                                 ((norm_y * layer.height as f32) as u32).min(layer.height - 1);
                             let bg_idx = ((bg_y * layer.width + bg_x) * 4) as usize;
-                            if bg_idx + 3 < layer.rgba.len() {
+                            if bg_idx + 3 < effective_rgba.len() {
                                 let dim = reframe.background_dim.clamp(0.0, 1.0);
                                 (
-                                    layer.rgba[bg_idx] as f32 * dim,
-                                    layer.rgba[bg_idx + 1] as f32 * dim,
-                                    layer.rgba[bg_idx + 2] as f32 * dim,
-                                    (layer.rgba[bg_idx + 3] as f32 / 255.0) * layer.opacity,
+                                    effective_rgba[bg_idx] as f32 * dim,
+                                    effective_rgba[bg_idx + 1] as f32 * dim,
+                                    effective_rgba[bg_idx + 2] as f32 * dim,
+                                    (effective_rgba[bg_idx + 3] as f32 / 255.0) * layer.opacity,
                                 )
                             } else {
                                 continue;
@@ -204,15 +216,15 @@ fn composite_single_layer(
                     let src_y = (sy as u32).min(layer.height - 1);
                     let src_idx = ((src_y * layer.width + src_x) * 4) as usize;
 
-                    if src_idx + 3 >= layer.rgba.len() {
+                    if src_idx + 3 >= effective_rgba.len() {
                         continue;
                     }
 
                     (
-                        layer.rgba[src_idx] as f32,
-                        layer.rgba[src_idx + 1] as f32,
-                        layer.rgba[src_idx + 2] as f32,
-                        (layer.rgba[src_idx + 3] as f32 / 255.0) * layer.opacity,
+                        effective_rgba[src_idx] as f32,
+                        effective_rgba[src_idx + 1] as f32,
+                        effective_rgba[src_idx + 2] as f32,
+                        (effective_rgba[src_idx + 3] as f32 / 255.0) * layer.opacity,
                     )
                 };
 

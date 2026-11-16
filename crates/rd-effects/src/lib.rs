@@ -5,6 +5,7 @@
 
 pub mod color_space;
 pub mod color_transform;
+pub mod inpainting;
 pub mod lut;
 pub mod mask;
 pub mod matte;
@@ -24,6 +25,7 @@ pub use color_space::{
     unpack_rgb12,
 };
 pub use color_transform::{ColorTransformParams, apply_color_transform};
+pub use inpainting::{InpaintParams, apply_inpaint_effect};
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
 pub use matte::{NeuralMatteParams, apply_neural_matte, evaluate_matte_alpha};
 pub use ocio::{OcioBitDepth, OcioColorSpace, OcioConfig, OcioError, OcioTransform, OcioView};
