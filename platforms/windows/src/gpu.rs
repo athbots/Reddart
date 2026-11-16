@@ -5,13 +5,15 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-/// GPU context holding wgpu device and queue.
+/// GPU context holding wgpu device and queue, with multi-adapter fleet management.
 pub struct GpuContext {
     #[allow(dead_code)]
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
+    #[allow(dead_code)]
+    pub multi_gpu: rd_render::MultiGpuManager,
 }
 
 impl GpuContext {
@@ -38,6 +40,15 @@ impl GpuContext {
         );
         log::info!("  Driver: {}", adapter_info.driver);
 
+        // Discover multi-GPU fleet capabilities
+        let multi_gpu =
+            rd_render::MultiGpuManager::discover(instance, rd_render::MultiGpuConfig::default());
+        log::info!(
+            "Multi-GPU fleet initialized with {} adapter(s) (strategy: {:?})",
+            multi_gpu.adapter_count(),
+            multi_gpu.strategy()
+        );
+
         // Request device with features needed for video editing
         let (device, queue) = adapter
             .request_device(
@@ -58,6 +69,7 @@ impl GpuContext {
             adapter,
             device: Arc::new(device),
             queue: Arc::new(queue),
+            multi_gpu,
         })
     }
 }
