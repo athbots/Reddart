@@ -107,6 +107,7 @@ fn test_end_to_end_portrait_matting_and_despill_pipeline() {
         edge_choke: 0,
         spill_suppression: 0.7,
         temporal_smooth: 0.0,
+        ..Default::default()
     };
     let mut engine = PortraitMattingEngine::new(config);
     let mask = engine.segment_frame(&frame, w, h);
