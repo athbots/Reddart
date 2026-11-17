@@ -616,8 +616,8 @@ impl MinimumStatisticsTracker {
                 let p = p_raw.max(1e-7);
                 self.smoothed_power[k] = p;
                 self.current_subwindow_min[k] = p;
-                for u in 0..8 {
-                    self.subwindow_min[u][k] = p;
+                for subwin in &mut self.subwindow_min {
+                    subwin[k] = p;
                 }
             }
             self.initialized = true;
@@ -644,9 +644,9 @@ impl MinimumStatisticsTracker {
         // 2. Minimum over all subwindows multiplied by bias correction factor
         for (k, out) in noise_psd_out.iter_mut().enumerate() {
             let mut min_val = self.current_subwindow_min[k];
-            for u in 0..8 {
-                if self.subwindow_min[u][k] < min_val {
-                    min_val = self.subwindow_min[u][k];
+            for subwin in &self.subwindow_min {
+                if subwin[k] < min_val {
+                    min_val = subwin[k];
                 }
             }
             *out = min_val * self.bias_factor;
