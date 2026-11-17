@@ -14,6 +14,7 @@ pub mod optical_flow;
 pub mod reframe;
 pub mod registry;
 pub mod shader;
+pub mod stabilize;
 pub mod template;
 pub mod text;
 
@@ -38,6 +39,7 @@ pub use registry::{
     EffectEntry, EffectManifest, EffectParamSpec, EffectRegistry, OPTICAL_FLOW_ESTIMATE_WGSL,
     OPTICAL_FLOW_WGSL,
 };
+pub use stabilize::{VideoStabilizerParams, apply_video_stabilizer};
 pub use template::{BeatDetector, MusicCue, TemplateSlot, TemplateSpec};
 pub use text::{
     SdfTypographyParams, TextAlignment, TextOverlayParams, compute_signed_distance_field, edt_2d,

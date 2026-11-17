@@ -1385,6 +1385,49 @@ pub fn render_project_to_file(
                             }
                         });
 
+                    let video_stabilizer = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "video_stabilizer" && e.enabled)
+                        .map(|stab_eff| {
+                            let comp_dx =
+                                stab_eff.parameters.get("comp_dx").copied().unwrap_or(0.0);
+                            let comp_dy =
+                                stab_eff.parameters.get("comp_dy").copied().unwrap_or(0.0);
+                            let comp_dtheta = stab_eff
+                                .parameters
+                                .get("comp_dtheta")
+                                .copied()
+                                .unwrap_or(0.0);
+                            let comp_scale = stab_eff
+                                .parameters
+                                .get("comp_scale")
+                                .copied()
+                                .unwrap_or(1.0);
+                            let zoom = stab_eff.parameters.get("zoom").copied().unwrap_or(1.0);
+                            let border_mode = stab_eff
+                                .parameters
+                                .get("border_mode")
+                                .copied()
+                                .unwrap_or(0.0)
+                                as u32;
+                            let blur_radius = stab_eff
+                                .parameters
+                                .get("blur_radius")
+                                .copied()
+                                .unwrap_or(8.0);
+
+                            rd_effects::VideoStabilizerParams {
+                                comp_dx,
+                                comp_dy,
+                                comp_dtheta,
+                                comp_scale,
+                                zoom,
+                                border_mode,
+                                blur_radius,
+                            }
+                        });
+
                     if let Some(path) = resolve_media_path(&vclip.source_path) {
                         let source_time_us = clip.source_in_us
                             + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
@@ -1435,6 +1478,7 @@ pub fn render_project_to_file(
                                     virtual_green_screen,
                                     auto_reframe,
                                     inpaint,
+                                    video_stabilizer,
                                 });
                             }
                         } else {
@@ -1462,6 +1506,7 @@ pub fn render_project_to_file(
                                 virtual_green_screen: None,
                                 auto_reframe: None,
                                 inpaint: None,
+                                video_stabilizer: None,
                             });
                         }
                     } else {
@@ -1489,6 +1534,7 @@ pub fn render_project_to_file(
                             virtual_green_screen: None,
                             auto_reframe: None,
                             inpaint: None,
+                            video_stabilizer: None,
                         });
                     }
                 }

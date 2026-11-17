@@ -6,7 +6,8 @@
 //! - Direct pixel alpha blending and effect integration.
 
 use rd_effects::{
-    AutoReframeParams, InpaintParams, NeuralMatteParams, ShapeMaskParams, VirtualGreenScreenParams,
+    AutoReframeParams, InpaintParams, NeuralMatteParams, ShapeMaskParams, VideoStabilizerParams,
+    VirtualGreenScreenParams,
 };
 
 /// Parameters defining a video layer to be composited into a multi-track frame.
@@ -40,6 +41,8 @@ pub struct CompositorLayer {
     pub auto_reframe: Option<AutoReframeParams>,
     /// Optional AI generative inpainting parameters.
     pub inpaint: Option<InpaintParams>,
+    /// Optional AI video stabilizer parameters.
+    pub video_stabilizer: Option<VideoStabilizerParams>,
 }
 
 impl CompositorLayer {
@@ -60,6 +63,7 @@ impl CompositorLayer {
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         }
     }
 
@@ -91,6 +95,7 @@ impl CompositorLayer {
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         }
     }
 }
@@ -127,12 +132,25 @@ fn composite_single_layer(
         return;
     }
 
-    let effective_rgba = if let Some(ref inpaint) = layer.inpaint {
-        let mut buf = layer.rgba.clone();
-        rd_effects::apply_inpaint_effect(&mut buf, layer.width, layer.height, inpaint);
-        std::borrow::Cow::Owned(buf)
-    } else {
-        std::borrow::Cow::Borrowed(&layer.rgba)
+    let effective_rgba = {
+        let mut cow = if let Some(ref inpaint) = layer.inpaint {
+            let mut buf = layer.rgba.clone();
+            rd_effects::apply_inpaint_effect(&mut buf, layer.width, layer.height, inpaint);
+            std::borrow::Cow::Owned(buf)
+        } else {
+            std::borrow::Cow::Borrowed(&layer.rgba)
+        };
+
+        if let Some(ref stab) = layer.video_stabilizer {
+            let buf = rd_effects::apply_video_stabilizer(
+                &cow,
+                layer.width as usize,
+                layer.height as usize,
+                stab,
+            );
+            cow = std::borrow::Cow::Owned(buf);
+        }
+        cow
     };
 
     let is_identity_transform = (layer.scale_x - 1.0).abs() < 0.001
@@ -579,6 +597,39 @@ mod tests {
             target[mid_idx] > 200,
             "Reframe panned left must render red in center, got: {:?}",
             &target[mid_idx..mid_idx + 4]
+        );
+    }
+
+    #[test]
+    fn test_video_stabilizer_layer_compositing() {
+        let w = 16u32;
+        let h = 16u32;
+        let mut target = vec![0u8; (w * h * 4) as usize];
+
+        // Layer with white square at center
+        let mut src_pixels = vec![0u8; (w * h * 4) as usize];
+        let center_idx = ((8 * w + 8) * 4) as usize;
+        src_pixels[center_idx..center_idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+
+        let mut layer = CompositorLayer::new(src_pixels, w, h);
+        layer.video_stabilizer = Some(VideoStabilizerParams {
+            comp_dx: 2.0 / w as f32, // Offset 2 pixels right
+            comp_dy: 0.0,
+            comp_dtheta: 0.0,
+            comp_scale: 1.0,
+            zoom: 1.0,
+            border_mode: 0,
+            blur_radius: 8.0,
+        });
+
+        composite_layers_over(&mut target, w, h, &[layer]);
+
+        // Shifted point should be at (10, 8)
+        let shifted_idx = ((8 * w + 10) * 4) as usize;
+        assert!(
+            target[shifted_idx] > 200,
+            "Stabilized point should shift to (10, 8), got {}",
+            target[shifted_idx]
         );
     }
 }
