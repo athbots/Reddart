@@ -6,7 +6,7 @@
 //! Supports exporting and importing industry standard SubRip (.srt) and WebVTT (.vtt) files.
 
 use anyhow::{Context, Result, bail};
-use rd_core::{Clip, ClipKind, TimestampUs, TrackId};
+use rd_core::{Clip, ClipKind, Timeline, TimestampUs, TrackId, TrackKind};
 use serde::{Deserialize, Serialize};
 
 /// A single word with start and end timestamps.
@@ -26,13 +26,23 @@ pub struct CaptionSegment {
     pub words: Vec<WordTiming>,
 }
 
-/// Caption generator settings.
+/// Caption generator styling and typography settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptionStyle {
     pub font_family: String,
     pub font_size: f32,
     pub color: [f32; 4],
+    pub position_x: f32, // 0.5 = center
     pub position_y: f32, // 0.85 = lower third
+    pub tracking: f32,
+    pub leading: f32,
+    pub outline_color: [f32; 4],
+    pub outline_width: f32,
+    pub drop_shadow: bool,
+    pub shadow_color: [f32; 4],
+    pub shadow_offset: [f32; 2],
+    pub uppercase: bool,
+    pub max_chars_per_line: usize,
 }
 
 impl Default for CaptionStyle {
@@ -41,7 +51,28 @@ impl Default for CaptionStyle {
             font_family: "Inter".into(),
             font_size: 42.0,
             color: [1.0, 1.0, 1.0, 1.0], // White
+            position_x: 0.5,
             position_y: 0.85,
+            tracking: 0.0,
+            leading: 1.35,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            outline_width: 0.12,
+            drop_shadow: true,
+            shadow_color: [0.0, 0.0, 0.0, 0.8],
+            shadow_offset: [0.003, 0.003],
+            uppercase: false,
+            max_chars_per_line: 42,
+        }
+    }
+}
+
+impl CaptionStyle {
+    /// Create a new CaptionStyle with specified font family and size.
+    pub fn new(font_family: impl Into<String>, font_size: f32) -> Self {
+        Self {
+            font_family: font_family.into(),
+            font_size,
+            ..Default::default()
         }
     }
 }
@@ -57,19 +88,220 @@ pub fn generate_caption_track(
 
     for seg in segments {
         let duration_us = (seg.end_us - seg.start_us).max(200_000); // Min 0.2s
+        let text_content = if style.uppercase {
+            seg.text.to_uppercase()
+        } else {
+            seg.text.clone()
+        };
 
-        let mut clip = Clip::new_text(&seg.text, seg.start_us, duration_us);
+        let mut clip = Clip::new_text(&text_content, seg.start_us, duration_us);
         if let ClipKind::Text(ref mut tclip) = clip.kind {
             tclip.font_family = style.font_family.clone();
             tclip.font_size = style.font_size;
             tclip.color = style.color;
-            tclip.position = [0.5, style.position_y];
+            tclip.position = [style.position_x, style.position_y];
+            tclip.tracking = style.tracking;
+            tclip.leading = style.leading;
+            tclip.outline_color = style.outline_color;
+            tclip.outline_width = style.outline_width;
+            tclip.drop_shadow = style.drop_shadow;
+            tclip.shadow_color = style.shadow_color;
+            tclip.shadow_offset = style.shadow_offset;
         }
 
         clips.push(clip);
     }
 
     (track_id, clips)
+}
+
+/// Insert caption segments onto an active timeline text track, creating the track if needed.
+pub fn apply_captions_to_timeline(
+    timeline: &mut Timeline,
+    segments: &[CaptionSegment],
+    style: &CaptionStyle,
+    track_name: &str,
+) -> TrackId {
+    let (_, clips) = generate_caption_track(segments, style, track_name);
+
+    let track_id = if let Some(existing) = timeline
+        .tracks()
+        .iter()
+        .find(|t| t.kind == TrackKind::Text && t.name == track_name)
+    {
+        existing.id
+    } else {
+        timeline.add_track(TrackKind::Text, track_name)
+    };
+
+    if let Some(track) = timeline.track_mut(track_id) {
+        for clip in clips {
+            track.add_clip(clip);
+        }
+    }
+
+    track_id
+}
+
+/// Export subtitle clips from a specific timeline track as SubRip (.srt) format.
+pub fn export_timeline_subtitles_srt(timeline: &Timeline, track_id: TrackId) -> Result<String> {
+    let track = timeline
+        .track(track_id)
+        .context("Subtitle track ID not found on timeline")?;
+
+    let mut segments = Vec::new();
+    for clip in track.clips() {
+        if let ClipKind::Text(ref tclip) = clip.kind {
+            segments.push(CaptionSegment {
+                text: tclip.text.clone(),
+                start_us: clip.position_us,
+                end_us: clip.position_us + clip.duration_us(),
+                words: Vec::new(),
+            });
+        }
+    }
+    segments.sort_by_key(|s| s.start_us);
+    Ok(export_srt(&segments))
+}
+
+/// Export subtitle clips from a specific timeline track as WebVTT (.vtt) format.
+pub fn export_timeline_subtitles_vtt(timeline: &Timeline, track_id: TrackId) -> Result<String> {
+    let track = timeline
+        .track(track_id)
+        .context("Subtitle track ID not found on timeline")?;
+
+    let mut segments = Vec::new();
+    for clip in track.clips() {
+        if let ClipKind::Text(ref tclip) = clip.kind {
+            segments.push(CaptionSegment {
+                text: tclip.text.clone(),
+                start_us: clip.position_us,
+                end_us: clip.position_us + clip.duration_us(),
+                words: Vec::new(),
+            });
+        }
+    }
+    segments.sort_by_key(|s| s.start_us);
+    Ok(export_vtt(&segments))
+}
+
+/// Strip HTML tags (e.g. `<b>`, `<i>`, `<font ...>`, `<v ...>`) and normalize whitespace in subtitle text.
+pub fn sanitize_subtitle_text(raw: &str) -> String {
+    let mut clean = String::with_capacity(raw.len());
+    let mut in_tag = false;
+
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => clean.push(c),
+            _ => {}
+        }
+    }
+
+    let words: Vec<&str> = clean.split_whitespace().collect();
+    words.join(" ")
+}
+
+/// Severity level of subtitle validation findings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaptionValidationSeverity {
+    Warning,
+    Error,
+}
+
+/// A validation finding on a subtitle segment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptionValidationIssue {
+    pub segment_index: usize,
+    pub severity: CaptionValidationSeverity,
+    pub message: String,
+}
+
+/// Validate subtitle segments against readability limits, reading speed (CPS), and timeline overlaps.
+pub fn validate_caption_segments(
+    segments: &[CaptionSegment],
+    max_cps: f32,
+) -> Vec<CaptionValidationIssue> {
+    let mut issues = Vec::new();
+
+    for (idx, seg) in segments.iter().enumerate() {
+        let duration_s = (seg.end_us - seg.start_us) as f32 / 1_000_000.0;
+        if seg.start_us >= seg.end_us || duration_s <= 0.0 {
+            issues.push(CaptionValidationIssue {
+                segment_index: idx,
+                severity: CaptionValidationSeverity::Error,
+                message: format!(
+                    "Invalid timecode: start ({}) >= end ({})",
+                    format_timestamp_srt(seg.start_us),
+                    format_timestamp_srt(seg.end_us)
+                ),
+            });
+            continue;
+        }
+
+        if duration_s < 0.3 {
+            issues.push(CaptionValidationIssue {
+                segment_index: idx,
+                severity: CaptionValidationSeverity::Warning,
+                message: format!("Segment duration too brief: {:.2}s (< 0.3s)", duration_s),
+            });
+        } else if duration_s > 7.0 {
+            issues.push(CaptionValidationIssue {
+                segment_index: idx,
+                severity: CaptionValidationSeverity::Warning,
+                message: format!("Segment duration too long: {:.2}s (> 7.0s)", duration_s),
+            });
+        }
+
+        let char_count = seg.text.trim().chars().count();
+        if duration_s > 0.0 {
+            let cps = char_count as f32 / duration_s;
+            if cps > max_cps {
+                issues.push(CaptionValidationIssue {
+                    segment_index: idx,
+                    severity: CaptionValidationSeverity::Warning,
+                    message: format!(
+                        "Reading speed exceeds threshold: {:.1} CPS (limit: {:.1} CPS)",
+                        cps, max_cps
+                    ),
+                });
+            }
+        }
+
+        // Check for overlaps with following segment
+        if idx + 1 < segments.len() {
+            let next = &segments[idx + 1];
+            if seg.end_us > next.start_us {
+                issues.push(CaptionValidationIssue {
+                    segment_index: idx,
+                    severity: CaptionValidationSeverity::Error,
+                    message: format!(
+                        "Segment overlaps with subsequent segment: end {} > next start {}",
+                        format_timestamp_srt(seg.end_us),
+                        format_timestamp_srt(next.start_us)
+                    ),
+                });
+            }
+        }
+    }
+
+    issues
+}
+
+/// Automatically adjust segment end timestamps so that adjacent segments have at least `min_gap_us` spacing.
+pub fn resolve_caption_overlaps(segments: &mut [CaptionSegment], min_gap_us: TimestampUs) {
+    if segments.len() <= 1 {
+        return;
+    }
+
+    for i in 0..segments.len() - 1 {
+        let next_start = segments[i + 1].start_us;
+        let allowed_end = next_start.saturating_sub(min_gap_us);
+        if segments[i].end_us > allowed_end && allowed_end > segments[i].start_us {
+            segments[i].end_us = allowed_end;
+        }
+    }
 }
 
 /// Format a microsecond timestamp as SubRip SRT format: `HH:MM:SS,mmm`
@@ -204,7 +436,7 @@ pub fn parse_srt(content: &str) -> Result<Vec<CaptionSegment>> {
             .with_context(|| format!("Invalid SRT end timestamp: {}", parts[1]))?;
 
         let text_lines = &lines[time_line_idx + 1..];
-        let text = text_lines.join(" ");
+        let text = sanitize_subtitle_text(&text_lines.join(" "));
 
         segments.push(CaptionSegment {
             text,
@@ -263,7 +495,7 @@ pub fn parse_vtt(content: &str) -> Result<Vec<CaptionSegment>> {
                     parse_timestamp_vtt(start_part),
                     parse_timestamp_vtt(end_part),
                 ) {
-                    let text = b_lines[text_start..].join(" ");
+                    let text = sanitize_subtitle_text(&b_lines[text_start..].join(" "));
                     segments.push(CaptionSegment {
                         text,
                         start_us,
@@ -536,5 +768,110 @@ mod tests {
         assert_eq!(wrapped[1].text, "Three Four");
         assert_eq!(wrapped[1].start_us, 500_000);
         assert_eq!(wrapped[1].end_us, 950_000);
+    }
+
+    #[test]
+    fn test_timeline_subtitles_apply_and_export() {
+        let mut timeline = Timeline::new();
+        let segments = vec![
+            CaptionSegment {
+                text: "Cinematic 4K grading".into(),
+                start_us: 1_000_000,
+                end_us: 3_000_000,
+                words: vec![],
+            },
+            CaptionSegment {
+                text: "Real-time AI captions".into(),
+                start_us: 3_500_000,
+                end_us: 5_500_000,
+                words: vec![],
+            },
+        ];
+
+        let style = CaptionStyle {
+            font_family: "Roboto".into(),
+            font_size: 44.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+            position_x: 0.5,
+            position_y: 0.85,
+            tracking: 0.05,
+            leading: 1.4,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            outline_width: 0.15,
+            drop_shadow: true,
+            shadow_color: [0.0, 0.0, 0.0, 0.75],
+            shadow_offset: [0.004, 0.004],
+            uppercase: true,
+            max_chars_per_line: 40,
+        };
+
+        let track_id =
+            apply_captions_to_timeline(&mut timeline, &segments, &style, "Subtitles Track");
+        assert_eq!(timeline.tracks().len(), 1);
+
+        let track = timeline.track(track_id).unwrap();
+        assert_eq!(track.clips().len(), 2);
+        if let ClipKind::Text(ref tc) = track.clips()[0].kind {
+            assert_eq!(tc.text, "CINEMATIC 4K GRADING");
+            assert_eq!(tc.font_family, "Roboto");
+            assert_eq!(tc.outline_width, 0.15);
+            assert!(tc.drop_shadow);
+        } else {
+            panic!("Expected ClipKind::Text");
+        }
+
+        // Export roundtrip back to SRT and VTT
+        let srt_out = export_timeline_subtitles_srt(&timeline, track_id).unwrap();
+        assert!(srt_out.contains("00:00:01,000 --> 00:00:03,000"));
+        assert!(srt_out.contains("CINEMATIC 4K GRADING"));
+
+        let vtt_out = export_timeline_subtitles_vtt(&timeline, track_id).unwrap();
+        assert!(vtt_out.starts_with("WEBVTT"));
+        assert!(vtt_out.contains("REAL-TIME AI CAPTIONS"));
+    }
+
+    #[test]
+    fn test_sanitize_subtitle_text() {
+        let dirty = "  <i>Hello</i>, <font color=\"#ff0000\"><b>world</b></font>!  ";
+        let clean = sanitize_subtitle_text(dirty);
+        assert_eq!(clean, "Hello, world!");
+    }
+
+    #[test]
+    fn test_caption_validation_and_overlap_resolution() {
+        let mut segments = vec![
+            CaptionSegment {
+                text:
+                    "Rapid high reading speed text that exceeds twenty characters per second easily"
+                        .into(),
+                start_us: 1_000_000,
+                end_us: 2_000_000, // 1.0s for ~78 chars -> 78 CPS!
+                words: vec![],
+            },
+            CaptionSegment {
+                text: "Overlapping segment".into(),
+                start_us: 1_800_000, // Starts before segment 0 ends!
+                end_us: 3_000_000,
+                words: vec![],
+            },
+        ];
+
+        let issues = validate_caption_segments(&segments, 20.0);
+        assert!(!issues.is_empty());
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.message.contains("Reading speed exceeds threshold"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == CaptionValidationSeverity::Error
+                    && i.message.contains("overlaps"))
+        );
+
+        // Resolve overlaps
+        resolve_caption_overlaps(&mut segments, 50_000);
+        assert!(segments[0].end_us <= segments[1].start_us - 50_000);
     }
 }
