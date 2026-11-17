@@ -244,7 +244,7 @@
   - `rd_audio::plugin`: `AudioPlugin` implementation, insert chain routing, automation, and JSON state persistence.
 - **Verification Suite:** `crates/rd-ml/tests/ai_neural_audio_denoise_test.rs` (9/9 tests pass) & `crates/rd-ml/tests/ai_matting_and_denoise_test.rs` (3/3 tests pass).
 - **Architecture Documentation:** `docs/NEURAL_AUDIO_DENOISING_AND_WIENER_FILTERING.md`.
-- **CI Run:** (Pending PR #59 validation).
+- **CI Run:** `44187927816` / `44187938885` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
