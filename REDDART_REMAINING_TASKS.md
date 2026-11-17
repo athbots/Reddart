@@ -237,6 +237,15 @@
 - **Architecture Documentation:** `docs/AI_VIDEO_STABILIZATION_AND_KALMAN_SMOOTHING.md`.
 - **CI Run:** `44176438783` / `44176490760` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming (PR #59)
+- **Scope:** On-device neural spectral noise reduction and mains de-humming engine featuring 512-point STFT with square-root Hann overlap-add (exact COLA Princen-Bradley condition), Ephraim-Malah decision-directed (DD) recursive a-priori / a-posteriori SNR estimation, parametric Wiener filtering with Berouti musical noise floor suppression, Rainer Martin Minimum Statistics continuous background noise PSD estimation, cascaded 4-harmonic 50 Hz / 60 Hz mains hum notch filters with configurable Q, Goertzel automatic mains hum frequency detector, transient-preserving high-frequency onset gating, and studio `NeuralAudioDenoiserPlugin` implementing `rd_audio::plugin::AudioPlugin` for real-time mixer insert chains.
+- **Engine Components:**
+  - `rd_ml::denoise`: `AudioDenoiser`, `DenoiseConfig`, `DenoiseMode`, `DetectedHum`, `MainsHumDetector`, `HumNotchFilter`, `MinimumStatisticsTracker`, `DecisionDirectedWienerFilter`, `TransientDetector`, `NeuralAudioDenoiserPlugin`, `BiquadFilter`, `DenoiseProfile`, `fft_radix2`.
+  - `rd_audio::plugin`: `AudioPlugin` implementation, insert chain routing, automation, and JSON state persistence.
+- **Verification Suite:** `crates/rd-ml/tests/ai_neural_audio_denoise_test.rs` (9/9 tests pass) & `crates/rd-ml/tests/ai_matting_and_denoise_test.rs` (3/3 tests pass).
+- **Architecture Documentation:** `docs/NEURAL_AUDIO_DENOISING_AND_WIENER_FILTERING.md`.
+- **CI Run:** (Pending PR #59 validation).
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -264,7 +273,7 @@ Following the production launch of Release v1.3.0, Reddart progresses into Phase
    - Hierarchical multi-scale portrait segmentation, true $O(1)$ prefix-sum guided filter, RGB color-guided edge matting, 3-level trimap refinement, multi-mode chromatic despill, motion-adaptive temporal smoothing, and virtual background synthesis (bokeh defocus, desaturation).
 3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking (COMPLETE - PR #57):**
    - Shi-Tomasi corner feature detection with uniform spatial grid bucketing, bidirectional Lucas-Kanade optical flow tracking, RANSAC 2D similarity motion estimation, kinematic state-space Kalman filtering and RTS zero-phase backward smoothing ($\ge 12\text{ dB}$ jitter reduction), dynamic margin auto-crop zoom, and 5-mode GPU border synthesis.
-4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming (NEXT ACTIVE):**
-   - Transient-preserving spectral Wiener filtering, adaptive room-tone noise profiling, and harmonic 50/60 Hz mains hum notches.
-5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0:**
+4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming (COMPLETE - PR #59):**
+   - 512-point STFT with square-root Hann COLA, Ephraim-Malah DD Wiener filter, Rainer Martin minimum statistics noise PSD tracking, 4-harmonic 50/60 Hz notch cascade, Goertzel automatic mains hum detection, transient onset preservation, and studio `NeuralAudioDenoiserPlugin` insert chain integration.
+5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0 (NEXT ACTIVE):**
    - Verification suite execution, packaging, dual-pass build determinism, CDN download hash verification, and official release publication.

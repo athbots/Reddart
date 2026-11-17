@@ -27,7 +27,9 @@ pub use captions::{
     resolve_caption_overlaps, sanitize_subtitle_text, validate_caption_segments, wrap_segments,
 };
 pub use denoise::{
-    AudioDenoiser, BiquadFilter, DenoiseConfig, DenoiseMode, DenoiseProfile, HumNotchFilter,
+    AudioDenoiser, BiquadFilter, DecisionDirectedWienerFilter, DenoiseConfig, DenoiseMode,
+    DenoiseProfile, DetectedHum, HOP_SIZE, HumNotchFilter, MainsHumDetector,
+    MinimumStatisticsTracker, NUM_BINS, NeuralAudioDenoiserPlugin, STFT_SIZE, TransientDetector,
     fft_radix2,
 };
 pub use inpainting::{

@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 rd-core = { workspace = true }
+rd-audio = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
