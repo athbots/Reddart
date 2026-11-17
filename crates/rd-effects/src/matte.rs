@@ -37,6 +37,50 @@ impl Default for NeuralMatteParams {
     }
 }
 
+/// Parameters for software Virtual Green Screen evaluation matching `effects/virtual_green_screen/shader.wgsl`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VirtualGreenScreenParams {
+    /// Foreground subject detection sensitivity threshold (0.1 to 0.9, default 0.45).
+    pub threshold: f32,
+    /// Edge feather blend width (0.001 to 0.5, default 0.05).
+    pub feather: f32,
+    /// Edge choke: negative = erode mask, positive = dilate mask (-0.5 to 0.5, default 0.0).
+    pub edge_choke: f32,
+    /// Spill suppression mode: 0 = Green, 1 = Blue, 2 = Adaptive.
+    pub spill_mode: u32,
+    /// Green/blue spill suppression intensity (0.0 to 1.0, default 0.6).
+    pub spill: f32,
+    /// Invert matte mask.
+    pub invert: bool,
+    /// Background replacement mode:
+    /// - 0: Transparent alpha
+    /// - 1: Solid Black background
+    /// - 2: Desaturated monochrome background
+    /// - 3: Dimmed cinematic background
+    /// - 4: Blur background (bokeh defocus)
+    pub bg_mode: u32,
+    /// Blur bokeh radius in pixels (default 8).
+    pub blur_radius: u32,
+    /// Light wrap intensity (0.0 to 1.0, default 0.15).
+    pub light_wrap: f32,
+}
+
+impl Default for VirtualGreenScreenParams {
+    fn default() -> Self {
+        Self {
+            threshold: 0.45,
+            feather: 0.05,
+            edge_choke: 0.0,
+            spill_mode: 0,
+            spill: 0.6,
+            invert: false,
+            bg_mode: 0,
+            blur_radius: 8,
+            light_wrap: 0.15,
+        }
+    }
+}
+
 /// Hermite interpolation matching GLSL/WGSL `smoothstep`.
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0).max(1e-6)).clamp(0.0, 1.0);
@@ -134,6 +178,202 @@ pub fn apply_neural_matte(rgba: &mut [u8], width: u32, height: u32, params: &Neu
                 _ => {
                     // Default 0: Transparent alpha
                     (r, despilled_g, b, a * alpha)
+                }
+            };
+
+            rgba[px] = (final_r * 255.0).clamp(0.0, 255.0) as u8;
+            rgba[px + 1] = (final_g * 255.0).clamp(0.0, 255.0) as u8;
+            rgba[px + 2] = (final_b * 255.0).clamp(0.0, 255.0) as u8;
+            rgba[px + 3] = (final_a * 255.0).clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Calculate virtual green screen alpha (0.0 to 1.0) at normalized UV and RGB coordinates.
+pub fn evaluate_virtual_green_screen_alpha(
+    uv_x: f32,
+    uv_y: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    params: &VirtualGreenScreenParams,
+) -> f32 {
+    let dx = uv_x - 0.5;
+    let dy = uv_y - 0.5;
+    let dist = (dx * dx + dy * dy).sqrt() / std::f32::consts::FRAC_1_SQRT_2;
+    let center_prior = (1.0 - dist * 0.85).clamp(0.0, 1.0);
+
+    let cb = -0.168736 * r - 0.331264 * g + 0.5 * b + 0.5;
+    let cr = 0.5 * r - 0.418688 * g - 0.081312 * b + 0.5;
+    let chroma_dist = ((cb - 0.5) * (cb - 0.5) + (cr - 0.5) * (cr - 0.5)).sqrt();
+
+    let mut skin_score = 0.0_f32;
+    if chroma_dist > 0.035 && (0.32..=0.49).contains(&cb) && (0.52..=0.75).contains(&cr) {
+        skin_score = 0.6;
+    }
+
+    let fg_prob = (center_prior * 0.4 + skin_score).clamp(0.0, 1.0);
+
+    let eff_threshold = (params.threshold - params.edge_choke).clamp(0.05, 0.95);
+    let edge_lo = eff_threshold - params.feather * 0.5;
+    let edge_hi = eff_threshold + params.feather * 0.5;
+    let mut alpha = smoothstep(edge_lo, edge_hi, fg_prob);
+
+    if params.invert {
+        alpha = 1.0 - alpha;
+    }
+
+    alpha.clamp(0.0, 1.0)
+}
+
+/// Apply Virtual Green Screen effect to an RGBA byte slice in-place.
+pub fn apply_virtual_green_screen(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    params: &VirtualGreenScreenParams,
+) {
+    if width == 0 || height == 0 || rgba.len() < (width * height * 4) as usize {
+        return;
+    }
+    let w_f = width as f32;
+    let h_f = height as f32;
+    let w = width as usize;
+    let h = height as usize;
+
+    // Optional blurred background for bokeh defocus mode (bg_mode == 4)
+    let blurred_buf = if params.bg_mode == 4 {
+        let r_blur = params.blur_radius.max(1) as usize;
+        let mut blurred = rgba.to_vec();
+        let mut temp = rgba.to_vec();
+
+        // Horizontal box blur
+        for y in 0..h {
+            let row = y * w * 4;
+            for x in 0..w {
+                let x_min = x.saturating_sub(r_blur);
+                let x_max = (x + r_blur).min(w - 1);
+                let count = (x_max - x_min + 1) as f32;
+                let mut sum_r = 0.0f32;
+                let mut sum_g = 0.0f32;
+                let mut sum_b = 0.0f32;
+                for ix in x_min..=x_max {
+                    let px = row + ix * 4;
+                    sum_r += rgba[px] as f32;
+                    sum_g += rgba[px + 1] as f32;
+                    sum_b += rgba[px + 2] as f32;
+                }
+                let dst_px = row + x * 4;
+                temp[dst_px] = (sum_r / count) as u8;
+                temp[dst_px + 1] = (sum_g / count) as u8;
+                temp[dst_px + 2] = (sum_b / count) as u8;
+            }
+        }
+
+        // Vertical box blur
+        for x in 0..w {
+            for y in 0..h {
+                let y_min = y.saturating_sub(r_blur);
+                let y_max = (y + r_blur).min(h - 1);
+                let count = (y_max - y_min + 1) as f32;
+                let mut sum_r = 0.0f32;
+                let mut sum_g = 0.0f32;
+                let mut sum_b = 0.0f32;
+                for iy in y_min..=y_max {
+                    let px = (iy * w + x) * 4;
+                    sum_r += temp[px] as f32;
+                    sum_g += temp[px + 1] as f32;
+                    sum_b += temp[px + 2] as f32;
+                }
+                let dst_px = (y * w + x) * 4;
+                blurred[dst_px] = (sum_r / count) as u8;
+                blurred[dst_px + 1] = (sum_g / count) as u8;
+                blurred[dst_px + 2] = (sum_b / count) as u8;
+            }
+        }
+        Some(blurred)
+    } else {
+        None
+    };
+
+    for y in 0..height {
+        let uv_y = (y as f32 + 0.5) / h_f;
+        let row_start = (y * width * 4) as usize;
+
+        for x in 0..width {
+            let uv_x = (x as f32 + 0.5) / w_f;
+            let px = row_start + (x * 4) as usize;
+
+            let r = rgba[px] as f32 / 255.0;
+            let g = rgba[px + 1] as f32 / 255.0;
+            let b = rgba[px + 2] as f32 / 255.0;
+            let a = rgba[px + 3] as f32 / 255.0;
+
+            let alpha = evaluate_virtual_green_screen_alpha(uv_x, uv_y, r, g, b, params);
+
+            // Despill: green or blue screen reflection removal
+            let (despilled_r, despilled_g, despilled_b) = if params.spill_mode == 1 {
+                // Blue despill
+                let excess_b = (b - (r + g) * 0.5).max(0.0);
+                (r, g, (b - excess_b * params.spill).clamp(0.0, 1.0))
+            } else {
+                // Green despill (default)
+                let excess_g = (g - (r + b) * 0.5).max(0.0);
+                (r, (g - excess_g * params.spill).clamp(0.0, 1.0), b)
+            };
+
+            let (final_r, final_g, final_b, final_a) = match params.bg_mode {
+                1 => {
+                    // Solid black background
+                    (
+                        despilled_r * alpha,
+                        despilled_g * alpha,
+                        despilled_b * alpha,
+                        1.0,
+                    )
+                }
+                2 => {
+                    // Desaturate background
+                    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let out_r = lum * (1.0 - alpha) + despilled_r * alpha;
+                    let out_g = lum * (1.0 - alpha) + despilled_g * alpha;
+                    let out_b = lum * (1.0 - alpha) + despilled_b * alpha;
+                    (out_r, out_g, out_b, a)
+                }
+                3 => {
+                    // Dim background
+                    let dim = 0.3;
+                    let out_r = (r * dim) * (1.0 - alpha) + despilled_r * alpha;
+                    let out_g = (g * dim) * (1.0 - alpha) + despilled_g * alpha;
+                    let out_b = (b * dim) * (1.0 - alpha) + despilled_b * alpha;
+                    (out_r, out_g, out_b, a)
+                }
+                4 => {
+                    // Blur background with light wrap
+                    let (bg_r, bg_g, bg_b) = if let Some(ref blur) = blurred_buf {
+                        (
+                            blur[px] as f32 / 255.0,
+                            blur[px + 1] as f32 / 255.0,
+                            blur[px + 2] as f32 / 255.0,
+                        )
+                    } else {
+                        (r, g, b)
+                    };
+
+                    let edge_wrap =
+                        (alpha * (1.0 - alpha) * 4.0).clamp(0.0, 1.0) * params.light_wrap;
+                    let lit_r = despilled_r * (1.0 - edge_wrap) + bg_r * edge_wrap;
+                    let lit_g = despilled_g * (1.0 - edge_wrap) + bg_g * edge_wrap;
+                    let lit_b = despilled_b * (1.0 - edge_wrap) + bg_b * edge_wrap;
+
+                    let out_r = bg_r * (1.0 - alpha) + lit_r * alpha;
+                    let out_g = bg_g * (1.0 - alpha) + lit_g * alpha;
+                    let out_b = bg_b * (1.0 - alpha) + lit_b * alpha;
+                    (out_r, out_g, out_b, a)
+                }
+                _ => {
+                    // Default 0: Transparent alpha
+                    (despilled_r, despilled_g, despilled_b, a * alpha)
                 }
             };
 

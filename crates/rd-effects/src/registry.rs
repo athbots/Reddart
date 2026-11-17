@@ -59,6 +59,8 @@ pub const OPTICAL_FLOW_WGSL: &str = include_str!("../../../effects/optical_flow/
 pub const OPTICAL_FLOW_ESTIMATE_WGSL: &str =
     include_str!("../../../effects/optical_flow/flow_estimate.wgsl");
 pub const COLOR_TRANSFORM_WGSL: &str = include_str!("../../../effects/color_transform/shader.wgsl");
+pub const VIRTUAL_GREEN_SCREEN_WGSL: &str =
+    include_str!("../../../effects/virtual_green_screen/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -807,6 +809,114 @@ impl EffectRegistry {
             },
             COLOR_TRANSFORM_WGSL.into(),
         );
+
+        // 14. Virtual Green Screen & Defocus Bokeh
+        self.register(
+            EffectManifest {
+                id: "virtual_green_screen".into(),
+                name: "Virtual Green Screen".into(),
+                version: 1,
+                cost_class: CostClass::Medium,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "threshold".into(),
+                        name: "Matte Threshold".into(),
+                        param_type: ParamType::Float,
+                        default: 0.45,
+                        min: 0.1,
+                        max: 0.9,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "feather".into(),
+                        name: "Edge Feather".into(),
+                        param_type: ParamType::Float,
+                        default: 0.05,
+                        min: 0.001,
+                        max: 0.5,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "edge_choke".into(),
+                        name: "Edge Choke".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -0.5,
+                        max: 0.5,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "spill_mode".into(),
+                        name: "Spill Mode (0:Green, 1:Blue, 2:Adaptive)".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 2.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "spill".into(),
+                        name: "Spill Suppression".into(),
+                        param_type: ParamType::Float,
+                        default: 0.6,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "invert".into(),
+                        name: "Invert Matte (0 or 1)".into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "bg_mode".into(),
+                        name:
+                            "Background Mode (0:Transparent, 1:Solid, 2:Desaturate, 3:Dim, 4:Blur)"
+                                .into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 4.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "blur_radius".into(),
+                        name: "Blur Bokeh Radius".into(),
+                        param_type: ParamType::Float,
+                        default: 8.0,
+                        min: 1.0,
+                        max: 64.0,
+                        step: 1.0,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "light_wrap".into(),
+                        name: "Light Wrap Ambiance".into(),
+                        param_type: ParamType::Float,
+                        default: 0.15,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            VIRTUAL_GREEN_SCREEN_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -857,6 +967,12 @@ mod tests {
         assert!(registry.get("auto_reframe").is_some());
         assert!(registry.get("optical_flow").is_some());
         assert!(registry.get("color_transform").is_some());
+        assert!(registry.get("virtual_green_screen").is_some());
+
+        let vgs = registry.get("virtual_green_screen").unwrap();
+        assert_eq!(vgs.manifest.cost_class, CostClass::Medium);
+        assert_eq!(vgs.manifest.parameters.len(), 9);
+        assert!(vgs.wgsl_source.contains("fn fs_main"));
 
         let ct = registry.get("color_transform").unwrap();
         assert_eq!(ct.manifest.cost_class, CostClass::Medium);

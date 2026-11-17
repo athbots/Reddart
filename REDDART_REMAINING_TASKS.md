@@ -210,6 +210,18 @@
 - **Architecture Documentation:** `docs/AI_SPEECH_TO_TEXT_AND_SUBTITLES.md`.
 - **CI Run:** `44145881219` / `44145816505` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 21: Neural Portrait Matting, Edge-Preserving Guided Filter & Virtual Green Screen (PR #55)
+- **Scope:** On-device hierarchical multi-scale portrait matting and virtual green screen pipeline featuring proxy resolution downscale/upscale inference, true $O(1)$ constant-time prefix-sum Guided Image Filtering (He et al.) with luminance and 3-channel RGB color guides, 3-level morphological Trimap boundary generation, advanced chromatic despill (Green, Blue, Adaptive) with ambient bounce replacement, motion-adaptive inter-frame temporal smoothing, and virtual background synthesis (solid color, custom plates, background blur bokeh defocus, and desaturation).
+- **Engine Components:**
+  - `rd_ml::segmentation`: `PortraitMattingEngine`, `PortraitMattingConfig`, `GuidedFilter`, `GuidedFilterMode`, `Trimap`, `SegmentationMask`, `DespillMode`, `suppress_color_spill_advanced`, `CompositeBackground`, `composite_segmented_frame`, and `VirtualGreenScreen`.
+  - `rd_effects::matte`: `VirtualGreenScreenParams`, `evaluate_virtual_green_screen_alpha`, and `apply_virtual_green_screen`.
+  - `rd_effects::registry`: Effect registration for `virtual_green_screen` with 9-parameter manifest and WGSL shader.
+  - `effects/virtual_green_screen/shader.wgsl`: WGSL shader with 48-byte uniform layout, despill, bokeh cross-sampling, and light wrap.
+  - `rd_render::composite`: `CompositorLayer::virtual_green_screen` integration into multi-track compositing engine.
+  - `rd_export::pipeline`: Export pipeline parity extracting `virtual_green_screen` clip parameters.
+- **Verification Suite:** `crates/rd-ml/tests/ai_matting_and_virtual_green_screen_test.rs` (9/9 tests pass) & `crates/rd-render/src/composite.rs` (`test_virtual_green_screen_layer_compositing`).
+- **Architecture Documentation:** `docs/NEURAL_PORTRAIT_MATTING_AND_VIRTUAL_GREEN_SCREEN.md`.
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -231,11 +243,12 @@ All four Phase III cutting-edge initiatives have been fully implemented, rigorou
 
 Following the production launch of Release v1.3.0, Reddart progresses into Phase IV focusing on advanced on-device AI creative tools:
 
-1. **Milestone 20: AI Neural Speech-to-Text, Voice Activity Detection & Subtitle Track Generator (ACTIVE):**
+1. **Milestone 20: AI Neural Speech-to-Text, Voice Activity Detection & Subtitle Track Generator (COMPLETE - PR #53):**
    - 80-channel Log-Mel spectrogram filterbank extraction, adaptive VAD with 300ms consonant hangover, acoustic syllable forced script alignment, GPU SDF typography, timeline subtitle track injection, and SubRip (.srt) / WebVTT (.vtt) round-trip export.
-2. **Milestone 21: Neural Portrait Matting, Edge-Preserving Guided Filter & Virtual Green Screen:**
-   - Multi-scale portrait segmentation, alpha matte feathering, edge-preserving guided filter, and real-time color despill background replacement.
-3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking:**
+2. **Milestone 21: Neural Portrait Matting, Edge-Preserving Guided Filter & Virtual Green Screen (COMPLETE - PR #55):**
+   - Hierarchical multi-scale portrait segmentation, true $O(1)$ prefix-sum guided filter, RGB color-guided edge matting, 3-level trimap refinement, multi-mode chromatic despill, motion-adaptive temporal smoothing, and virtual background synthesis (bokeh defocus, desaturation).
+3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking (ACTIVE):**
+   - Feature point tracking, camera trajectory smoothing via Kalman filtering, and dynamic margin-preserving video deshaking.
    - Feature point tracking, camera trajectory smoothing via Kalman filtering, and dynamic margin-preserving video deshaking.
 4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming:**
    - Transient-preserving spectral Wiener filtering, adaptive room-tone noise profiling, and harmonic 50/60 Hz mains hum notches.

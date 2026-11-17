@@ -27,7 +27,10 @@ pub use color_space::{
 pub use color_transform::{ColorTransformParams, apply_color_transform};
 pub use inpainting::{InpaintParams, apply_inpaint_effect};
 pub use mask::{ShapeMaskParams, apply_shape_mask, evaluate_mask_alpha};
-pub use matte::{NeuralMatteParams, apply_neural_matte, evaluate_matte_alpha};
+pub use matte::{
+    NeuralMatteParams, VirtualGreenScreenParams, apply_neural_matte, apply_virtual_green_screen,
+    evaluate_matte_alpha, evaluate_virtual_green_screen_alpha,
+};
 pub use ocio::{OcioBitDepth, OcioColorSpace, OcioConfig, OcioError, OcioTransform, OcioView};
 pub use optical_flow::{OpticalFlowRetimeParams, apply_optical_flow_retime};
 pub use reframe::{AutoReframeParams, apply_auto_reframe};

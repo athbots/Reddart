@@ -1245,6 +1245,58 @@ pub fn render_project_to_file(
                             }
                         });
 
+                    let virtual_green_screen = clip
+                        .effects
+                        .iter()
+                        .find(|e| e.effect_id == "virtual_green_screen" && e.enabled)
+                        .map(|vgs_eff| {
+                            let threshold = clip
+                                .evaluate_keyframe("threshold", time_us)
+                                .or_else(|| vgs_eff.parameters.get("threshold").copied())
+                                .unwrap_or(0.45);
+                            let feather = clip
+                                .evaluate_keyframe("feather", time_us)
+                                .or_else(|| vgs_eff.parameters.get("feather").copied())
+                                .unwrap_or(0.05);
+                            let edge_choke = clip
+                                .evaluate_keyframe("edge_choke", time_us)
+                                .or_else(|| vgs_eff.parameters.get("edge_choke").copied())
+                                .unwrap_or(0.0);
+                            let spill_mode =
+                                vgs_eff.parameters.get("spill_mode").copied().unwrap_or(0.0) as u32;
+                            let spill = clip
+                                .evaluate_keyframe("spill", time_us)
+                                .or_else(|| vgs_eff.parameters.get("spill").copied())
+                                .unwrap_or(0.6);
+                            let invert =
+                                vgs_eff.parameters.get("invert").copied().unwrap_or(0.0) >= 0.5;
+                            let bg_mode =
+                                vgs_eff.parameters.get("bg_mode").copied().unwrap_or(0.0) as u32;
+                            let blur_radius = vgs_eff
+                                .parameters
+                                .get("blur_radius")
+                                .copied()
+                                .unwrap_or(8.0)
+                                as u32;
+                            let light_wrap = vgs_eff
+                                .parameters
+                                .get("light_wrap")
+                                .copied()
+                                .unwrap_or(0.15);
+
+                            rd_effects::VirtualGreenScreenParams {
+                                threshold,
+                                feather,
+                                edge_choke,
+                                spill_mode,
+                                spill,
+                                invert,
+                                bg_mode,
+                                blur_radius,
+                                light_wrap,
+                            }
+                        });
+
                     let auto_reframe = clip
                         .effects
                         .iter()
@@ -1380,6 +1432,7 @@ pub fn render_project_to_file(
                                     blend_mode: 0,
                                     shape_mask,
                                     neural_matte,
+                                    virtual_green_screen,
                                     auto_reframe,
                                     inpaint,
                                 });
@@ -1406,6 +1459,7 @@ pub fn render_project_to_file(
                                 blend_mode: 0,
                                 shape_mask,
                                 neural_matte: None,
+                                virtual_green_screen: None,
                                 auto_reframe: None,
                                 inpaint: None,
                             });
@@ -1432,6 +1486,7 @@ pub fn render_project_to_file(
                             blend_mode: 0,
                             shape_mask,
                             neural_matte: None,
+                            virtual_green_screen: None,
                             auto_reframe: None,
                             inpaint: None,
                         });

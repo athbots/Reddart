@@ -205,6 +205,7 @@ fn test_compositor_layer_multi_aspect_rendering() {
         blend_mode: 0,
         shape_mask: None,
         neural_matte: None,
+        virtual_green_screen: None,
         auto_reframe: Some(v_params),
         inpaint: None,
     };

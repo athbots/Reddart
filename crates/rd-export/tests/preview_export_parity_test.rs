@@ -156,6 +156,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         },
@@ -175,6 +176,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 ..Default::default()
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         },
@@ -194,6 +196,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
                 ..Default::default()
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         },
@@ -330,6 +333,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -357,6 +361,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
                 invert: false,
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -384,6 +389,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
                 invert: true,
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -415,6 +421,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -442,6 +449,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
                 invert: false,
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -469,6 +477,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
                 invert: true,
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         });
@@ -588,6 +597,7 @@ fn test_preview_export_parity_across_keyframed_transforms_and_temporal_playback(
                 ..Default::default()
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         }];
@@ -614,6 +624,7 @@ fn test_preview_export_parity_across_keyframed_transforms_and_temporal_playback(
                 ..Default::default()
             }),
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         }];

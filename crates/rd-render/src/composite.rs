@@ -5,7 +5,9 @@
 //! - Keyframed opacity, spatial transforms (translation, scale), and blend modes.
 //! - Direct pixel alpha blending and effect integration.
 
-use rd_effects::{AutoReframeParams, InpaintParams, NeuralMatteParams, ShapeMaskParams};
+use rd_effects::{
+    AutoReframeParams, InpaintParams, NeuralMatteParams, ShapeMaskParams, VirtualGreenScreenParams,
+};
 
 /// Parameters defining a video layer to be composited into a multi-track frame.
 #[derive(Debug, Clone)]
@@ -32,6 +34,8 @@ pub struct CompositorLayer {
     pub shape_mask: Option<ShapeMaskParams>,
     /// Optional AI neural portrait matte parameters.
     pub neural_matte: Option<NeuralMatteParams>,
+    /// Optional Virtual Green Screen parameters.
+    pub virtual_green_screen: Option<VirtualGreenScreenParams>,
     /// Optional AI auto-reframe parameters.
     pub auto_reframe: Option<AutoReframeParams>,
     /// Optional AI generative inpainting parameters.
@@ -53,6 +57,7 @@ impl CompositorLayer {
             blend_mode: 0,
             shape_mask: None,
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         }
@@ -83,6 +88,7 @@ impl CompositorLayer {
             blend_mode,
             shape_mask: None,
             neural_matte: None,
+            virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
         }
@@ -186,7 +192,7 @@ fn composite_single_layer(
                 (rel_x + src_cx, rel_y + src_cy)
             };
 
-            let (sr, sg, sb, mut sa) =
+            let (sr, mut sg, mut sb, mut sa) =
                 if sx < 0.0 || sx >= layer.width as f32 || sy < 0.0 || sy >= layer.height as f32 {
                     if let Some(ref reframe) = layer.auto_reframe {
                         if reframe.fill_mode == 1 {
@@ -245,6 +251,26 @@ fn composite_single_layer(
                     matte,
                 );
                 sa *= matte_factor;
+            }
+
+            // Apply Virtual Green Screen if present
+            if let Some(ref vgs) = layer.virtual_green_screen {
+                let vgs_factor = rd_effects::evaluate_virtual_green_screen_alpha(
+                    norm_x,
+                    norm_y,
+                    sr / 255.0,
+                    sg / 255.0,
+                    sb / 255.0,
+                    vgs,
+                );
+                sa *= vgs_factor;
+                if vgs.spill_mode == 1 {
+                    let excess_b = (sb - (sr + sg) * 0.5).max(0.0);
+                    sb = (sb - excess_b * vgs.spill).clamp(0.0, 255.0);
+                } else {
+                    let excess_g = (sg - (sr + sb) * 0.5).max(0.0);
+                    sg = (sg - excess_g * vgs.spill).clamp(0.0, 255.0);
+                }
             }
 
             if sa <= 0.001 {
@@ -455,6 +481,59 @@ mod tests {
             target[corner_idx + 2] > 200,
             "Corner blue expected high, got {}",
             target[corner_idx + 2]
+        );
+    }
+
+    #[test]
+    fn test_virtual_green_screen_layer_compositing() {
+        let w = 16u32;
+        let h = 16u32;
+        let mut target = vec![0u8; (w * h * 4) as usize];
+
+        // Background: Solid Red
+        let bg = CompositorLayer::new([255, 0, 0, 255].repeat((w * h) as usize), w, h);
+
+        // Foreground: Green screen background with centered skin tone subject
+        let mut fg_pixels = [20, 210, 20, 255].repeat((w * h) as usize);
+        for y in 6..10 {
+            for x in 6..10 {
+                let px = ((y * w + x) * 4) as usize;
+                fg_pixels[px] = 220; // R
+                fg_pixels[px + 1] = 160; // G
+                fg_pixels[px + 2] = 130; // B
+                fg_pixels[px + 3] = 255;
+            }
+        }
+
+        let mut fg = CompositorLayer::new(fg_pixels, w, h);
+        fg.virtual_green_screen = Some(VirtualGreenScreenParams {
+            threshold: 0.45,
+            feather: 0.05,
+            edge_choke: 0.0,
+            spill_mode: 0,
+            spill: 0.7,
+            invert: false,
+            bg_mode: 0,
+            blur_radius: 4,
+            light_wrap: 0.1,
+        });
+
+        composite_layers_over(&mut target, w, h, &[bg, fg]);
+
+        // Center pixel (8, 8) must be warm foreground subject
+        let center_idx = ((8 * w + 8) * 4) as usize;
+        assert!(
+            target[center_idx] > 180,
+            "Center expected warm subject, got {}",
+            target[center_idx]
+        );
+
+        // Corner pixel (0, 0) must be red background
+        let corner_idx = 0;
+        assert!(
+            target[corner_idx] > 200,
+            "Corner expected red background, got {}",
+            target[corner_idx]
         );
     }
 

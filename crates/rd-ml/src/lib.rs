@@ -38,8 +38,9 @@ pub use reframe::{AutoReframer, ReframeConfig, ReframeTracks, TargetAspect};
 pub use saliency::{SaliencyConfig, SaliencyDetector, SaliencyMap};
 pub use seam_carving::SeamCarver;
 pub use segmentation::{
-    CompositeBackground, GuidedFilter, PortraitMattingConfig, PortraitMattingEngine,
-    SegmentationMask, Trimap, composite_segmented_frame, suppress_color_spill,
+    CompositeBackground, DespillMode, GuidedFilter, GuidedFilterMode, PortraitMattingConfig,
+    PortraitMattingEngine, SegmentationMask, Trimap, VirtualGreenScreen, composite_segmented_frame,
+    suppress_color_spill, suppress_color_spill_advanced,
 };
 pub use stabilize::{FrameMotion, VideoStabilizer};
 pub use tracking::{BoundingBox, TrackedPath};
