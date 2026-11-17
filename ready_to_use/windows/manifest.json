@@ -25,7 +25,7 @@
                      "headless_cli_environment"
                  ],
     "sample_project":  "samples/Demo_Project.reddart",
-    "version":  "1.2.0",
-    "sha256_executable":  "412e4f3f947859bc8c3814897aeda305915dbaf4382597b5be635f13f4f06d5e",
-    "sha256_archive":  "f6416a463f9b24f3d95fc8db6a7831d307398d514350e91c2d9f0981988ebe3c"
+    "version":  "1.3.0",
+    "sha256_executable":  "db2a22696fdec28df2c13cf5a50b9fad289235e9dbbc2cdb9ab97de5dc49cdfd",
+    "sha256_archive":  "67bb65a3a35a221eb9e72540b269e3d4daa97bcee3cfd7a4740e15f4aebf0077"
 }
