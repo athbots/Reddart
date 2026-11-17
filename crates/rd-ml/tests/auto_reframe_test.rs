@@ -208,6 +208,7 @@ fn test_compositor_layer_multi_aspect_rendering() {
         virtual_green_screen: None,
         auto_reframe: Some(v_params),
         inpaint: None,
+        video_stabilizer: None,
     };
 
     let mut target_canvas = vec![0u8; width * height * 4];

@@ -223,6 +223,20 @@
 - **Architecture Documentation:** `docs/NEURAL_PORTRAIT_MATTING_AND_VIRTUAL_GREEN_SCREEN.md`.
 - **CI Run:** `44168425279` / `44168440926` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking (PR #57)
+- **Scope:** On-device AI video stabilization and dynamic margin deshaking pipeline featuring Shi-Tomasi minimum eigenvalue corner detection with spatial grid bucketing, subpixel iterative Lucas-Kanade optical flow tracking with forward-backward consistency validation, RANSAC 2D similarity motion estimation rejecting moving outliers, kinematic state-space Kalman filtering and non-causal Rauch-Tung-Striebel (RTS) zero-phase backward smoothing ($\ge 12\text{ dB}$ jitter reduction), and dynamic margin auto-crop zoom with 5 border synthesis modes (`AutoCrop`, `Mirror`, `Replicate`, `BlurredMargin`, `Transparent`).
+- **Engine Components:**
+  - `rd_ml::stabilize`: `ShiTomasiCornerDetector`, `CornerConfig`, `OpticalFlowTracker`, `LucasKanadeConfig`, `MotionEstimator`, `RansacConfig`, `CameraTransform`, `TrajectoryPoint`, `CumulativeTrajectory`, `KalmanConfig`, `KalmanTrajectorySmoother`, `DynamicMarginManager`, `BorderFillMode`, `StabilizationQualityReport`, and `VideoStabilizer`.
+  - `rd_effects::stabilize`: `VideoStabilizerParams` and `apply_video_stabilizer`.
+  - `rd_effects::registry`: Effect registration for `video_stabilizer` with 7-parameter manifest and WGSL shader.
+  - `effects/video_stabilizer/shader.wgsl`: WGSL shader with 32-byte uniform layout, inverse coordinate warp, and 5-mode border synthesis.
+  - `rd_render::composite`: `CompositorLayer::video_stabilizer` integration into multi-track compositing engine.
+  - `rd_export::pipeline`: Headless export pipeline parity extracting `video_stabilizer` clip parameters.
+  - `platforms/windows/src/app.rs`: Keyframed playback and preview rendering integration.
+- **Verification Suite:** `crates/rd-ml/tests/ai_video_stabilization_and_kalman_test.rs` (9/9 tests pass) & `crates/rd-render/src/composite.rs` (`test_video_stabilizer_layer_compositing`).
+- **Architecture Documentation:** `docs/AI_VIDEO_STABILIZATION_AND_KALMAN_SMOOTHING.md`.
+- **CI Run:** (Pending PR #57 validation).
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -248,10 +262,9 @@ Following the production launch of Release v1.3.0, Reddart progresses into Phase
    - 80-channel Log-Mel spectrogram filterbank extraction, adaptive VAD with 300ms consonant hangover, acoustic syllable forced script alignment, GPU SDF typography, timeline subtitle track injection, and SubRip (.srt) / WebVTT (.vtt) round-trip export.
 2. **Milestone 21: Neural Portrait Matting, Edge-Preserving Guided Filter & Virtual Green Screen (COMPLETE - PR #55):**
    - Hierarchical multi-scale portrait segmentation, true $O(1)$ prefix-sum guided filter, RGB color-guided edge matting, 3-level trimap refinement, multi-mode chromatic despill, motion-adaptive temporal smoothing, and virtual background synthesis (bokeh defocus, desaturation).
-3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking (ACTIVE):**
-   - Feature point tracking, camera trajectory smoothing via Kalman filtering, and dynamic margin-preserving video deshaking.
-   - Feature point tracking, camera trajectory smoothing via Kalman filtering, and dynamic margin-preserving video deshaking.
-4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming:**
+3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking (COMPLETE - PR #57):**
+   - Shi-Tomasi corner feature detection with uniform spatial grid bucketing, bidirectional Lucas-Kanade optical flow tracking, RANSAC 2D similarity motion estimation, kinematic state-space Kalman filtering and RTS zero-phase backward smoothing ($\ge 12\text{ dB}$ jitter reduction), dynamic margin auto-crop zoom, and 5-mode GPU border synthesis.
+4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming (NEXT ACTIVE):**
    - Transient-preserving spectral Wiener filtering, adaptive room-tone noise profiling, and harmonic 50/60 Hz mains hum notches.
 5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0:**
    - Verification suite execution, packaging, dual-pass build determinism, CDN download hash verification, and official release publication.

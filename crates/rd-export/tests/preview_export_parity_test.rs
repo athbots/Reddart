@@ -159,6 +159,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         },
         CompositorLayer {
             rgba: pip_pixels,
@@ -179,6 +180,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         },
         CompositorLayer {
             rgba: title_pixels,
@@ -199,6 +201,7 @@ fn test_multi_layer_preview_and_export_composition_quality() {
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         },
     ];
 
@@ -336,6 +339,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Layer 2: Resample and grade PiP footage with transform and ellipse feather mask
@@ -364,6 +368,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Layer 3: Resample and grade accent footage with inverted rectangle mask
@@ -392,6 +397,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Composite video layers
@@ -424,6 +430,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Layer 2
@@ -452,6 +459,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Layer 3
@@ -480,6 +488,7 @@ fn test_preview_export_strict_bit_for_bit_parity_multi_track_transforms_masks_ti
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         });
 
         // Composite video layers
@@ -600,6 +609,7 @@ fn test_preview_export_parity_across_keyframed_transforms_and_temporal_playback(
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         }];
         composite_layers_over(&mut preview_buf, w, h, &layers);
         render_text_overlay(&mut preview_buf, w, h, &title_params);
@@ -627,6 +637,7 @@ fn test_preview_export_parity_across_keyframed_transforms_and_temporal_playback(
             virtual_green_screen: None,
             auto_reframe: None,
             inpaint: None,
+            video_stabilizer: None,
         }];
         composite_layers_over(&mut export_buf, w, h, &exp_layers);
         render_text_overlay(&mut export_buf, w, h, &title_params);

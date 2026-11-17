@@ -42,7 +42,13 @@ pub use segmentation::{
     PortraitMattingEngine, SegmentationMask, Trimap, VirtualGreenScreen, composite_segmented_frame,
     suppress_color_spill, suppress_color_spill_advanced,
 };
-pub use stabilize::{FrameMotion, VideoStabilizer};
+pub use stabilize::{
+    BorderFillMode, CameraTransform, CornerConfig, CumulativeTrajectory, DynamicMarginManager,
+    FeaturePoint, FrameMotion, KalmanConfig, KalmanTrajectorySmoother, LucasKanadeConfig,
+    MotionEstimator, OpticalFlowTracker, RansacConfig, ShiTomasiCornerDetector,
+    StabilizationQualityReport, TrajectoryPoint, VideoStabilizer, compute_luminance,
+    sample_bilinear_luma,
+};
 pub use tracking::{BoundingBox, TrackedPath};
 pub use whisper::{
     AcousticAligner, AudioPreprocessor, LogMelSpectrogram, SpeechBoundary, VoiceActivityDetector,

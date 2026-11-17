@@ -61,6 +61,8 @@ pub const OPTICAL_FLOW_ESTIMATE_WGSL: &str =
 pub const COLOR_TRANSFORM_WGSL: &str = include_str!("../../../effects/color_transform/shader.wgsl");
 pub const VIRTUAL_GREEN_SCREEN_WGSL: &str =
     include_str!("../../../effects/virtual_green_screen/shader.wgsl");
+pub const VIDEO_STABILIZER_WGSL: &str =
+    include_str!("../../../effects/video_stabilizer/shader.wgsl");
 
 /// An effect entry registered in the engine.
 pub struct EffectEntry {
@@ -916,6 +918,94 @@ impl EffectRegistry {
                 fragment_entry: "fs_main".into(),
             },
             VIRTUAL_GREEN_SCREEN_WGSL.into(),
+        );
+
+        // 15. AI Video Stabilizer & Dynamic Margin Deshaking
+        self.register(
+            EffectManifest {
+                id: "video_stabilizer".into(),
+                name: "AI Video Stabilizer".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "comp_dx".into(),
+                        name: "Compensatory X Offset".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -1.0,
+                        max: 1.0,
+                        step: 0.001,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "comp_dy".into(),
+                        name: "Compensatory Y Offset".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -1.0,
+                        max: 1.0,
+                        step: 0.001,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "comp_dtheta".into(),
+                        name: "Compensatory Rotation (rad)".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: -0.5,
+                        max: 0.5,
+                        step: 0.001,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "comp_scale".into(),
+                        name: "Compensatory Zoom Scale".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 0.5,
+                        max: 2.0,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "zoom".into(),
+                        name: "Auto-Crop Dynamic Zoom".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 1.0,
+                        max: 2.0,
+                        step: 0.005,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "border_mode".into(),
+                        name:
+                            "Border Mode (0:AutoCrop, 1:Mirror, 2:Replicate, 3:BlurMargin, 4:Black)"
+                                .into(),
+                        param_type: ParamType::Int,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 4.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "blur_radius".into(),
+                        name: "Margin Blur Radius".into(),
+                        param_type: ParamType::Float,
+                        default: 8.0,
+                        min: 1.0,
+                        max: 32.0,
+                        step: 0.5,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "shader.wgsl".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            VIDEO_STABILIZER_WGSL.into(),
         );
     }
 
