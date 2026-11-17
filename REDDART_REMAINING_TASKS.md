@@ -221,6 +221,7 @@
   - `rd_export::pipeline`: Export pipeline parity extracting `virtual_green_screen` clip parameters.
 - **Verification Suite:** `crates/rd-ml/tests/ai_matting_and_virtual_green_screen_test.rs` (9/9 tests pass) & `crates/rd-render/src/composite.rs` (`test_virtual_green_screen_layer_compositing`).
 - **Architecture Documentation:** `docs/NEURAL_PORTRAIT_MATTING_AND_VIRTUAL_GREEN_SCREEN.md`.
+- **CI Run:** `44168425279` / `44168440926` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
