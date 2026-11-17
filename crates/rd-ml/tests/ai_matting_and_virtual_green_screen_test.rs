@@ -283,7 +283,7 @@ fn test_advanced_color_despill_green_blue_and_adaptive() {
     );
 
     // 3. Adaptive auto-detection: frame with green border should choose green despill
-    let mut adaptive_frame = vec![20u8, 220, 30, 255].repeat(16 * 16);
+    let mut adaptive_frame = [20u8, 220, 30, 255].repeat(16 * 16);
     suppress_color_spill_advanced(&mut adaptive_frame, DespillMode::Adaptive, 0.75, None);
     assert!(
         adaptive_frame[1] < 160,
@@ -299,7 +299,7 @@ fn test_virtual_green_screen_compositing_modes() {
     let n = (w * h) as usize;
 
     // Green screen frame with centered subject
-    let mut fg = vec![20u8, 215, 30, 255].repeat(n);
+    let mut fg = [20u8, 215, 30, 255].repeat(n);
     for y in 10..22 {
         for x in 10..22 {
             let px = ((y * w + x) * 4) as usize;
@@ -322,7 +322,7 @@ fn test_virtual_green_screen_compositing_modes() {
     let mut vgs = VirtualGreenScreen::new(config);
 
     // 1. Composite over custom background plate (e.g. Amber sunset: [240, 140, 50, 255])
-    let custom_bg = vec![240u8, 140, 50, 255].repeat(n);
+    let custom_bg = [240u8, 140, 50, 255].repeat(n);
     let mut out_custom = vec![0u8; n * 4];
     vgs.process_frame(
         &fg,
