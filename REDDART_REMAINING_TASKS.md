@@ -235,7 +235,7 @@
   - `platforms/windows/src/app.rs`: Keyframed playback and preview rendering integration.
 - **Verification Suite:** `crates/rd-ml/tests/ai_video_stabilization_and_kalman_test.rs` (9/9 tests pass) & `crates/rd-render/src/composite.rs` (`test_video_stabilizer_layer_compositing`).
 - **Architecture Documentation:** `docs/AI_VIDEO_STABILIZATION_AND_KALMAN_SMOOTHING.md`.
-- **CI Run:** (Pending PR #57 validation).
+- **CI Run:** `44176438783` / `44176490760` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
