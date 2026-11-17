@@ -1,8 +1,8 @@
 # Reddart — Production Milestone Completion & Future Roadmap Ledger
 
 > [!IMPORTANT]
-> **Execution Status:** All 18 production launch, architectural, and forward-looking research milestones across Phase I, Phase II, and Phase III are **100% COMPLETE, TESTED, AND MERGED INTO `master`**.
-> Phases I & II are certified and published as official GitHub Release [v1.2.0](https://github.com/athbots/Reddart/releases/tag/v1.2.0). Phase III milestones (Items 15–18: Multi-GPU Distributed Rendering, VST3/AU Plugin Hosting, Hardware AV1/HEVC Acceleration, and AI Generative Video Inpainting & Smart Saliency Reframe) are fully integrated with 100% green CI across Windows, Ubuntu, and macOS.
+> **Execution Status:** All 19 production launch, architectural, and forward-looking research milestones across Phase I, Phase II, and Phase III are **100% COMPLETE, TESTED, MERGED INTO `master`, AND PUBLISHED AS OFFICIAL GITHUB RELEASE [v1.3.0](https://github.com/athbots/Reddart/releases/tag/v1.3.0)**.
+> All automated CI suites are green across Windows, Ubuntu, and macOS. Release assets have been verified bit-for-bit from the GitHub CDN.
 
 ---
 
@@ -29,7 +29,7 @@
 | **16** | Real-time VST3 / AU Audio Plugin Hosting | ✅ **MERGED** | `feat/vst3-au-audio-plugin-hosting` | [#45](https://github.com/athbots/Reddart/pull/45) | `9396dcf` | `43909081703` | 10/10 Pass |
 | **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
 | **18** | AI Generative Video Inpainting & Smart Saliency Reframe | ✅ **MERGED** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | `d86a388` | `43936810722` | 10/10 Pass |
-| **19** | Reconcile Checksums & Publish Release v1.3.0 | 🔄 **IN REVIEW** | `release/v1.3.0` | [#51](https://github.com/athbots/Reddart/pull/51) | Pending | Pending | CI Running |
+| **19** | Reconcile Checksums & Publish Release v1.3.0 | ✅ **PUBLISHED** | `release/v1.3.0` | [#51](https://github.com/athbots/Reddart/pull/51) | `34c39eb` | `43943341234` | 5/5 Pass |
 
 ---
 
@@ -196,8 +196,9 @@
 - **Authoritative Checksums:**
   - `Reddart.exe`: `db2a22696fdec28df2c13cf5a50b9fad289235e9dbbc2cdb9ab97de5dc49cdfd`
   - `Reddart-v1.3.0-Windows-x86_64.zip`: `67bb65a3a35a221eb9e72540b269e3d4daa97bcee3cfd7a4740e15f4aebf0077`
-- **Post-Release Asset Verification:** Assets validated with `release_integrity_test` (3/3 pass) and `verify_release_integrity.ps1`.
-- **CI Run:** Pending (PR #51).
+- **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
+- **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass) and `scripts/verify_release_integrity.ps1`.
+- **CI Run:** `43943341234` (5/5 matrix jobs passed across Windows, Ubuntu, and macOS).
 
 ---
 
