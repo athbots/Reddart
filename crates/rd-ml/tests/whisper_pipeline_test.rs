@@ -119,6 +119,7 @@ fn test_whisper_subtitles_to_timeline_text_clips() {
         font_size: 48.0,
         color: [1.0, 0.9, 0.2, 1.0], // Yellow highlight
         position_y: 0.80,
+        ..Default::default()
     };
 
     let (track_id, clips) = generate_caption_track(&segments, &style, "Subtitles");
@@ -161,6 +162,7 @@ fn test_whisper_model_config_serialization() {
         vad_threshold: 0.02,
         min_speech_duration_ms: 300,
         max_segment_duration_s: 25.0,
+        ..Default::default()
     };
 
     let serialized = serde_json::to_string(&config).expect("Serialization failed");

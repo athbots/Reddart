@@ -30,6 +30,7 @@
 | **17** | Hardware-Accelerated AV1 & HEVC Codec Expansion | ✅ **MERGED** | `feat/hardware-accelerated-av1-hevc-codecs` | [#47](https://github.com/athbots/Reddart/pull/47) | `032a482` | `43926627246` | 10/10 Pass |
 | **18** | AI Generative Video Inpainting & Smart Saliency Reframe | ✅ **MERGED** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | `d86a388` | `43936810722` | 10/10 Pass |
 | **19** | Reconcile Checksums & Publish Release v1.3.0 | ✅ **PUBLISHED** | `release/v1.3.0` | [#51](https://github.com/athbots/Reddart/pull/51) | `34c39eb` | `43943341234` | 5/5 Pass |
+| **20** | AI Neural Speech-to-Text & Subtitle Track Generator | 🔄 **IMPLEMENTED** (PR Pending) | `feat/ai-speech-to-text-and-subtitles` | Pending | Pending | Pending | 9/9 Pass |
 
 ---
 
@@ -200,6 +201,14 @@
 - **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass) and `scripts/verify_release_integrity.ps1`.
 - **CI Run:** `43943341234` (5/5 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 20: AI Neural Speech-to-Text, Voice Activity Detection & Subtitle Track Generator (PR Pending)
+- **Scope:** On-device 80-channel Log-Mel spectrogram filterbank extraction, adaptive Voice Activity Detection (VAD) with room noise adaptation and 300ms consonant hangover, acoustic syllable script forced alignment, GPU SDF typography styling, timeline subtitle track integration, and SubRip (.srt) / WebVTT (.vtt) round-trip export.
+- **Engine Components:**
+  - `rd_ml::whisper`: `compute_log_mel_spectrogram`, `create_mel_filterbank`, `VoiceActivityDetector::detect_speech_enhanced`, `AcousticAligner::align_script_to_speech`.
+  - `rd_ml::captions`: `CaptionStyle` with vector SDF typography controls (`tracking`, `leading`, `outline_color`, `outline_width`, `drop_shadow`), `generate_caption_track`, `apply_captions_to_timeline`, `export_timeline_subtitles_srt`, `export_timeline_subtitles_vtt`, `validate_caption_segments`, `resolve_caption_overlaps`, `sanitize_subtitle_text`.
+- **Verification Suite:** `crates/rd-ml/tests/ai_speech_to_text_and_subtitles_test.rs` (9/9 tests pass) & `crates/rd-ml/tests/whisper_pipeline_test.rs` (4/4 tests pass).
+- **Architecture Documentation:** `docs/AI_SPEECH_TO_TEXT_AND_SUBTITLES.md`.
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -214,3 +223,20 @@ All four Phase III cutting-edge initiatives have been fully implemented, rigorou
    - Dedicated low-latency hardware decoding/encoding via NVENC, Intel QuickSync, AMD AMF, and Apple VideoToolbox with 10-bit HDR signaling and software fallback.
 4. **AI Generative Video Inpainting & Smart Saliency Reframe (PR #49):**
    - Multi-scale exemplar patch inpainting, temporal optical flow pixel completion, dynamic programming seam carving, and multi-subject saliency reframing.
+
+---
+
+## 🔮 Phase IV Roadmap: Next Architectural Frontier (Milestones 20–24)
+
+Following the production launch of Release v1.3.0, Reddart progresses into Phase IV focusing on advanced on-device AI creative tools:
+
+1. **Milestone 20: AI Neural Speech-to-Text, Voice Activity Detection & Subtitle Track Generator (ACTIVE):**
+   - 80-channel Log-Mel spectrogram filterbank extraction, adaptive VAD with 300ms consonant hangover, acoustic syllable forced script alignment, GPU SDF typography, timeline subtitle track injection, and SubRip (.srt) / WebVTT (.vtt) round-trip export.
+2. **Milestone 21: Neural Portrait Matting, Edge-Preserving Guided Filter & Virtual Green Screen:**
+   - Multi-scale portrait segmentation, alpha matte feathering, edge-preserving guided filter, and real-time color despill background replacement.
+3. **Milestone 22: AI Video Stabilization, Kalman Trajectory Smoothing & Dynamic Margin Deshaking:**
+   - Feature point tracking, camera trajectory smoothing via Kalman filtering, and dynamic margin-preserving video deshaking.
+4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming:**
+   - Transient-preserving spectral Wiener filtering, adaptive room-tone noise profiling, and harmonic 50/60 Hz mains hum notches.
+5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0:**
+   - Verification suite execution, packaging, dual-pass build determinism, CDN download hash verification, and official release publication.

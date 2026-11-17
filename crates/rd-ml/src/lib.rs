@@ -20,9 +20,11 @@ pub mod tracking;
 pub mod whisper;
 
 pub use captions::{
-    CaptionSegment, CaptionStyle, WordTiming, export_srt, export_vtt, format_timestamp_srt,
-    format_timestamp_vtt, generate_caption_track, parse_srt, parse_timestamp_srt,
-    parse_timestamp_vtt, parse_vtt, wrap_segments,
+    CaptionSegment, CaptionStyle, CaptionValidationIssue, CaptionValidationSeverity, WordTiming,
+    apply_captions_to_timeline, export_srt, export_timeline_subtitles_srt,
+    export_timeline_subtitles_vtt, export_vtt, format_timestamp_srt, format_timestamp_vtt,
+    generate_caption_track, parse_srt, parse_timestamp_srt, parse_timestamp_vtt, parse_vtt,
+    resolve_caption_overlaps, sanitize_subtitle_text, validate_caption_segments, wrap_segments,
 };
 pub use denoise::{
     AudioDenoiser, BiquadFilter, DenoiseConfig, DenoiseMode, DenoiseProfile, HumNotchFilter,
@@ -42,8 +44,10 @@ pub use segmentation::{
 pub use stabilize::{FrameMotion, VideoStabilizer};
 pub use tracking::{BoundingBox, TrackedPath};
 pub use whisper::{
-    AudioPreprocessor, SpeechBoundary, VoiceActivityDetector, WHISPER_FRAME_SIZE, WHISPER_HOP_SIZE,
-    WHISPER_SAMPLE_RATE, WhisperConfig, WhisperEngine, WhisperModelSize, WhisperStatus,
+    AcousticAligner, AudioPreprocessor, LogMelSpectrogram, SpeechBoundary, VoiceActivityDetector,
+    WHISPER_FRAME_SIZE, WHISPER_HOP_SIZE, WHISPER_N_FFT, WHISPER_N_MELS, WHISPER_SAMPLE_RATE,
+    WhisperConfig, WhisperEngine, WhisperModelSize, WhisperStatus, compute_log_mel_spectrogram,
+    create_mel_filterbank, hz_to_mel, mel_to_hz,
 };
 
 /// Execution provider for on-device inference.
