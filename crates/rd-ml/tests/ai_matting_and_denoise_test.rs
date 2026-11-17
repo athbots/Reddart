@@ -38,6 +38,7 @@ fn test_end_to_end_neural_audio_denoiser() {
         mode: DenoiseMode::DeHum50,
         transient_preserve: true,
         profile: None,
+        ..Default::default()
     };
     let mut denoiser = AudioDenoiser::new(sample_rate, config);
 

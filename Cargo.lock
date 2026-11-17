@@ -2718,6 +2718,7 @@ version = "1.3.0"
 dependencies = [
  "anyhow",
  "log",
+ "rd-audio",
  "rd-core",
  "rd-effects",
  "rd-render",
