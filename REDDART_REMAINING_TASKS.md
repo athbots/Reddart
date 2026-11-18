@@ -36,7 +36,7 @@
 | **23** | Neural Audio Denoising & Mains De-humming | ✅ **MERGED** | `feat/neural-audio-denoising-stft-wiener-dehum` | [#59](https://github.com/athbots/Reddart/pull/59) | `1ab552d` | `44187927816` | 10/10 Pass |
 | **24** | Reconcile Checksums & Publish Release v1.4.0 | ✅ **PUBLISHED** | `release/v1.4.0` | [#61](https://github.com/athbots/Reddart/pull/61) | `df760ea` | `44209093725` | 5/5 Pass |
 | **25** | Sandboxed WebAssembly (Wasm / WASI) Effect & Generator Plugin Engine | ✅ **MERGED** | `feat/wasm-wasi-effect-plugin-engine` | [#63](https://github.com/athbots/Reddart/pull/63) | `fc2cd72` | `44292625480` | 10/10 Pass |
-| **26** | 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring | ⚪ **PLANNED** | `feat/3d-ambisonics-hrtf-audio` | Pending | TBD | TBD | Pending |
+| **26** | 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring | ✅ **MERGED** | `feat/3d-ambisonics-hrtf-audio` | [#65](https://github.com/athbots/Reddart/pull/65) | `a60b543` | `44300484681` | 10/10 Pass |
 | **27** | Native Apple ProRes & Avid DNxHR Intermediate Mastering Codecs | ⚪ **PLANNED** | `feat/native-prores-dnxhr-intermediate-mastering` | Pending | TBD | TBD | Pending |
 | **28** | Real-Time Collaborative Timeline Engine via CRDTs & P2P Sync | ⚪ **PLANNED** | `feat/real-time-crdt-collaborative-timeline` | Pending | TBD | TBD | Pending |
 | **29** | Reconcile Checksums & Publish Release v1.5.0 | ⚪ **PLANNED** | `release/v1.5.0` | Pending | TBD | TBD | Pending |
@@ -277,6 +277,19 @@
 - **Status:** ✅ **MERGED** (PR [#63](https://github.com/athbots/Reddart/pull/63), Commit `fc2cd72`).
 - **CI Run:** `44292625480` (10/10 matrix checks passed green across Windows, Ubuntu, and macOS).
 
+### Item 26: 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring
+- **Scope:** In-engine 3D Higher-Order Ambisonics (HOA) and binaural Head-Related Transfer Function (HRTF) audio engine featuring 1st order (4 ch), 2nd order (9 ch), and 3rd order (16 ch) real spherical harmonic decomposition $Y_\ell^m(\theta, \phi)$ in ACN order with verified N3D orthonormality ($\sum_m |Y_\ell^m|^2 = 2\ell+1$), bidirectional normalization conversion across SN3D (AmbiX / YouTube 360), N3D, and FuMa, Woodworth-Schlosser Interaural Time Difference (ITD: $\tau(\theta) = \frac{a}{c}(\sin|\theta|+|\theta|)$) with fractional delay ring buffer, contralateral head-shadowing lowpass filter, pinna elevation notch ($6.5-9.5\text{ kHz}$), direct Ambisonic binaural decoding with cross-feed, 3D Euler soundfield rotator (Yaw, Pitch, Roll) for head-tracking without energy loss, mode-matching surround decoders for 7.1.4 (12 channels), 7.1, 5.1, and Stereo with constant-power height elevation splitting ($\cos(\phi)$ ear-level, $\sin(\phi)$ overhead) and sub-bass LFE extraction, and export pipeline presets (`youtube_spatial_audio_360`, `cinema_immersive_714`).
+- **Engine Components:**
+  - `rd_audio::ambisonics`: `AmbisonicOrder`, `AmbisonicNormalization`, `SpatialPosition3D`, `SphericalHarmonics`, `AmbisonicRotator`, `AmbisonicEncoder`, `BinauralHrtfEngine`, `AmbisonicDecoder`, `AmbisonicMixer`, `LoudspeakerPosition`, `LAYOUT_714_SPEAKERS`.
+  - `rd_audio::spatial`: `ChannelLayout::Surround714`, `ChannelLayout::Ambisonics1stOrder`, `ChannelLayout::Ambisonics2ndOrder`, `ChannelLayout::Ambisonics3rdOrder`, `SpatialParams::elevation`, 7.1.4 downmixing and discrete multichannel routing.
+  - `rd_audio::timeline`: Multichannel timeline bus routing for 7.1.4 and Ambisonics.
+  - `rd_export::preset`: `with_audio_layout`, `youtube_spatial_audio_360()`, `cinema_immersive_714()`.
+  - `rd_export::pipeline`: Dynamic multichannel project audio rendering and `-ac` FFmpeg stream mapping.
+- **Verification Suite:** `crates/rd-audio/tests/ambisonics_spatial_audio_test.rs` (9/9 pass) & `crates/rd-audio/tests/multichannel_surround_test.rs` (4/4 pass). All 59 tests in `rd-audio` passing.
+- **Architecture Documentation:** `docs/3D_AMBISONICS_AND_BINAURAL_HRTF_ENGINE.md`.
+- **Status:** ✅ **MERGED** (PR [#65](https://github.com/athbots/Reddart/pull/65), Commit `a60b543`).
+- **CI Run:** `44300484681` (10/10 matrix checks passed green across Windows, Ubuntu, and macOS).
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -317,8 +330,8 @@ Following Release v1.4.0, Reddart progresses into Phase V, establishing an exten
 
 1. **Milestone 25: Sandboxed WebAssembly (Wasm / WASI) Effect & Procedural Generator Plugin Engine (COMPLETE - PR #63):**
    - Hardware bounds-checked 64 KiB memory pages, 50M gas instruction limit, pure-Rust VM, declarative manifest schema (`plugin.json`), built-in reference plugins (`chromatic_aberration`, `crt_scanlines`, `vignette_pulse`), and compositor DAG integration.
-2. **Milestone 26: 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring (PLANNED):**
-   - 1st, 2nd, and 3rd order B-format Ambisonics spherical harmonics ($W, X, Y, Z, \dots$), 3D vector spatial panner, head-related transfer function (HRTF) binaural headphone synthesizer, and 7.1.4 immersive bed mixing.
+2. **Milestone 26: 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring (COMPLETE - PR #65):**
+   - Real spherical harmonics $Y_\ell^m(\theta, \phi)$ up to 3rd order (16 channels) in ACN order with verified N3D orthonormality, SN3D/AmbiX and FuMa normalization converters, Woodworth-Schlosser binaural HRTF delay ring and head-shadowing filter, 3D Euler soundfield rotator, mode-matching 7.1.4 immersive bed decoder with constant-power height elevation splitting, and YouTube 360 / Cinema 7.1.4 export pipeline presets.
 3. **Milestone 27: Native Apple ProRes & Avid DNxHR Professional Intermediate Mastering Codec Pipeline (PLANNED):**
    - Full 10-bit and 12-bit 4:2:2 / 4:4:4 mastering color fidelity, SIMD YUV-to-RGB color transforms, intermediate frame container, and zero-copy mastering export.
 4. **Milestone 28: Real-Time Collaborative Timeline Engine via CRDTs & P2P Synchronization (PLANNED):**
