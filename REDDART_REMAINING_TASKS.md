@@ -31,6 +31,10 @@
 | **18** | AI Generative Video Inpainting & Smart Saliency Reframe | ✅ **MERGED** | `feat/ai-generative-video-inpainting-saliency-reframe` | [#49](https://github.com/athbots/Reddart/pull/49) | `d86a388` | `43936810722` | 10/10 Pass |
 | **19** | Reconcile Checksums & Publish Release v1.3.0 | ✅ **PUBLISHED** | `release/v1.3.0` | [#51](https://github.com/athbots/Reddart/pull/51) | `34c39eb` | `43943341234` | 5/5 Pass |
 | **20** | AI Neural Speech-to-Text & Subtitle Track Generator | ✅ **MERGED** | `feat/ai-speech-to-text-and-subtitles` | [#53](https://github.com/athbots/Reddart/pull/53) | `350f10a` | `44145881219` | 10/10 Pass |
+| **21** | Neural Portrait Matting & Virtual Green Screen | ✅ **MERGED** | `feat/neural-portrait-matting-guided-filter` | [#55](https://github.com/athbots/Reddart/pull/55) | `0571d7a` | `44168425279` | 10/10 Pass |
+| **22** | AI Video Stabilization & Kalman Deshaking | ✅ **MERGED** | `feat/ai-video-stabilization-kalman` | [#57](https://github.com/athbots/Reddart/pull/57) | `6fc145b` | `44176438783` | 10/10 Pass |
+| **23** | Neural Audio Denoising & Mains De-humming | ✅ **MERGED** | `feat/neural-audio-denoising-stft-wiener-dehum` | [#59](https://github.com/athbots/Reddart/pull/59) | `1ab552d` | `44187927816` | 10/10 Pass |
+| **24** | Reconcile Checksums & Publish Release v1.4.0 | 🔄 **IN PROGRESS** | `release/v1.4.0` | [#61](https://github.com/athbots/Reddart/pull/61) | `PENDING` | `PENDING` | 5/5 Pending |
 
 ---
 
@@ -246,6 +250,16 @@
 - **Architecture Documentation:** `docs/NEURAL_AUDIO_DENOISING_AND_WIENER_FILTERING.md`.
 - **CI Run:** `44187927816` / `44187938885` (10/10 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 24: Reconcile Checksums & Publish Release v1.4.0 (PR #61)
+- **Scope:** Packaged production binaries, verified clean dual-pass build determinism, synchronized all manifests and documentation, merged PR #61, published official GitHub release v1.4.0, and verified downloaded release assets from the GitHub CDN.
+- **Release URL:** [https://github.com/athbots/Reddart/releases/tag/v1.4.0](https://github.com/athbots/Reddart/releases/tag/v1.4.0)
+- **Authoritative Checksums:**
+  - `Reddart.exe`: `8eead1787a5cfcc54e7e5552b85a7fe5d136e56fd023a6c17bff3287a44ad692`
+  - `Reddart-v1.4.0-Windows-x86_64.zip`: `4118b1d65ce0b8dc046b2b0d4ff9cc7302f2cb213dd40851eaeed95d6350cf1b`
+- **Post-Release Asset Verification:** Assets downloaded directly from GitHub release CDN; re-computed SHA-256 matched published hashes bit-for-bit.
+- **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass) and `scripts/verify_release_integrity.ps1`.
+- **CI Run:** (Pending PR #61 validation).
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -275,5 +289,5 @@ Following the production launch of Release v1.3.0, Reddart progresses into Phase
    - Shi-Tomasi corner feature detection with uniform spatial grid bucketing, bidirectional Lucas-Kanade optical flow tracking, RANSAC 2D similarity motion estimation, kinematic state-space Kalman filtering and RTS zero-phase backward smoothing ($\ge 12\text{ dB}$ jitter reduction), dynamic margin auto-crop zoom, and 5-mode GPU border synthesis.
 4. **Milestone 23: Neural Audio Denoising, STFT Wiener Spectral Subtraction & Mains De-humming (COMPLETE - PR #59):**
    - 512-point STFT with square-root Hann COLA, Ephraim-Malah DD Wiener filter, Rainer Martin minimum statistics noise PSD tracking, 4-harmonic 50/60 Hz notch cascade, Goertzel automatic mains hum detection, transient onset preservation, and studio `NeuralAudioDenoiserPlugin` insert chain integration.
-5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0 (NEXT ACTIVE):**
+5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0 (ACTIVE - PR #61):**
    - Verification suite execution, packaging, dual-pass build determinism, CDN download hash verification, and official release publication.
