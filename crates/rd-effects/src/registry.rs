@@ -1007,6 +1007,114 @@ impl EffectRegistry {
             },
             VIDEO_STABILIZER_WGSL.into(),
         );
+
+        // 16. WASM Chromatic Aberration (Sandboxed WebAssembly Plugin)
+        self.register(
+            EffectManifest {
+                id: "wasm_chromatic_aberration".into(),
+                name: "WASM Chromatic Aberration".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "intensity".into(),
+                        name: "Displacement Intensity".into(),
+                        param_type: ParamType::Float,
+                        default: 0.35,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "angle_deg".into(),
+                        name: "Dispersion Angle".into(),
+                        param_type: ParamType::Float,
+                        default: 0.0,
+                        min: 0.0,
+                        max: 360.0,
+                        step: 1.0,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "wasm_plugin".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            COMPOSITE_BLEND_WGSL.into(),
+        );
+
+        // 17. WASM CRT Scanline Raster (Sandboxed WebAssembly Plugin)
+        self.register(
+            EffectManifest {
+                id: "wasm_crt_scanlines".into(),
+                name: "WASM CRT Scanlines".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "scanline_count".into(),
+                        name: "Scanline Density".into(),
+                        param_type: ParamType::Int,
+                        default: 360.0,
+                        min: 100.0,
+                        max: 1080.0,
+                        step: 1.0,
+                        keyframeable: false,
+                    },
+                    EffectParamSpec {
+                        id: "intensity".into(),
+                        name: "Scanline Darkening".into(),
+                        param_type: ParamType::Float,
+                        default: 0.40,
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "wasm_plugin".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            COMPOSITE_BLEND_WGSL.into(),
+        );
+
+        // 18. WASM Pulsating Vignette (Sandboxed WebAssembly Plugin)
+        self.register(
+            EffectManifest {
+                id: "wasm_vignette_pulse".into(),
+                name: "WASM Pulsating Vignette".into(),
+                version: 1,
+                cost_class: CostClass::Low,
+                parameters: vec![
+                    EffectParamSpec {
+                        id: "radius".into(),
+                        name: "Vignette Radius".into(),
+                        param_type: ParamType::Float,
+                        default: 0.8,
+                        min: 0.1,
+                        max: 1.5,
+                        step: 0.05,
+                        keyframeable: true,
+                    },
+                    EffectParamSpec {
+                        id: "pulse_speed_hz".into(),
+                        name: "Pulse Frequency (Hz)".into(),
+                        param_type: ParamType::Float,
+                        default: 1.0,
+                        min: 0.1,
+                        max: 5.0,
+                        step: 0.1,
+                        keyframeable: true,
+                    },
+                ],
+                shader: "wasm_plugin".into(),
+                vertex_entry: "vs_main".into(),
+                fragment_entry: "fs_main".into(),
+            },
+            COMPOSITE_BLEND_WGSL.into(),
+        );
     }
 
     /// Register an effect with its manifest and WGSL code.
@@ -1058,6 +1166,22 @@ mod tests {
         assert!(registry.get("optical_flow").is_some());
         assert!(registry.get("color_transform").is_some());
         assert!(registry.get("virtual_green_screen").is_some());
+        assert!(registry.get("video_stabilizer").is_some());
+        assert!(registry.get("wasm_chromatic_aberration").is_some());
+        assert!(registry.get("wasm_crt_scanlines").is_some());
+        assert!(registry.get("wasm_vignette_pulse").is_some());
+
+        let ca = registry.get("wasm_chromatic_aberration").unwrap();
+        assert_eq!(ca.manifest.cost_class, CostClass::Low);
+        assert_eq!(ca.manifest.parameters.len(), 2);
+
+        let crt = registry.get("wasm_crt_scanlines").unwrap();
+        assert_eq!(crt.manifest.cost_class, CostClass::Low);
+        assert_eq!(crt.manifest.parameters.len(), 2);
+
+        let vig = registry.get("wasm_vignette_pulse").unwrap();
+        assert_eq!(vig.manifest.cost_class, CostClass::Low);
+        assert_eq!(vig.manifest.parameters.len(), 2);
 
         let vgs = registry.get("virtual_green_screen").unwrap();
         assert_eq!(vgs.manifest.cost_class, CostClass::Medium);

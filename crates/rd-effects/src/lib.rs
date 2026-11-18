@@ -17,6 +17,7 @@ pub mod shader;
 pub mod stabilize;
 pub mod template;
 pub mod text;
+pub mod wasm;
 
 pub use color_space::{
     AscCdlParams, ColorGamut, ColorPipeline, ColorPipelineConfig, Mat3, TransferFunction,
@@ -45,6 +46,12 @@ pub use text::{
     SdfTypographyParams, TextAlignment, TextOverlayParams, compute_signed_distance_field, edt_2d,
     generate_text_sdf_field, get_glyph_8x8, render_sdf_text_overlay, render_text_clip_overlay,
     render_text_overlay,
+};
+pub use wasm::{
+    WasmBinaryBuilder, WasmEffectParams, WasmError, WasmInstance, WasmMemory, WasmModule, WasmOp,
+    WasmParamType, WasmPluginCategory, WasmPluginInstance, WasmPluginManifest, WasmPluginParam,
+    WasmPluginRegistry, WasmType, WasmValue, create_chromatic_aberration_plugin,
+    create_crt_scanlines_plugin, create_vignette_pulse_plugin, global_wasm_registry,
 };
 
 /// An effect's performance cost class, used by the quality governor.

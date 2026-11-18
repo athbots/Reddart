@@ -35,6 +35,11 @@
 | **22** | AI Video Stabilization & Kalman Deshaking | ✅ **MERGED** | `feat/ai-video-stabilization-kalman` | [#57](https://github.com/athbots/Reddart/pull/57) | `6fc145b` | `44176438783` | 10/10 Pass |
 | **23** | Neural Audio Denoising & Mains De-humming | ✅ **MERGED** | `feat/neural-audio-denoising-stft-wiener-dehum` | [#59](https://github.com/athbots/Reddart/pull/59) | `1ab552d` | `44187927816` | 10/10 Pass |
 | **24** | Reconcile Checksums & Publish Release v1.4.0 | ✅ **PUBLISHED** | `release/v1.4.0` | [#61](https://github.com/athbots/Reddart/pull/61) | `df760ea` | `44209093725` | 5/5 Pass |
+| **25** | Sandboxed WebAssembly (Wasm / WASI) Effect & Generator Plugin Engine | 🟡 **IN PROGRESS** | `feat/wasm-wasi-effect-plugin-engine` | Pending | `HEAD` | Pending | 11/11 Pass (Local) |
+| **26** | 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring | ⚪ **PLANNED** | `feat/3d-ambisonics-hrtf-audio` | Pending | TBD | TBD | Pending |
+| **27** | Native Apple ProRes & Avid DNxHR Intermediate Mastering Codecs | ⚪ **PLANNED** | `feat/native-prores-dnxhr-intermediate-mastering` | Pending | TBD | TBD | Pending |
+| **28** | Real-Time Collaborative Timeline Engine via CRDTs & P2P Sync | ⚪ **PLANNED** | `feat/real-time-crdt-collaborative-timeline` | Pending | TBD | TBD | Pending |
+| **29** | Reconcile Checksums & Publish Release v1.5.0 | ⚪ **PLANNED** | `release/v1.5.0` | Pending | TBD | TBD | Pending |
 
 ---
 
@@ -260,6 +265,16 @@
 - **Verification Evidence:** `cargo test -p rd-export --test release_integrity_test` (3/3 pass) and `scripts/verify_release_integrity.ps1`.
 - **CI Run:** `44209093725` (5/5 matrix jobs passed across Windows, Ubuntu, and macOS).
 
+### Item 25: Sandboxed WebAssembly (Wasm / WASI) Effect & Procedural Generator Plugin Engine
+- **Scope:** Pure-Rust sandboxed WebAssembly execution engine featuring hardware bounds-checked 64 KiB linear memory pages (up to 16 MiB ceiling), gas-metered execution limits (50 million steps) to prevent halting/infinite loop exploits, zero host network or filesystem access, declarative plugin manifest schema (`plugin.json`), host ABI parameter passing, reference production plugins (`chromatic_aberration`, `crt_scanlines`, `vignette_pulse`), thread-safe global plugin registry, and multi-track compositing DAG and headless export parity.
+- **Engine Components:**
+  - `rd_effects::wasm`: `WasmModule`, `WasmMemory`, `WasmInstance`, `WasmPluginInstance`, `WasmPluginManifest`, `WasmPluginParam`, `WasmEffectParams`, `WasmPluginRegistry`, `WasmBinaryBuilder`, `create_chromatic_aberration_plugin`, `create_crt_scanlines_plugin`, `create_vignette_pulse_plugin`.
+  - `rd_render::composite`: `CompositorLayer::wasm_effect` execution before spatial placement.
+  - `rd_export::pipeline`: Export pipeline extraction and application of active `wasm_*` effects.
+  - `platforms/windows/src/app.rs`: Real-time viewport preview integration.
+- **Verification Suite:** `crates/rd-effects/tests/wasm_plugin_engine_test.rs` (9/9 pass) & `crates/rd-render/tests/wasm_compositor_test.rs` (2/2 pass).
+- **Architecture Documentation:** `docs/SANDBOXED_WASM_PLUGIN_ENGINE.md`.
+
 ---
 
 ## 🚀 Phase III Milestone Status (All Implemented & Merged)
@@ -277,9 +292,9 @@ All four Phase III cutting-edge initiatives have been fully implemented, rigorou
 
 ---
 
-## 🔮 Phase IV Roadmap: Next Architectural Frontier (Milestones 20–24)
+## 🔮 Phase IV Milestone Status (All Implemented, Merged & Released v1.4.0)
 
-Following the production launch of Release v1.3.0, Reddart progresses into Phase IV focusing on advanced on-device AI creative tools:
+All five Phase IV on-device AI creative initiatives have been fully implemented, rigorously tested, merged into `master`, and released in v1.4.0:
 
 1. **Milestone 20: AI Neural Speech-to-Text, Voice Activity Detection & Subtitle Track Generator (COMPLETE - PR #53):**
    - 80-channel Log-Mel spectrogram filterbank extraction, adaptive VAD with 300ms consonant hangover, acoustic syllable forced script alignment, GPU SDF typography, timeline subtitle track injection, and SubRip (.srt) / WebVTT (.vtt) round-trip export.
@@ -291,3 +306,20 @@ Following the production launch of Release v1.3.0, Reddart progresses into Phase
    - 512-point STFT with square-root Hann COLA, Ephraim-Malah DD Wiener filter, Rainer Martin minimum statistics noise PSD tracking, 4-harmonic 50/60 Hz notch cascade, Goertzel automatic mains hum detection, transient onset preservation, and studio `NeuralAudioDenoiserPlugin` insert chain integration.
 5. **Milestone 24: Reconcile Checksums & Publish Release v1.4.0 (COMPLETE - PR #61):**
    - Packaged production binaries, verified clean dual-pass build determinism, synchronized all manifests and documentation, merged PR #61, published official GitHub release v1.4.0, and verified downloaded release assets from the GitHub CDN.
+
+---
+
+## 🌐 Phase V Roadmap: Professional Studio Ecosystem & Distributed Real-Time Architecture (Milestones 25–29)
+
+Following Release v1.4.0, Reddart progresses into Phase V, establishing an extensible studio plugin ecosystem, spatial audio monitoring, broadcast mastering codecs, and real-time collaboration:
+
+1. **Milestone 25: Sandboxed WebAssembly (Wasm / WASI) Effect & Procedural Generator Plugin Engine (IN PROGRESS - PR pending):**
+   - Hardware bounds-checked 64 KiB memory pages, 50M gas instruction limit, pure-Rust VM, declarative manifest schema (`plugin.json`), built-in reference plugins (`chromatic_aberration`, `crt_scanlines`, `vignette_pulse`), and compositor DAG integration.
+2. **Milestone 26: 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring (PLANNED):**
+   - 1st, 2nd, and 3rd order B-format Ambisonics spherical harmonics ($W, X, Y, Z, \dots$), 3D vector spatial panner, head-related transfer function (HRTF) binaural headphone synthesizer, and 7.1.4 immersive bed mixing.
+3. **Milestone 27: Native Apple ProRes & Avid DNxHR Professional Intermediate Mastering Codec Pipeline (PLANNED):**
+   - Full 10-bit and 12-bit 4:2:2 / 4:4:4 mastering color fidelity, SIMD YUV-to-RGB color transforms, intermediate frame container, and zero-copy mastering export.
+4. **Milestone 28: Real-Time Collaborative Timeline Engine via CRDTs & P2P Synchronization (PLANNED):**
+   - Operation-based Conflict-free Replicated Data Type (CRDT) timeline state modeling, fractional indexing, append-only WAL delta serialization (`.reddart-crdt`), and serverless WebRTC P2P sync.
+5. **Milestone 29: Reconcile Checksums & Publish Production Release v1.5.0 (PLANNED):**
+   - Distribution packaging, dual-pass clean build determinism, checksum reconciliation, and official GitHub release v1.5.0 publishing.

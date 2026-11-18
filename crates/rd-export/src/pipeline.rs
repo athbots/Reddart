@@ -1428,6 +1428,28 @@ pub fn render_project_to_file(
                             }
                         });
 
+                    let wasm_effect = clip
+                        .effects
+                        .iter()
+                        .find(|e| {
+                            (e.effect_id.starts_with("wasm:")
+                                || e.effect_id.starts_with("wasm_")
+                                || e.effect_id == "chromatic_aberration"
+                                || e.effect_id == "crt_scanlines"
+                                || e.effect_id == "vignette_pulse")
+                                && e.enabled
+                        })
+                        .map(|eff| {
+                            let normalized_id = eff
+                                .effect_id
+                                .trim_start_matches("wasm:")
+                                .trim_start_matches("wasm_");
+                            let mut params = rd_effects::WasmEffectParams::new(normalized_id);
+                            params.parameters = eff.parameters.clone();
+                            params.time_us = time_us;
+                            params
+                        });
+
                     if let Some(path) = resolve_media_path(&vclip.source_path) {
                         let source_time_us = clip.source_in_us
                             + ((time_us - clip.position_us) as f64 * clip.speed) as i64;
@@ -1479,6 +1501,7 @@ pub fn render_project_to_file(
                                     auto_reframe,
                                     inpaint,
                                     video_stabilizer,
+                                    wasm_effect,
                                 });
                             }
                         } else {
@@ -1507,6 +1530,7 @@ pub fn render_project_to_file(
                                 auto_reframe: None,
                                 inpaint: None,
                                 video_stabilizer: None,
+                                wasm_effect: None,
                             });
                         }
                     } else {
@@ -1535,6 +1559,7 @@ pub fn render_project_to_file(
                             auto_reframe: None,
                             inpaint: None,
                             video_stabilizer: None,
+                            wasm_effect: None,
                         });
                     }
                 }
