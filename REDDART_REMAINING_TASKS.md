@@ -35,7 +35,7 @@
 | **22** | AI Video Stabilization & Kalman Deshaking | ✅ **MERGED** | `feat/ai-video-stabilization-kalman` | [#57](https://github.com/athbots/Reddart/pull/57) | `6fc145b` | `44176438783` | 10/10 Pass |
 | **23** | Neural Audio Denoising & Mains De-humming | ✅ **MERGED** | `feat/neural-audio-denoising-stft-wiener-dehum` | [#59](https://github.com/athbots/Reddart/pull/59) | `1ab552d` | `44187927816` | 10/10 Pass |
 | **24** | Reconcile Checksums & Publish Release v1.4.0 | ✅ **PUBLISHED** | `release/v1.4.0` | [#61](https://github.com/athbots/Reddart/pull/61) | `df760ea` | `44209093725` | 5/5 Pass |
-| **25** | Sandboxed WebAssembly (Wasm / WASI) Effect & Generator Plugin Engine | 🟡 **IN PROGRESS** | `feat/wasm-wasi-effect-plugin-engine` | Pending | `HEAD` | Pending | 11/11 Pass (Local) |
+| **25** | Sandboxed WebAssembly (Wasm / WASI) Effect & Generator Plugin Engine | ✅ **MERGED** | `feat/wasm-wasi-effect-plugin-engine` | [#63](https://github.com/athbots/Reddart/pull/63) | `fc2cd72` | `44292625480` | 10/10 Pass |
 | **26** | 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring | ⚪ **PLANNED** | `feat/3d-ambisonics-hrtf-audio` | Pending | TBD | TBD | Pending |
 | **27** | Native Apple ProRes & Avid DNxHR Intermediate Mastering Codecs | ⚪ **PLANNED** | `feat/native-prores-dnxhr-intermediate-mastering` | Pending | TBD | TBD | Pending |
 | **28** | Real-Time Collaborative Timeline Engine via CRDTs & P2P Sync | ⚪ **PLANNED** | `feat/real-time-crdt-collaborative-timeline` | Pending | TBD | TBD | Pending |
@@ -274,6 +274,8 @@
   - `platforms/windows/src/app.rs`: Real-time viewport preview integration.
 - **Verification Suite:** `crates/rd-effects/tests/wasm_plugin_engine_test.rs` (9/9 pass) & `crates/rd-render/tests/wasm_compositor_test.rs` (2/2 pass).
 - **Architecture Documentation:** `docs/SANDBOXED_WASM_PLUGIN_ENGINE.md`.
+- **Status:** ✅ **MERGED** (PR [#63](https://github.com/athbots/Reddart/pull/63), Commit `fc2cd72`).
+- **CI Run:** `44292625480` (10/10 matrix checks passed green across Windows, Ubuntu, and macOS).
 
 ---
 
@@ -313,7 +315,7 @@ All five Phase IV on-device AI creative initiatives have been fully implemented,
 
 Following Release v1.4.0, Reddart progresses into Phase V, establishing an extensible studio plugin ecosystem, spatial audio monitoring, broadcast mastering codecs, and real-time collaboration:
 
-1. **Milestone 25: Sandboxed WebAssembly (Wasm / WASI) Effect & Procedural Generator Plugin Engine (IN PROGRESS - PR pending):**
+1. **Milestone 25: Sandboxed WebAssembly (Wasm / WASI) Effect & Procedural Generator Plugin Engine (COMPLETE - PR #63):**
    - Hardware bounds-checked 64 KiB memory pages, 50M gas instruction limit, pure-Rust VM, declarative manifest schema (`plugin.json`), built-in reference plugins (`chromatic_aberration`, `crt_scanlines`, `vignette_pulse`), and compositor DAG integration.
 2. **Milestone 26: 3D Ambisonics Spatial Audio Engine & Binaural HRTF Monitoring (PLANNED):**
    - 1st, 2nd, and 3rd order B-format Ambisonics spherical harmonics ($W, X, Y, Z, \dots$), 3D vector spatial panner, head-related transfer function (HRTF) binaural headphone synthesizer, and 7.1.4 immersive bed mixing.
