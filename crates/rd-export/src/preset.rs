@@ -42,6 +42,8 @@ pub struct ExportPreset {
     pub color_space: Option<String>,
     #[serde(default)]
     pub rate_control: Option<RateControlMode>,
+    #[serde(default)]
+    pub audio_layout: Option<rd_audio::ChannelLayout>,
 }
 
 impl Default for ExportPreset {
@@ -65,6 +67,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -82,6 +85,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -99,6 +103,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -116,6 +121,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -133,6 +139,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -150,6 +157,7 @@ impl ExportPreset {
             bit_depth: 8,
             color_space: Some("bt709".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -167,6 +175,7 @@ impl ExportPreset {
             bit_depth: 10,
             color_space: Some("bt2020_pq".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -184,6 +193,7 @@ impl ExportPreset {
             bit_depth: 10,
             color_space: Some("bt2020_pq".into()),
             rate_control: Some(RateControlMode::Vbr),
+            audio_layout: None,
         }
     }
 
@@ -201,7 +211,50 @@ impl ExportPreset {
             bit_depth: 10,
             color_space: Some("bt709".into()),
             rate_control: None,
+            audio_layout: None,
         }
+    }
+
+    /// Calibrated YouTube 360 / Spatial Audio VR preset with 1st Order Ambisonics (AmbiX format).
+    pub fn youtube_spatial_audio_360() -> Self {
+        Self {
+            name: "YouTube 360 Spatial Audio (AmbiX)".into(),
+            width: 3840,
+            height: 2160,
+            fps: 30.0,
+            video_bitrate_kbps: 30000,
+            audio_bitrate_kbps: 512,
+            video_codec: "hevc".into(),
+            audio_codec: "aac".into(),
+            bit_depth: 8,
+            color_space: Some("bt709".into()),
+            rate_control: Some(RateControlMode::Vbr),
+            audio_layout: Some(rd_audio::ChannelLayout::Ambisonics1stOrder),
+        }
+    }
+
+    /// Cinema 7.1.4 Immersive Bed Delivery Preset (Dolby Atmos / SMPTE delivery compatible).
+    pub fn cinema_immersive_714() -> Self {
+        Self {
+            name: "Cinema 7.1.4 Immersive Bed Delivery".into(),
+            width: 3840,
+            height: 2160,
+            fps: 24.0,
+            video_bitrate_kbps: 45000,
+            audio_bitrate_kbps: 768,
+            video_codec: "hevc".into(),
+            audio_codec: "pcm_s24le".into(),
+            bit_depth: 10,
+            color_space: Some("bt709".into()),
+            rate_control: Some(RateControlMode::Vbr),
+            audio_layout: Some(rd_audio::ChannelLayout::Surround714),
+        }
+    }
+
+    /// Builder helper to configure audio channel layout.
+    pub fn with_audio_layout(mut self, layout: rd_audio::ChannelLayout) -> Self {
+        self.audio_layout = Some(layout);
+        self
     }
 
     /// Builder helper to set bit depth (8, 10, or 12).

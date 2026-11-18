@@ -429,6 +429,7 @@ fn test_render_all_five_starter_templates() {
             bit_depth: 8,
             color_space: None,
             rate_control: None,
+            audio_layout: None,
         };
 
         let req = RenderRequest {
