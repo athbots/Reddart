@@ -49,8 +49,7 @@ jobs:
       - name: Install FFmpeg on Windows
         shell: pwsh
         run: |
-          choco install ffmpeg --no-progress -y
-          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          ./scripts/setup_ffmpeg.ps1
 
       - name: Verify FFmpeg availability
         shell: pwsh
