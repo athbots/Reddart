@@ -29,6 +29,14 @@ pub enum ChannelLayout {
     Surround51,
     /// 8-channel 7.1 surround sound (L, R, C, LFE, Ls, Rs, Lb, Rb).
     Surround71,
+    /// 12-channel 7.1.4 immersive bed (L, R, C, LFE, Ls, Rs, Lb, Rb, Tfl, Tfr, Tbl, Tbr).
+    Surround714,
+    /// 4-channel 1st Order Ambisonics B-format (W, Y, Z, X).
+    Ambisonics1stOrder,
+    /// 9-channel 2nd Order Ambisonics B-format (W, Y, Z, X, V, T, R, S, U).
+    Ambisonics2ndOrder,
+    /// 16-channel 3rd Order Ambisonics B-format (16 channels up to degree 3, order 3).
+    Ambisonics3rdOrder,
 }
 
 impl ChannelLayout {
@@ -39,6 +47,10 @@ impl ChannelLayout {
             Self::Stereo => 2,
             Self::Surround51 => 6,
             Self::Surround71 => 8,
+            Self::Surround714 => 12,
+            Self::Ambisonics1stOrder => 4,
+            Self::Ambisonics2ndOrder => 9,
+            Self::Ambisonics3rdOrder => 16,
         }
     }
 
@@ -65,16 +77,48 @@ impl ChannelLayout {
                 "Left Back",
                 "Right Back",
             ],
+            Self::Surround714 => &[
+                "Left",
+                "Right",
+                "Center",
+                "LFE",
+                "Left Surround",
+                "Right Surround",
+                "Left Back",
+                "Right Back",
+                "Top Front Left",
+                "Top Front Right",
+                "Top Back Left",
+                "Top Back Right",
+            ],
+            Self::Ambisonics1stOrder => {
+                &["W (Omni)", "Y (Left/Right)", "Z (Height)", "X (Front/Back)"]
+            }
+            Self::Ambisonics2ndOrder => &["W", "Y", "Z", "X", "V", "T", "R", "S", "U"],
+            Self::Ambisonics3rdOrder => &[
+                "W", "Y", "Z", "X", "V", "T", "R", "S", "U", "Q", "O", "M", "K", "L", "N", "P",
+            ],
         }
     }
 
     /// Whether this layout represents a multichannel surround format (> 2 channels).
     pub fn is_surround(&self) -> bool {
-        matches!(self, Self::Surround51 | Self::Surround71)
+        matches!(
+            self,
+            Self::Surround51 | Self::Surround71 | Self::Surround714
+        )
+    }
+
+    /// Whether this layout represents an Ambisonics spherical harmonic representation.
+    pub fn is_ambisonics(&self) -> bool {
+        matches!(
+            self,
+            Self::Ambisonics1stOrder | Self::Ambisonics2ndOrder | Self::Ambisonics3rdOrder
+        )
     }
 }
 
-/// Spatial panning parameters for positioning an audio source in 2D sound space.
+/// Spatial panning parameters for positioning an audio source in 2D/3D sound space.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SpatialParams {
     /// Azimuth / Left-Right pan in [-1.0, 1.0]: -1.0 is full Left, 0.0 is Center, +1.0 is full Right.
@@ -91,6 +135,9 @@ pub struct SpatialParams {
     pub main_send: f32,
     /// LFE / Subwoofer send level in [0.0, 1.0].
     pub lfe_send: f32,
+    /// Vertical elevation / height level in [0.0, 1.0] for 7.1.4 immersive and 3D ambisonics.
+    #[serde(default)]
+    pub elevation: f32,
 }
 
 fn default_main_send() -> f32 {
@@ -105,6 +152,7 @@ impl Default for SpatialParams {
             center_percentage: FRAC_1_SQRT_2,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         }
     }
 }
@@ -154,6 +202,68 @@ impl SpatialPanner {
                     glb * main,
                     grb * main,
                 ]
+            }
+
+            ChannelLayout::Surround714 => {
+                // Layout: [0: L, 1: R, 2: C, 3: LFE, 4: Ls, 5: Rs, 6: Lb, 7: Rb, 8: Tfl, 9: Tfr, 10: Tbl, 11: Tbr]
+                let (gl, gr, gc, gls, grs, glb, grb, tfl, tfr, tbl, tbr) =
+                    Self::panning_714(px, py, params.elevation, center_pct);
+                vec![
+                    gl * main,
+                    gr * main,
+                    gc * main,
+                    lfe,
+                    gls * main,
+                    grs * main,
+                    glb * main,
+                    grb * main,
+                    tfl * main,
+                    tfr * main,
+                    tbl * main,
+                    tbr * main,
+                ]
+            }
+
+            ChannelLayout::Ambisonics1stOrder => {
+                let pos = crate::ambisonics::SpatialPosition3D::from_2d_pan(px, py);
+                let mut h = crate::ambisonics::SphericalHarmonics::evaluate(
+                    crate::ambisonics::AmbisonicOrder::First,
+                    crate::ambisonics::AmbisonicNormalization::SN3D,
+                    pos.azimuth,
+                    params.elevation.clamp(-1.0, 1.0) * FRAC_PI_2,
+                );
+                for v in &mut h {
+                    *v *= main;
+                }
+                h
+            }
+
+            ChannelLayout::Ambisonics2ndOrder => {
+                let pos = crate::ambisonics::SpatialPosition3D::from_2d_pan(px, py);
+                let mut h = crate::ambisonics::SphericalHarmonics::evaluate(
+                    crate::ambisonics::AmbisonicOrder::Second,
+                    crate::ambisonics::AmbisonicNormalization::SN3D,
+                    pos.azimuth,
+                    params.elevation.clamp(-1.0, 1.0) * FRAC_PI_2,
+                );
+                for v in &mut h {
+                    *v *= main;
+                }
+                h
+            }
+
+            ChannelLayout::Ambisonics3rdOrder => {
+                let pos = crate::ambisonics::SpatialPosition3D::from_2d_pan(px, py);
+                let mut h = crate::ambisonics::SphericalHarmonics::evaluate(
+                    crate::ambisonics::AmbisonicOrder::Third,
+                    crate::ambisonics::AmbisonicNormalization::SN3D,
+                    pos.azimuth,
+                    params.elevation.clamp(-1.0, 1.0) * FRAC_PI_2,
+                );
+                for v in &mut h {
+                    *v *= main;
+                }
+                h
             }
         }
     }
@@ -214,6 +324,44 @@ impl SpatialPanner {
         let grb = gain_rear * gain_back * gain_right;
 
         (gl, gr, gc, gls, grs, glb, grb)
+    }
+
+    /// Internal 7.1.4 constant power 3D calculation.
+    fn panning_714(
+        px: f32,
+        py: f32,
+        elevation: f32,
+        center_pct: f32,
+    ) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32) {
+        let (gl7, gr7, gc7, gls7, grs7, glb7, grb7) = Self::panning_71(px, py, center_pct);
+
+        let el = elevation.clamp(0.0, 1.0);
+        let el_angle = el * FRAC_PI_2;
+        let gain_height = el_angle.sin();
+        let gain_ear = el_angle.cos();
+
+        let gl = gl7 * gain_ear;
+        let gr = gr7 * gain_ear;
+        let gc = gc7 * gain_ear;
+        let gls = gls7 * gain_ear;
+        let grs = grs7 * gain_ear;
+        let glb = glb7 * gain_ear;
+        let grb = grb7 * gain_ear;
+
+        let front_angle = (py + 1.0) * 0.5 * FRAC_PI_2;
+        let gain_h_front = front_angle.sin();
+        let gain_h_rear = front_angle.cos();
+
+        let lr_angle = (px + 1.0) * 0.5 * FRAC_PI_2;
+        let gain_h_left = lr_angle.cos();
+        let gain_h_right = lr_angle.sin();
+
+        let tfl = gain_height * gain_h_front * gain_h_left;
+        let tfr = gain_height * gain_h_front * gain_h_right;
+        let tbl = gain_height * gain_h_rear * gain_h_left;
+        let tbr = gain_height * gain_h_rear * gain_h_right;
+
+        (gl, gr, gc, gls, grs, glb, grb, tfl, tfr, tbl, tbr)
     }
 }
 
@@ -294,6 +442,54 @@ impl ItuDownmixer {
 
                     output[i * 2] = left_mix;
                     output[i * 2 + 1] = right_mix;
+                }
+            }
+            ChannelLayout::Surround714 => {
+                // 7.1.4 layout: L, R, C, LFE, Ls, Rs, Lb, Rb, Tfl, Tfr, Tbl, Tbr
+                // Downmix fold-down with height channels
+                const INV_SQRT_2: f32 = 0.707_106_77;
+                const NORM_FACTOR: f32 = 0.5; // 1 / sqrt(4)
+
+                for i in 0..frames_to_process {
+                    let in_idx = i * 12;
+                    let l = input[in_idx];
+                    let r = input[in_idx + 1];
+                    let c = input[in_idx + 2];
+                    let _lfe = input[in_idx + 3];
+                    let ls = input[in_idx + 4];
+                    let rs = input[in_idx + 5];
+                    let lb = input[in_idx + 6];
+                    let rb = input[in_idx + 7];
+                    let tfl = input[in_idx + 8];
+                    let tfr = input[in_idx + 9];
+                    let tbl = input[in_idx + 10];
+                    let tbr = input[in_idx + 11];
+
+                    let left_mix =
+                        (l + c * INV_SQRT_2 + (ls + lb + tfl + tbl) * INV_SQRT_2) * NORM_FACTOR;
+                    let right_mix =
+                        (r + c * INV_SQRT_2 + (rs + rb + tfr + tbr) * INV_SQRT_2) * NORM_FACTOR;
+
+                    output[i * 2] = left_mix;
+                    output[i * 2 + 1] = right_mix;
+                }
+            }
+            ChannelLayout::Ambisonics1stOrder
+            | ChannelLayout::Ambisonics2ndOrder
+            | ChannelLayout::Ambisonics3rdOrder => {
+                let ch_count = layout.channels();
+                const INV_SQRT_2: f32 = 0.707_106_77;
+                for i in 0..frames_to_process {
+                    let in_idx = i * ch_count;
+                    let w = input[in_idx];
+                    let y = input[in_idx + 1];
+                    let x = input[in_idx + 3];
+
+                    let left = (w + 0.5 * y + 0.866 * x) * INV_SQRT_2;
+                    let right = (w - 0.5 * y + 0.866 * x) * INV_SQRT_2;
+
+                    output[i * 2] = left;
+                    output[i * 2 + 1] = right;
                 }
             }
         }
@@ -420,8 +616,10 @@ impl MultichannelMixer {
                             output[out_base] += left_sample * gains[0];
                             output[out_base + 1] += right_sample * gains[1];
                         }
-                        ChannelLayout::Surround51 | ChannelLayout::Surround71 => {
-                            // Distribute stereo width: Left feeds L / Ls / Lb; Right feeds R / Rs / Rb;
+                        ChannelLayout::Surround51
+                        | ChannelLayout::Surround71
+                        | ChannelLayout::Surround714 => {
+                            // Distribute stereo width: Left feeds L / Ls / Lb / Tfl / Tbl; Right feeds R / Rs / Rb / Tfr / Tbr;
                             // Center and LFE receive proportional mono sum
                             output[out_base] += left_sample * gains[0]; // Left
                             output[out_base + 1] += right_sample * gains[1]; // Right
@@ -430,9 +628,26 @@ impl MultichannelMixer {
                             output[out_base + 4] += left_sample * gains[4]; // Left Surround
                             output[out_base + 5] += right_sample * gains[5]; // Right Surround
 
-                            if self.layout == ChannelLayout::Surround71 {
+                            if self.layout == ChannelLayout::Surround71
+                                || self.layout == ChannelLayout::Surround714
+                            {
                                 output[out_base + 6] += left_sample * gains[6]; // Left Back
                                 output[out_base + 7] += right_sample * gains[7]; // Right Back
+                            }
+                            if self.layout == ChannelLayout::Surround714 {
+                                output[out_base + 8] += left_sample * gains[8]; // Top Front Left
+                                output[out_base + 9] += right_sample * gains[9]; // Top Front Right
+                                output[out_base + 10] += left_sample * gains[10]; // Top Back Left
+                                output[out_base + 11] += right_sample * gains[11]; // Top Back Right
+                            }
+                        }
+                        ChannelLayout::Ambisonics1stOrder
+                        | ChannelLayout::Ambisonics2ndOrder
+                        | ChannelLayout::Ambisonics3rdOrder => {
+                            let total_ch = self.layout.channels();
+                            for c in 0..total_ch {
+                                output[out_base + c] +=
+                                    (left_sample + right_sample) * 0.5 * gains[c];
                             }
                         }
                     }
@@ -536,13 +751,21 @@ mod tests {
         assert_eq!(ChannelLayout::Stereo.channels(), 2);
         assert_eq!(ChannelLayout::Surround51.channels(), 6);
         assert_eq!(ChannelLayout::Surround71.channels(), 8);
+        assert_eq!(ChannelLayout::Surround714.channels(), 12);
+        assert_eq!(ChannelLayout::Ambisonics1stOrder.channels(), 4);
+        assert_eq!(ChannelLayout::Ambisonics2ndOrder.channels(), 9);
+        assert_eq!(ChannelLayout::Ambisonics3rdOrder.channels(), 16);
 
         assert!(!ChannelLayout::Stereo.is_surround());
         assert!(ChannelLayout::Surround51.is_surround());
         assert!(ChannelLayout::Surround71.is_surround());
+        assert!(ChannelLayout::Surround714.is_surround());
+        assert!(ChannelLayout::Ambisonics1stOrder.is_ambisonics());
+        assert!(ChannelLayout::Ambisonics3rdOrder.is_ambisonics());
 
         assert_eq!(ChannelLayout::Surround51.channel_names().len(), 6);
         assert_eq!(ChannelLayout::Surround71.channel_names().len(), 8);
+        assert_eq!(ChannelLayout::Surround714.channel_names().len(), 12);
     }
 
     #[test]
@@ -587,6 +810,7 @@ mod tests {
             center_percentage: 1.0,
             main_send: 1.0,
             lfe_send: 0.5,
+            elevation: 0.0,
         };
         let gains = SpatialPanner::compute_gains(ChannelLayout::Surround51, &center_front);
         assert_eq!(gains.len(), 6);
@@ -616,6 +840,7 @@ mod tests {
             center_percentage: 0.5,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         };
         let gains_rl = SpatialPanner::compute_gains(ChannelLayout::Surround51, &rear_left);
         assert!(
@@ -639,6 +864,7 @@ mod tests {
             center_percentage: 0.0,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         };
         let gains = SpatialPanner::compute_gains(ChannelLayout::Surround71, &back_right);
         assert_eq!(gains.len(), 8);
@@ -697,6 +923,7 @@ mod tests {
                 center_percentage: 1.0,
                 main_send: 1.0,
                 lfe_send: 0.2,
+                elevation: 0.0,
             },
         );
 

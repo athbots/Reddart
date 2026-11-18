@@ -22,6 +22,7 @@ fn test_multichannel_51_spatial_panning_and_energy_conservation() {
             center_percentage: 1.0,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         },
     );
 
@@ -37,6 +38,7 @@ fn test_multichannel_51_spatial_panning_and_energy_conservation() {
             center_percentage: 0.0,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         },
     );
 
@@ -52,6 +54,7 @@ fn test_multichannel_51_spatial_panning_and_energy_conservation() {
             center_percentage: 0.0,
             main_send: 0.0,
             lfe_send: 1.0,
+            elevation: 0.0,
         },
     );
 
@@ -114,6 +117,7 @@ fn test_multichannel_71_surround_discrete_routing() {
             center_percentage: 0.0, // pure L/R front
             main_send: 1.0,
             lfe_send: 0.1,
+            elevation: 0.0,
         },
     );
 
@@ -129,6 +133,7 @@ fn test_multichannel_71_surround_discrete_routing() {
             center_percentage: 0.0,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         },
     );
 
@@ -182,6 +187,7 @@ fn test_spatial_panner_trigonometric_invariants() {
             center_percentage: 0.0,
             main_send: 1.0,
             lfe_send: 0.0,
+            elevation: 0.0,
         };
         let gains = SpatialPanner::compute_gains(ChannelLayout::Stereo, &params);
         let power = gains[0] * gains[0] + gains[1] * gains[1];
@@ -204,6 +210,7 @@ fn test_spatial_panner_trigonometric_invariants() {
                 center_percentage: 0.5,
                 main_send: 1.0,
                 lfe_send: 0.0,
+                elevation: 0.0,
             };
             let gains = SpatialPanner::compute_gains(ChannelLayout::Surround51, &params);
             let main_power = gains[0].powi(2)

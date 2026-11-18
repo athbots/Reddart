@@ -515,16 +515,34 @@ pub fn mix_project_audio(project: &Project, duration_s: f64) -> std::io::Result<
     mix_project_audio_range(project, 0, duration_s)
 }
 
-/// Mix project audio over an explicit timeline time window [start_us, start_us + duration_s].
+/// Mix project audio over an explicit timeline time window [start_us, start_us + duration_s]
+/// into a standard stereo 48 kHz float32 PCM file.
 pub fn mix_project_audio_range(
     project: &Project,
     start_us: i64,
     duration_s: f64,
 ) -> std::io::Result<PathBuf> {
+    mix_project_audio_range_multichannel(
+        project,
+        start_us,
+        duration_s,
+        rd_audio::ChannelLayout::Stereo,
+    )
+}
+
+/// Mix project audio over an explicit timeline time window [start_us, start_us + duration_s]
+/// with an arbitrary multichannel or ambisonic layout.
+pub fn mix_project_audio_range_multichannel(
+    project: &Project,
+    start_us: i64,
+    duration_s: f64,
+    layout: rd_audio::ChannelLayout,
+) -> std::io::Result<PathBuf> {
     let temp_audio_path =
         std::env::temp_dir().join(format!("reddart_exp_audio_{}.pcm", uuid::Uuid::new_v4()));
     let total_frames = (duration_s.max(0.1) * 48000.0).round() as usize;
-    let mut master_pcm = vec![0.0f32; total_frames * 2];
+    let ch = layout.channels();
+    let mut master_pcm = vec![0.0f32; total_frames * ch];
 
     let mut pcm_cache: HashMap<PathBuf, Vec<f32>> = HashMap::new();
 
@@ -579,13 +597,66 @@ pub fn mix_project_audio_range(
                         }
 
                         let vol = clip.effective_volume(timeline_frame_time_us);
-                        let pan = clip.pan.clamp(-1.0, 1.0);
-                        let pan_l = ((1.0 - pan) * 0.5).clamp(0.0, 1.0);
-                        let pan_r = ((1.0 + pan) * 0.5).clamp(0.0, 1.0);
+                        let pan_x = clip.effective_pan(timeline_frame_time_us);
+                        let pan_y = clip.effective_pan_surround(timeline_frame_time_us);
+                        let lfe_send = clip.effective_lfe_send(timeline_frame_time_us);
 
-                        let dst_idx = dst_frame * 2;
-                        master_pcm[dst_idx] += pcm[src_idx] * vol * pan_l * 2.0;
-                        master_pcm[dst_idx + 1] += pcm[src_idx + 1] * vol * pan_r * 2.0;
+                        let spatial_params = rd_audio::SpatialParams {
+                            pan_x,
+                            pan_y,
+                            center_percentage: std::f32::consts::FRAC_1_SQRT_2,
+                            main_send: 1.0,
+                            lfe_send,
+                            elevation: 0.0,
+                        };
+                        let gains = rd_audio::SpatialPanner::compute_gains(layout, &spatial_params);
+
+                        let left_s = pcm[src_idx] * vol;
+                        let right_s = pcm[src_idx + 1] * vol;
+                        let dst_base = dst_frame * ch;
+
+                        match layout {
+                            rd_audio::ChannelLayout::Mono => {
+                                master_pcm[dst_base] +=
+                                    (left_s + right_s) * std::f32::consts::FRAC_1_SQRT_2;
+                            }
+                            rd_audio::ChannelLayout::Stereo => {
+                                master_pcm[dst_base] +=
+                                    left_s * gains[0] * std::f32::consts::SQRT_2;
+                                master_pcm[dst_base + 1] +=
+                                    right_s * gains[1] * std::f32::consts::SQRT_2;
+                            }
+                            rd_audio::ChannelLayout::Surround51
+                            | rd_audio::ChannelLayout::Surround71
+                            | rd_audio::ChannelLayout::Surround714 => {
+                                master_pcm[dst_base] += left_s * gains[0];
+                                master_pcm[dst_base + 1] += right_s * gains[1];
+                                master_pcm[dst_base + 2] += (left_s + right_s) * 0.5 * gains[2];
+                                master_pcm[dst_base + 3] += (left_s + right_s) * 0.5 * gains[3];
+                                master_pcm[dst_base + 4] += left_s * gains[4];
+                                master_pcm[dst_base + 5] += right_s * gains[5];
+
+                                if layout == rd_audio::ChannelLayout::Surround71
+                                    || layout == rd_audio::ChannelLayout::Surround714
+                                {
+                                    master_pcm[dst_base] += left_s * gains[6];
+                                    master_pcm[dst_base + 7] += right_s * gains[7];
+                                }
+                                if layout == rd_audio::ChannelLayout::Surround714 {
+                                    master_pcm[dst_base + 8] += left_s * gains[8];
+                                    master_pcm[dst_base + 9] += right_s * gains[9];
+                                    master_pcm[dst_base + 10] += left_s * gains[10];
+                                    master_pcm[dst_base + 11] += right_s * gains[11];
+                                }
+                            }
+                            rd_audio::ChannelLayout::Ambisonics1stOrder
+                            | rd_audio::ChannelLayout::Ambisonics2ndOrder
+                            | rd_audio::ChannelLayout::Ambisonics3rdOrder => {
+                                for c in 0..ch {
+                                    master_pcm[dst_base + c] += (left_s + right_s) * 0.5 * gains[c];
+                                }
+                            }
+                        }
                     }
                 }
             }

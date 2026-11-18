@@ -3,6 +3,7 @@
 //! Handles audio decoding to PCM, real-time mixing on a dedicated thread,
 //! and provides the master clock that video follows.
 
+pub mod ambisonics;
 pub mod clock;
 pub mod decode;
 pub mod engine;
@@ -13,6 +14,12 @@ pub mod ring;
 pub mod spatial;
 pub mod spectrum;
 pub mod timeline;
+
+pub use ambisonics::{
+    AmbisonicDecoder, AmbisonicEncoder, AmbisonicMixer, AmbisonicNormalization, AmbisonicOrder,
+    AmbisonicRotator, AmbisonicTrack, BinauralHrtfEngine, LAYOUT_714_SPEAKERS, LoudspeakerPosition,
+    SpatialPosition3D, SphericalHarmonics,
+};
 
 pub use clock::{AudioClock, SyncDecision};
 pub use decode::decode_audio_to_pcm;

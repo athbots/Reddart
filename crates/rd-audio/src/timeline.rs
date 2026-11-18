@@ -267,6 +267,7 @@ impl TimelineAudioScheduler {
                         center_percentage: FRAC_1_SQRT_2,
                         main_send: 1.0,
                         lfe_send,
+                        elevation: 0.0,
                     };
                     let gains = SpatialPanner::compute_gains(layout, &spatial_params);
 
@@ -282,7 +283,9 @@ impl TimelineAudioScheduler {
                             master_pcm[dst_base] += left_s * gains[0] * SQRT_2;
                             master_pcm[dst_base + 1] += right_s * gains[1] * SQRT_2;
                         }
-                        ChannelLayout::Surround51 | ChannelLayout::Surround71 => {
+                        ChannelLayout::Surround51
+                        | ChannelLayout::Surround71
+                        | ChannelLayout::Surround714 => {
                             master_pcm[dst_base] += left_s * gains[0]; // Left
                             master_pcm[dst_base + 1] += right_s * gains[1]; // Right
                             master_pcm[dst_base + 2] += (left_s + right_s) * 0.5 * gains[2]; // Center
@@ -290,9 +293,25 @@ impl TimelineAudioScheduler {
                             master_pcm[dst_base + 4] += left_s * gains[4]; // Left Surround
                             master_pcm[dst_base + 5] += right_s * gains[5]; // Right Surround
 
-                            if layout == ChannelLayout::Surround71 {
+                            if layout == ChannelLayout::Surround71
+                                || layout == ChannelLayout::Surround714
+                            {
                                 master_pcm[dst_base + 6] += left_s * gains[6]; // Left Back
                                 master_pcm[dst_base + 7] += right_s * gains[7]; // Right Back
+                            }
+                            if layout == ChannelLayout::Surround714 {
+                                master_pcm[dst_base + 8] += left_s * gains[8]; // Top Front Left
+                                master_pcm[dst_base + 9] += right_s * gains[9]; // Top Front Right
+                                master_pcm[dst_base + 10] += left_s * gains[10]; // Top Back Left
+                                master_pcm[dst_base + 11] += right_s * gains[11]; // Top Back Right
+                            }
+                        }
+                        ChannelLayout::Ambisonics1stOrder
+                        | ChannelLayout::Ambisonics2ndOrder
+                        | ChannelLayout::Ambisonics3rdOrder => {
+                            let total_ch = layout.channels();
+                            for c in 0..total_ch {
+                                master_pcm[dst_base + c] += (left_s + right_s) * 0.5 * gains[c];
                             }
                         }
                     }
