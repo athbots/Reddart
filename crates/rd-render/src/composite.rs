@@ -43,6 +43,8 @@ pub struct CompositorLayer {
     pub inpaint: Option<InpaintParams>,
     /// Optional AI video stabilizer parameters.
     pub video_stabilizer: Option<VideoStabilizerParams>,
+    /// Optional sandboxed WebAssembly effect parameters.
+    pub wasm_effect: Option<rd_effects::WasmEffectParams>,
 }
 
 impl CompositorLayer {
@@ -64,6 +66,7 @@ impl CompositorLayer {
             auto_reframe: None,
             inpaint: None,
             video_stabilizer: None,
+            wasm_effect: None,
         }
     }
 
@@ -96,6 +99,7 @@ impl CompositorLayer {
             auto_reframe: None,
             inpaint: None,
             video_stabilizer: None,
+            wasm_effect: None,
         }
     }
 }
@@ -148,6 +152,12 @@ fn composite_single_layer(
                 layer.height as usize,
                 stab,
             );
+            cow = std::borrow::Cow::Owned(buf);
+        }
+
+        if let Some(ref wasm_eff) = layer.wasm_effect {
+            let mut buf = cow.into_owned();
+            let _ = wasm_eff.apply(&mut buf, layer.width, layer.height);
             cow = std::borrow::Cow::Owned(buf);
         }
         cow
